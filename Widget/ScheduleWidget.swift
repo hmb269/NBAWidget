@@ -112,9 +112,8 @@ struct Provider: TimelineProvider {
         let key = NBAService.dayKey(target)
         let layout = WidgetLayout.of(context.family)
         let familyKey = "\(context.family)"
-        // 小组件上收藏的 + App 里收藏的（签名支持共享时才读得到）
-        let favorites = WidgetFavorites.all.union(FavoriteStore.load())
-        let editing = WidgetFavorites.isEditing(day: day.rawValue, family: familyKey)
+        let favorites = myTeams
+        let editing = false
 
         var games: [Game] = []
         var stale = false
@@ -229,15 +228,6 @@ struct ScheduleWidgetView: View {
                     .foregroundStyle(.secondary)
             }
 
-            // ☆ 进入收藏模式 / ✓ 退出
-            Button(intent: ToggleEditIntent(day: entry.day.rawValue, family: entry.familyKey)) {
-                Image(systemName: entry.editing ? "checkmark.circle.fill" : "star")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(entry.editing ? nbaAccent : Color.secondary)
-                    .frame(width: 24, height: 22)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
         }
     }
 
@@ -300,12 +290,6 @@ struct GameRow: View {
         .minimumScaleFactor(0.6)
         .padding(.vertical, 2)
         .padding(.horizontal, 2)
-        .background {
-            if isFav {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(nbaAccent.opacity(0.16))
-            }
-        }
     }
 
     /// 收藏模式下球队名是按钮，点一下收藏 / 取消

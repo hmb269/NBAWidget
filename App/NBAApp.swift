@@ -17,8 +17,7 @@ struct ContentView: View {
     @State private var games: [Game] = []
     @State private var loading = false
     @State private var errorText: String?
-    @State private var favorites: Set<String> = FavoriteStore.load()
-    @State private var showTeams = false
+    private let favorites = myTeams
 
     private var sortedGames: [Game] {
         games.filter { $0.involves(favorites) } + games.filter { !$0.involves(favorites) }
@@ -47,34 +46,17 @@ struct ContentView: View {
                     } else {
                         ForEach(sortedGames) { g in
                             AppGameRow(game: g, favorites: favorites)
-                                .listRowBackground(g.involves(favorites) ? accent.opacity(0.12) : nil)
                         }
                     }
                 }
 
                 Section(header: Text("小组件")) {
-                    Text("长按桌面空白处 → 编辑 → 添加小组件 → 搜索「NBA赛程」，左右滑动可以选「今日 NBA」或「明日 NBA」。\n点一下小组件：多页时翻页，只有一页时刷新。\n收藏球队：点小组件右上角 ☆ 进入收藏模式，点球队名收藏 / 取消，点 ✓ 完成。收藏的比赛会排在最上面并高亮。")
+                    Text("长按桌面空白处 → 编辑 → 添加小组件 → 搜索「NBA赛程」，左右滑动可以选「今日 NBA」或「明日 NBA」。\n点一下小组件：多页时翻页，只有一页时刷新。\n湖人、76人的比赛排在最上面，队名显示为红色。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
             }
             .navigationTitle("NBA 赛程")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showTeams = true
-                    } label: {
-                        Label("我的球队", systemImage: favorites.isEmpty ? "star" : "star.fill")
-                    }
-                }
-            }
-            .sheet(isPresented: $showTeams) {
-                TeamPicker(favorites: $favorites)
-            }
-            .onChange(of: favorites) { _, newValue in
-                FavoriteStore.save(newValue)
-                WidgetCenter.shared.reloadAllTimelines()
-            }
             .refreshable { await load() }
             .task(id: day) { await load() }
         }

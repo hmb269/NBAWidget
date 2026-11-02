@@ -35,6 +35,9 @@ struct Game: Codable, Identifiable, Hashable {
     }
 }
 
+/// 我的球队：湖人、76人（想改就改这里，用球队英文代码）
+let myTeams: Set<String> = ["LAL", "PHI"]
+
 enum NBAService {
     static let teams: [String: String] = [
         "ATL": "老鹰", "BOS": "凯尔特人", "BKN": "篮网", "CHA": "黄蜂", "CHI": "公牛",
