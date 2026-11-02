@@ -1,26 +1,11 @@
 import AppIntents
 import WidgetKit
 
-enum DayOption: String, AppEnum {
+enum DayOption: String {
     case today
     case tomorrow
 
-    static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "日期")
-    static var caseDisplayRepresentations: [DayOption: DisplayRepresentation] = [
-        .today: DisplayRepresentation(title: "今天"),
-        .tomorrow: DisplayRepresentation(title: "明天")
-    ]
-
     var offset: Int { self == .tomorrow ? 1 : 0 }
-}
-
-/// 长按小组件 →「编辑小组件」里选今天 / 明天
-struct ScheduleConfigIntent: WidgetConfigurationIntent {
-    static var title: LocalizedStringResource = "NBA 赛程"
-    static var description = IntentDescription("显示今天或明天的 NBA 赛程")
-
-    @Parameter(title: "日期", default: .today)
-    var day: DayOption
 }
 
 /// 小组件上的翻页按钮

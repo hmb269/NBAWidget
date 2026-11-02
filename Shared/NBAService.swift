@@ -40,7 +40,16 @@ enum NBAService {
         "TOR": "猛龙", "UTAH": "爵士", "UTA": "爵士", "WSH": "奇才", "WAS": "奇才"
     ]
 
-    static let beijing = TimeZone(identifier: "Asia/Shanghai")!
+    static let beijing = TimeZone(identifier: "Asia/Shanghai") ?? TimeZone(secondsFromGMT: 8 * 3600)!
+
+    /// 小组件刷新时间有限，整个请求最多等 10 秒
+    private static let session: URLSession = {
+        let c = URLSessionConfiguration.ephemeral
+        c.timeoutIntervalForRequest = 8
+        c.timeoutIntervalForResource = 10
+        c.waitsForConnectivity = false
+        return URLSession(configuration: c)
+    }()
 
     static func dayKey(_ date: Date) -> String {
         let f = DateFormatter()
@@ -97,9 +106,7 @@ enum NBAService {
 
     private static func fetchDay(_ key: String) async throws -> [Game] {
         let url = URL(string: "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates=\(key)")!
-        var req = URLRequest(url: url)
-        req.timeoutInterval = 15
-        let (data, _) = try await URLSession.shared.data(for: req)
+        let (data, _) = try await session.data(from: url)
         let resp = try JSONDecoder().decode(ESPNResponse.self, from: data)
         return (resp.events ?? []).compactMap { e in
             guard let time = parseDate(e.date),

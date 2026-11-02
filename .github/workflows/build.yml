@@ -36,8 +36,15 @@ jobs:
         run: |
           mkdir -p Payload
           cp -R build/Release-iphoneos/NBAWidget.app Payload/
-          ls Payload/NBAWidget.app/PlugIns
           zip -qry NBAWidget.ipa Payload
+          {
+            echo '包内文件（排查用）：'
+            echo '```'
+            (cd Payload && find . -maxdepth 4 -not -name '*.png' | sort)
+            echo '--- widget Info.plist ---'
+            plutil -p Payload/NBAWidget.app/PlugIns/*.appex/Info.plist
+            echo '```'
+          } > notes.md
 
       - name: Release
         uses: softprops/action-gh-release@v2
@@ -45,3 +52,4 @@ jobs:
           tag_name: build-${{ github.run_number }}
           name: NBA赛程 build ${{ github.run_number }}
           files: NBAWidget.ipa
+          body_path: notes.md

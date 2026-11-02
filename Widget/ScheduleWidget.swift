@@ -5,19 +5,29 @@ import AppIntents
 @main
 struct NBAWidgetBundle: WidgetBundle {
     var body: some Widget {
-        NBAScheduleWidget()
+        TodayWidget()
+        TomorrowWidget()
     }
 }
 
-struct NBAScheduleWidget: Widget {
-    let kind = "NBASchedule"
-
+struct TodayWidget: Widget {
     var body: some WidgetConfiguration {
-        AppIntentConfiguration(kind: kind, intent: ScheduleConfigIntent.self, provider: Provider()) { entry in
+        StaticConfiguration(kind: "NBAToday", provider: Provider(day: .today)) { entry in
             ScheduleWidgetView(entry: entry)
         }
-        .configurationDisplayName("NBA 赛程")
-        .description("今天或明天的 NBA 比赛，点箭头翻页")
+        .configurationDisplayName("今日 NBA")
+        .description("今天的 NBA 比赛（北京时间），点箭头翻页")
+        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
+    }
+}
+
+struct TomorrowWidget: Widget {
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: "NBATomorrow", provider: Provider(day: .tomorrow)) { entry in
+            ScheduleWidgetView(entry: entry)
+        }
+        .configurationDisplayName("明日 NBA")
+        .description("明天的 NBA 比赛（北京时间），点箭头翻页")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
     }
 }
@@ -66,25 +76,32 @@ struct ScheduleEntry: TimelineEntry {
     }
 }
 
-struct Provider: AppIntentTimelineProvider {
-    func placeholder(in context: Context) -> ScheduleEntry { .sample() }
+struct Provider: TimelineProvider {
+    let day: DayOption
 
-    func snapshot(for configuration: ScheduleConfigIntent, in context: Context) async -> ScheduleEntry {
-        if context.isPreview { return .sample(configuration.day) }
-        return await makeEntry(configuration, context)
+    func placeholder(in context: Context) -> ScheduleEntry { .sample(day) }
+
+    func getSnapshot(in context: Context, completion: @escaping (ScheduleEntry) -> Void) {
+        if context.isPreview {
+            completion(.sample(day))
+            return
+        }
+        Task { completion(await makeEntry(context)) }
     }
 
-    func timeline(for configuration: ScheduleConfigIntent, in context: Context) async -> Timeline<ScheduleEntry> {
-        let entry = await makeEntry(configuration, context)
-        let now = Date()
-        let live = entry.games.contains { $0.state == "in" }
-        let soon = entry.games.contains { $0.state == "pre" && $0.time.timeIntervalSince(now) < 1800 }
-        let minutes: Double = entry.failed ? 10 : (live || soon ? 5 : 30)
-        return Timeline(entries: [entry], policy: .after(now.addingTimeInterval(minutes * 60)))
+    func getTimeline(in context: Context, completion: @escaping (Timeline<ScheduleEntry>) -> Void) {
+        Task {
+            let entry = await makeEntry(context)
+            let now = Date()
+            let live = entry.games.contains { $0.state == "in" }
+            let soon = entry.games.contains { $0.state == "pre" && $0.time.timeIntervalSince(now) < 1800 }
+            let minutes: Double = entry.failed ? 10 : (live || soon ? 5 : 30)
+            completion(Timeline(entries: [entry], policy: .after(now.addingTimeInterval(minutes * 60))))
+        }
     }
 
-    private func makeEntry(_ config: ScheduleConfigIntent, _ context: Context) async -> ScheduleEntry {
-        let day = config.day
+    private func makeEntry(_ context: Context) async -> ScheduleEntry {
+        let day = self.day
         let target = NBAService.targetDate(offset: day.offset)
         let key = NBAService.dayKey(target)
         let layout = WidgetLayout.of(context.family)

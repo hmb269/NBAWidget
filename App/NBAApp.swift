@@ -44,7 +44,7 @@ struct ContentView: View {
                 }
 
                 Section(header: Text("小组件")) {
-                    Text("长按桌面空白处 → 编辑 → 添加小组件 → 搜索「NBA赛程」，小、中、大三种尺寸都有。\n长按小组件 →「编辑小组件」可以切换今天 / 明天。\n标题右边的左右箭头可以直接翻页。")
+                    Text("长按桌面空白处 → 编辑 → 添加小组件 → 搜索「NBA赛程」，左右滑动可以选「今日 NBA」或「明日 NBA」，小、中、大三种尺寸都有。\n标题右边的左右箭头可以直接翻页。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
