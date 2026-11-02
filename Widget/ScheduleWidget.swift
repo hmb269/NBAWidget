@@ -12,22 +12,22 @@ struct NBAWidgetBundle: WidgetBundle {
 
 struct TodayWidget: Widget {
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: "NBAToday", provider: Provider(day: .today)) { entry in
+        AppIntentConfiguration(kind: "NBAToday", intent: ScheduleConfigIntent.self, provider: Provider(day: .today)) { entry in
             ScheduleWidgetView(entry: entry)
         }
         .configurationDisplayName("今日 NBA")
-        .description("今天的 NBA 比赛（北京时间），点一下翻页")
+        .description("今天的 NBA 比赛（北京时间）。点一下翻页，长按「编辑小组件」选喜欢的球队")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
     }
 }
 
 struct TomorrowWidget: Widget {
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: "NBATomorrow", provider: Provider(day: .tomorrow)) { entry in
+        AppIntentConfiguration(kind: "NBATomorrow", intent: ScheduleConfigIntent.self, provider: Provider(day: .tomorrow)) { entry in
             ScheduleWidgetView(entry: entry)
         }
         .configurationDisplayName("明日 NBA")
-        .description("明天的 NBA 比赛（北京时间），点一下翻页")
+        .description("明天的 NBA 比赛（北京时间）。点一下翻页，长按「编辑小组件」选喜欢的球队")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
     }
 }
@@ -81,36 +81,32 @@ struct ScheduleEntry: TimelineEntry {
     }
 }
 
-struct Provider: TimelineProvider {
+struct Provider: AppIntentTimelineProvider {
     let day: DayOption
 
     func placeholder(in context: Context) -> ScheduleEntry { .sample(day) }
 
-    func getSnapshot(in context: Context, completion: @escaping (ScheduleEntry) -> Void) {
-        if context.isPreview {
-            completion(.sample(day))
-            return
-        }
-        Task { completion(await makeEntry(context)) }
+    func snapshot(for configuration: ScheduleConfigIntent, in context: Context) async -> ScheduleEntry {
+        if context.isPreview { return .sample(day) }
+        return await makeEntry(configuration, context)
     }
 
-    func getTimeline(in context: Context, completion: @escaping (Timeline<ScheduleEntry>) -> Void) {
-        Task {
-            let entry = await makeEntry(context)
-            let now = Date()
-            let live = entry.games.contains { $0.state == "in" }
-            let soon = entry.games.contains { $0.state == "pre" && $0.time.timeIntervalSince(now) < 1800 }
-            let minutes: Double = entry.failed ? 10 : (live || soon ? 5 : 30)
-            completion(Timeline(entries: [entry], policy: .after(now.addingTimeInterval(minutes * 60))))
-        }
+    func timeline(for configuration: ScheduleConfigIntent, in context: Context) async -> Timeline<ScheduleEntry> {
+        let entry = await makeEntry(configuration, context)
+        let now = Date()
+        let live = entry.games.contains { $0.state == "in" }
+        let soon = entry.games.contains { $0.state == "pre" && $0.time.timeIntervalSince(now) < 1800 }
+        let minutes: Double = entry.failed ? 10 : (live || soon ? 5 : 30)
+        return Timeline(entries: [entry], policy: .after(now.addingTimeInterval(minutes * 60)))
     }
 
-    private func makeEntry(_ context: Context) async -> ScheduleEntry {
+    private func makeEntry(_ configuration: ScheduleConfigIntent, _ context: Context) async -> ScheduleEntry {
         let target = NBAService.targetDate(offset: day.offset)
         let key = NBAService.dayKey(target)
         let layout = WidgetLayout.of(context.family)
         let familyKey = "\(context.family)"
-        let favorites = FavoriteStore.load()
+        // 小组件自己设置的球队 + App 里收藏的（签名支持共享时才读得到）
+        let favorites = Set((configuration.teams ?? []).map(\.rawValue)).union(FavoriteStore.load())
 
         var games: [Game] = []
         var stale = false
@@ -162,17 +158,13 @@ struct ScheduleWidgetView: View {
     private var layout: WidgetLayout { WidgetLayout.of(family) }
 
     var body: some View {
-        Group {
-            if entry.totalPages > 1 {
-                // 整个小组件就是一个按钮：点一下翻到下一页，最后一页再点回到第一页
-                Button(intent: PageIntent(day: entry.day.rawValue, family: entry.familyKey, delta: 1)) {
-                    content.contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            } else {
-                content
-            }
+        // 整个小组件就是一个按钮，不会打开 App：
+        // 多页时点一下翻到下一页（最后一页再点回到第一页）；只有一页时点一下刷新数据
+        Button(intent: PageIntent(day: entry.day.rawValue, family: entry.familyKey,
+                                  delta: entry.totalPages > 1 ? 1 : 0)) {
+            content.contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .containerBackground(Color(uiColor: .secondarySystemGroupedBackground), for: .widget)
     }
 

@@ -53,7 +53,7 @@ struct ContentView: View {
                 }
 
                 Section(header: Text("小组件")) {
-                    Text("长按桌面空白处 → 编辑 → 添加小组件 → 搜索「NBA赛程」，左右滑动可以选「今日 NBA」或「明日 NBA」。\n比赛多于一页时，点一下小组件就翻到下一页。\n你喜欢的球队的比赛会排在第一页最上面，并高亮显示。")
+                    Text("长按桌面空白处 → 编辑 → 添加小组件 → 搜索「NBA赛程」，左右滑动可以选「今日 NBA」或「明日 NBA」。\n点一下小组件：多页时翻页，只有一页时刷新。\n长按小组件 →「编辑小组件」→「喜欢的球队」，这些球队的比赛会排在最上面并高亮。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -142,7 +142,9 @@ struct TeamPicker: View {
                         Image(systemName: favorites.contains(code) ? "star.fill" : "star")
                             .foregroundStyle(favorites.contains(code) ? accent : Color.secondary)
                     }
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
             }
         }
     }

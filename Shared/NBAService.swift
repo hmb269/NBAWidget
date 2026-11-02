@@ -172,6 +172,13 @@ enum GameCache {
         }
     }
 
+    /// 让下次刷新一定走网络（缓存内容保留，网络失败时还能兜底）
+    static func expireAll() {
+        for k in d.dictionaryRepresentation().keys where k.hasPrefix("games_time_") {
+            d.set(Date.distantPast, forKey: k)
+        }
+    }
+
     static func load(key: String) -> (games: [Game], savedAt: Date)? {
         guard let data = d.data(forKey: "games_\(key)"),
               let games = try? JSONDecoder().decode([Game].self, from: data),

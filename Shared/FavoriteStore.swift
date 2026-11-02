@@ -30,7 +30,7 @@ enum FavoriteStore {
     static var syncStatus: (ok: Bool, text: String) {
         if groupDefaults != nil { return (true, "已同步到小组件（App Group）") }
         if SharedKeychain.group != nil { return (true, "已同步到小组件（钥匙串）") }
-        return (false, "小组件暂时读不到这里的设置（签名不支持共享）")
+        return (false, "这里的收藏只用于 App 列表。小组件请长按 →「编辑小组件」→「喜欢的球队」单独设置")
     }
 }
 

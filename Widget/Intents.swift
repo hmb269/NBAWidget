@@ -26,7 +26,11 @@ struct PageIntent: AppIntent {
     }
 
     func perform() async throws -> some IntentResult {
-        PageStore.shift(day: day, family: family, delta: delta)
+        if delta == 0 {
+            GameCache.expireAll() // 只有一页：点一下重新拉数据
+        } else {
+            PageStore.shift(day: day, family: family, delta: delta)
+        }
         return .result()
     }
 }
