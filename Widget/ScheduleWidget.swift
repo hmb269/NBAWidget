@@ -18,6 +18,7 @@ struct TodayWidget: Widget {
         .configurationDisplayName("今日 NBA")
         .description("今天的 NBA 比赛（北京时间）。点一下翻页，喜欢的球队在 App 里设置")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
+        .contentMarginsDisabled() // 自己画底色和边距，避免系统把底色提亮
     }
 }
 
@@ -29,6 +30,7 @@ struct TomorrowWidget: Widget {
         .configurationDisplayName("明日 NBA")
         .description("明天的 NBA 比赛（北京时间）。点一下翻页，喜欢的球队在 App 里设置")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
+        .contentMarginsDisabled() // 自己画底色和边距，避免系统把底色提亮
     }
 }
 
@@ -177,7 +179,12 @@ struct ScheduleWidgetView: View {
         // 多页时点一下翻到下一页（最后一页再点回到第一页）；只有一页时点一下刷新数据
         Button(intent: PageIntent(day: entry.day.rawValue, family: entry.familyKey,
                                   delta: entry.totalPages > 1 ? 1 : 0)) {
-            content.contentShape(Rectangle())
+            content
+                .padding(.horizontal, family == .systemSmall ? 14 : 16)
+                .padding(.vertical, 14)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(widgetBackground)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .containerBackground(widgetBackground, for: .widget)
