@@ -9,6 +9,12 @@ struct Game: Codable, Identifiable, Hashable {
     let away: String
     let homeScore: Int
     let awayScore: Int
+    let homeCode: String   // 统一后的球队代码，例如 GSW
+    let awayCode: String
+
+    func involves(_ favorites: Set<String>) -> Bool {
+        favorites.contains(homeCode) || favorites.contains(awayCode)
+    }
 
     var isPostponed: Bool { detail.localizedCaseInsensitiveContains("postpon") }
     var isCanceled: Bool { detail.localizedCaseInsensitiveContains("cancel") }
@@ -39,6 +45,16 @@ enum NBAService {
         "PHX": "太阳", "POR": "开拓者", "SAC": "国王", "SA": "马刺", "SAS": "马刺",
         "TOR": "猛龙", "UTAH": "爵士", "UTA": "爵士", "WSH": "奇才", "WAS": "奇才"
     ]
+
+    /// ESPN 有时用短代码，统一成一种
+    static func canonical(_ abbr: String) -> String {
+        let map = ["GS": "GSW", "NO": "NOP", "NY": "NYK", "SA": "SAS", "UTAH": "UTA", "WSH": "WAS"]
+        return map[abbr] ?? abbr
+    }
+
+    /// App 里选球队用（东部 / 西部）
+    static let east = ["ATL", "BOS", "BKN", "CHA", "CHI", "CLE", "DET", "IND", "MIA", "MIL", "NYK", "ORL", "PHI", "TOR", "WAS"]
+    static let west = ["DAL", "DEN", "GSW", "HOU", "LAC", "LAL", "MEM", "MIN", "NOP", "OKC", "PHX", "POR", "SAC", "SAS", "UTA"]
 
     static let beijing = TimeZone(identifier: "Asia/Shanghai") ?? TimeZone(secondsFromGMT: 8 * 3600)!
 
@@ -122,7 +138,9 @@ enum NBAService {
                 home: teamName(home.team),
                 away: teamName(away.team),
                 homeScore: Int(home.score ?? "") ?? 0,
-                awayScore: Int(away.score ?? "") ?? 0
+                awayScore: Int(away.score ?? "") ?? 0,
+                homeCode: canonical(home.team.abbreviation),
+                awayCode: canonical(away.team.abbreviation)
             )
         }
     }

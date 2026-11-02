@@ -36,6 +36,10 @@ jobs:
         run: |
           mkdir -p Payload
           cp -R build/Release-iphoneos/NBAWidget.app Payload/
+          # 临时签名，只为把 App Group 权限写进包里，签名工具保留权限时可用
+          codesign --force --sign - --entitlements Widget/NBAWidgetExtension.entitlements \
+            Payload/NBAWidget.app/PlugIns/NBAWidgetExtension.appex
+          codesign --force --sign - --entitlements App/NBAWidget.entitlements Payload/NBAWidget.app
           zip -qry NBAWidget.ipa Payload
           {
             echo '包内文件（排查用）：'

@@ -10,11 +10,19 @@ struct NBAApp: App {
     }
 }
 
+private let accent = Color(red: 0.88, green: 0.15, blue: 0.25)
+
 struct ContentView: View {
     @State private var day = 0
     @State private var games: [Game] = []
     @State private var loading = false
     @State private var errorText: String?
+    @State private var favorites: Set<String> = FavoriteStore.load()
+    @State private var showTeams = false
+
+    private var sortedGames: [Game] {
+        games.filter { $0.involves(favorites) } + games.filter { !$0.involves(favorites) }
+    }
 
     var body: some View {
         NavigationStack {
@@ -37,19 +45,36 @@ struct ContentView: View {
                     } else if games.isEmpty {
                         Text(day == 0 ? "今天没有比赛" : "明天没有比赛").foregroundStyle(.secondary)
                     } else {
-                        ForEach(games) { g in
-                            AppGameRow(game: g)
+                        ForEach(sortedGames) { g in
+                            AppGameRow(game: g, favorites: favorites)
+                                .listRowBackground(g.involves(favorites) ? accent.opacity(0.12) : nil)
                         }
                     }
                 }
 
                 Section(header: Text("小组件")) {
-                    Text("长按桌面空白处 → 编辑 → 添加小组件 → 搜索「NBA赛程」，左右滑动可以选「今日 NBA」或「明日 NBA」，小、中、大三种尺寸都有。\n标题右边的左右箭头可以直接翻页。")
+                    Text("长按桌面空白处 → 编辑 → 添加小组件 → 搜索「NBA赛程」，左右滑动可以选「今日 NBA」或「明日 NBA」。\n比赛多于一页时，点一下小组件就翻到下一页。\n你喜欢的球队的比赛会排在第一页最上面，并高亮显示。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
             }
             .navigationTitle("NBA 赛程")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showTeams = true
+                    } label: {
+                        Label("我的球队", systemImage: favorites.isEmpty ? "star" : "star.fill")
+                    }
+                }
+            }
+            .sheet(isPresented: $showTeams) {
+                TeamPicker(favorites: $favorites)
+            }
+            .onChange(of: favorites) { _, newValue in
+                FavoriteStore.save(newValue)
+                WidgetCenter.shared.reloadAllTimelines()
+            }
             .refreshable { await load() }
             .task(id: day) { await load() }
         }
@@ -69,12 +94,67 @@ struct ContentView: View {
     }
 }
 
+struct TeamPicker: View {
+    @Binding var favorites: Set<String>
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    let status = FavoriteStore.syncStatus
+                    Label(status.text, systemImage: status.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .font(.footnote)
+                        .foregroundStyle(status.ok ? Color.green : Color.orange)
+                }
+                teamSection("东部", NBAService.east)
+                teamSection("西部", NBAService.west)
+            }
+            .navigationTitle("我的球队")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    if !favorites.isEmpty {
+                        Button("清空") { favorites = [] }
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") { dismiss() }.bold()
+                }
+            }
+        }
+    }
+
+    private func teamSection(_ title: String, _ codes: [String]) -> some View {
+        let sorted = codes.sorted { (NBAService.teams[$0] ?? $0).localizedCompare(NBAService.teams[$1] ?? $1) == .orderedAscending }
+        return Section(header: Text(title)) {
+            ForEach(sorted, id: \.self) { code in
+                Button {
+                    if favorites.contains(code) { favorites.remove(code) } else { favorites.insert(code) }
+                } label: {
+                    HStack {
+                        Text(NBAService.teams[code] ?? code)
+                            .foregroundStyle(.primary)
+                        Text(code)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Image(systemName: favorites.contains(code) ? "star.fill" : "star")
+                            .foregroundStyle(favorites.contains(code) ? accent : Color.secondary)
+                    }
+                }
+            }
+        }
+    }
+}
+
 struct AppGameRow: View {
     let game: Game
+    let favorites: Set<String>
 
     var body: some View {
         HStack {
-            Text(game.away)
+            team(game.away, game.awayCode)
                 .frame(maxWidth: .infinity, alignment: .trailing)
             VStack(spacing: 2) {
                 Text(game.middleText)
@@ -85,11 +165,17 @@ struct AppGameRow: View {
                     .foregroundStyle(.secondary)
             }
             .frame(width: 90)
-            Text(game.home)
+            team(game.home, game.homeCode)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .font(.body.weight(.medium))
         .padding(.vertical, 4)
+    }
+
+    private func team(_ name: String, _ code: String) -> some View {
+        let fav = favorites.contains(code)
+        return Text(name)
+            .font(.body.weight(fav ? .heavy : .medium))
+            .foregroundStyle(fav ? accent : .primary)
     }
 
     private var statusText: String {

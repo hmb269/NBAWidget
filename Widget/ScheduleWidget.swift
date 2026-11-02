@@ -16,7 +16,7 @@ struct TodayWidget: Widget {
             ScheduleWidgetView(entry: entry)
         }
         .configurationDisplayName("今日 NBA")
-        .description("今天的 NBA 比赛（北京时间），点箭头翻页")
+        .description("今天的 NBA 比赛（北京时间），点一下翻页")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
     }
 }
@@ -27,7 +27,7 @@ struct TomorrowWidget: Widget {
             ScheduleWidgetView(entry: entry)
         }
         .configurationDisplayName("明日 NBA")
-        .description("明天的 NBA 比赛（北京时间），点箭头翻页")
+        .description("明天的 NBA 比赛（北京时间），点一下翻页")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
     }
 }
@@ -57,6 +57,7 @@ struct ScheduleEntry: TimelineEntry {
     let target: Date
     let familyKey: String
     let games: [Game]        // 当前页
+    let favorites: Set<String>
     let totalCount: Int
     let page: Int
     let totalPages: Int
@@ -66,12 +67,16 @@ struct ScheduleEntry: TimelineEntry {
     static func sample(_ day: DayOption = .today) -> ScheduleEntry {
         let now = Date()
         let g = [
-            Game(id: "1", time: now, state: "post", detail: "Final", home: "魔术", away: "凯尔特人", homeScore: 97, awayScore: 108),
-            Game(id: "2", time: now, state: "in", detail: "Q3 5:12", home: "步行者", away: "篮网", homeScore: 70, awayScore: 72),
-            Game(id: "3", time: now, state: "pre", detail: "", home: "勇士", away: "快船", homeScore: 0, awayScore: 0),
-            Game(id: "4", time: now, state: "pre", detail: "", home: "湖人", away: "猛龙", homeScore: 0, awayScore: 0)
+            Game(id: "1", time: now, state: "in", detail: "Q3 5:12", home: "勇士", away: "湖人",
+                 homeScore: 70, awayScore: 72, homeCode: "GSW", awayCode: "LAL"),
+            Game(id: "2", time: now, state: "post", detail: "Final", home: "魔术", away: "凯尔特人",
+                 homeScore: 97, awayScore: 108, homeCode: "ORL", awayCode: "BOS"),
+            Game(id: "3", time: now, state: "pre", detail: "", home: "步行者", away: "篮网",
+                 homeScore: 0, awayScore: 0, homeCode: "IND", awayCode: "BKN"),
+            Game(id: "4", time: now, state: "pre", detail: "", home: "猛龙", away: "快船",
+                 homeScore: 0, awayScore: 0, homeCode: "TOR", awayCode: "LAC")
         ]
-        return ScheduleEntry(date: now, day: day, target: now, familyKey: "", games: g,
+        return ScheduleEntry(date: now, day: day, target: now, familyKey: "", games: g, favorites: ["LAL"],
                              totalCount: g.count, page: 0, totalPages: 1, stale: false, failed: false)
     }
 }
@@ -101,11 +106,11 @@ struct Provider: TimelineProvider {
     }
 
     private func makeEntry(_ context: Context) async -> ScheduleEntry {
-        let day = self.day
         let target = NBAService.targetDate(offset: day.offset)
         let key = NBAService.dayKey(target)
         let layout = WidgetLayout.of(context.family)
         let familyKey = "\(context.family)"
+        let favorites = FavoriteStore.load()
 
         var games: [Game] = []
         var stale = false
@@ -129,20 +134,25 @@ struct Provider: TimelineProvider {
             }
         }
 
+        // 喜欢的球队的比赛排在最前面，其余按开赛时间
+        let fav = games.filter { $0.involves(favorites) }
+        let rest = games.filter { !$0.involves(favorites) }
+        games = fav + rest
+
         let totalPages = max(1, Int(ceil(Double(games.count) / Double(layout.pageSize))))
         let page = PageStore.current(day: day.rawValue, family: familyKey, dateKey: key, total: totalPages)
         let start = page * layout.pageSize
         let pageGames = start < games.count ? Array(games[start..<min(games.count, start + layout.pageSize)]) : []
 
         return ScheduleEntry(date: Date(), day: day, target: target, familyKey: familyKey,
-                             games: pageGames, totalCount: games.count, page: page,
+                             games: pageGames, favorites: favorites, totalCount: games.count, page: page,
                              totalPages: totalPages, stale: stale, failed: failed)
     }
 }
 
 // MARK: - 界面
 
-private let accent = Color(red: 0.88, green: 0.15, blue: 0.25)
+let nbaAccent = Color(red: 0.88, green: 0.15, blue: 0.25)
 private let liveRed = Color(red: 1.0, green: 0.27, blue: 0.23)
 
 struct ScheduleWidgetView: View {
@@ -152,6 +162,21 @@ struct ScheduleWidgetView: View {
     private var layout: WidgetLayout { WidgetLayout.of(family) }
 
     var body: some View {
+        Group {
+            if entry.totalPages > 1 {
+                // 整个小组件就是一个按钮：点一下翻到下一页，最后一页再点回到第一页
+                Button(intent: PageIntent(day: entry.day.rawValue, family: entry.familyKey, delta: 1)) {
+                    content.contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            } else {
+                content
+            }
+        }
+        .containerBackground(Color(uiColor: .secondarySystemGroupedBackground), for: .widget)
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 8) {
             header
             if entry.failed {
@@ -162,14 +187,14 @@ struct ScheduleWidgetView: View {
                 grid
             }
         }
-        .containerBackground(Color(uiColor: .secondarySystemGroupedBackground), for: .widget)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     private var header: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 6) {
             Text(entry.day == .today ? "今日 NBA" : "明日 NBA")
                 .font(.system(size: family == .systemSmall ? 15 : 16, weight: .heavy))
-                .foregroundStyle(accent)
+                .foregroundStyle(nbaAccent)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
 
@@ -178,18 +203,12 @@ struct ScheduleWidgetView: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                    .padding(.leading, 6)
             }
 
             Spacer(minLength: 0)
 
             if entry.totalPages > 1 {
-                pageButton("chevron.left", delta: -1)
-                Text("\(entry.page + 1)/\(entry.totalPages)")
-                    .font(.system(size: 12, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .fixedSize()
-                pageButton("chevron.right", delta: 1)
+                pageDots
             } else if family == .systemSmall {
                 Text(NBAService.dateLabel(entry.target, withWeekday: false))
                     .font(.system(size: 13, weight: .semibold))
@@ -198,29 +217,28 @@ struct ScheduleWidgetView: View {
         }
     }
 
-    private func pageButton(_ symbol: String, delta: Int) -> some View {
-        Button(intent: PageIntent(day: entry.day.rawValue, family: entry.familyKey, delta: delta)) {
-            Image(systemName: symbol)
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(.primary)
-                .frame(width: 24, height: 24)
-                .background(Color.primary.opacity(0.08), in: Circle())
-                .contentShape(Circle())
+    /// 页码：● ○ ○
+    private var pageDots: some View {
+        HStack(spacing: 4) {
+            ForEach(0..<entry.totalPages, id: \.self) { i in
+                Circle()
+                    .fill(i == entry.page ? Color.primary : Color.secondary.opacity(0.35))
+                    .frame(width: 6, height: 6)
+            }
         }
-        .buttonStyle(.plain)
     }
 
     private var grid: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: 10) {
             ForEach(0..<layout.cols, id: \.self) { c in
                 VStack(spacing: 0) {
                     ForEach(0..<layout.rows, id: \.self) { r in
                         let i = c * layout.rows + r
-                        if r > 0 { Spacer(minLength: 2) }
+                        if r > 0 { Spacer(minLength: 1) }
                         if i < entry.games.count {
-                            GameRow(game: entry.games[i], fontSize: layout.fontSize)
+                            GameRow(game: entry.games[i], favorites: entry.favorites, fontSize: layout.fontSize)
                         } else {
-                            Text(" ").font(.system(size: layout.fontSize))
+                            Text(" ").font(.system(size: layout.fontSize)).padding(.vertical, 2)
                         }
                     }
                 }
@@ -239,24 +257,39 @@ struct ScheduleWidgetView: View {
 
 struct GameRow: View {
     let game: Game
+    let favorites: Set<String>
     let fontSize: CGFloat
+
+    private var isFav: Bool { game.involves(favorites) }
 
     var body: some View {
         HStack(spacing: 4) {
-            Text(game.away)
-                .foregroundStyle(awayColor)
+            teamText(game.away, code: game.awayCode, dim: awayDim)
                 .frame(maxWidth: .infinity, alignment: .trailing)
             Text(game.middleText)
                 .font(.system(size: fontSize - 1, weight: .semibold).monospacedDigit())
                 .foregroundStyle(middleColor)
                 .frame(width: fontSize * 3.4)
-            Text(game.home)
-                .foregroundStyle(homeColor)
+            teamText(game.home, code: game.homeCode, dim: homeDim)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .font(.system(size: fontSize, weight: .medium))
         .lineLimit(1)
         .minimumScaleFactor(0.6)
+        .padding(.vertical, 2)
+        .padding(.horizontal, 2)
+        .background {
+            if isFav {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(nbaAccent.opacity(0.16))
+            }
+        }
+    }
+
+    private func teamText(_ name: String, code: String, dim: Bool) -> some View {
+        let fav = favorites.contains(code)
+        return Text(name)
+            .font(.system(size: fontSize, weight: fav ? .heavy : .medium))
+            .foregroundStyle(fav ? nbaAccent : (dim ? Color.secondary : Color.primary))
     }
 
     private var finished: Bool { game.state == "post" && !game.isPostponed && !game.isCanceled }
@@ -268,6 +301,6 @@ struct GameRow: View {
     }
 
     // 已结束：输的一方变灰
-    private var awayColor: Color { finished && game.homeScore > game.awayScore ? .secondary : .primary }
-    private var homeColor: Color { finished && game.awayScore > game.homeScore ? .secondary : .primary }
+    private var awayDim: Bool { finished && game.homeScore > game.awayScore }
+    private var homeDim: Bool { finished && game.awayScore > game.homeScore }
 }
