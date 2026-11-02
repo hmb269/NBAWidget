@@ -49,7 +49,7 @@ enum FavoriteStore {
         if let ack = UIPasteboard(name: ackName, create: false)?.string, decode(ack) == teams {
             return (true, "小组件已读到你的球队")
         }
-        return (false, "已保存，等小组件刷新后确认（回桌面点一下小组件即可刷新，再回来看）")
+        return (false, "这里的收藏只用于 App 列表，小组件读不到。小组件上点右上角 ☆，再点球队名就能收藏")
     }
 }
 

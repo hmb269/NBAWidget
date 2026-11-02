@@ -63,6 +63,7 @@ struct ScheduleEntry: TimelineEntry {
     let totalPages: Int
     let stale: Bool
     let failed: Bool
+    var editing: Bool = false
 
     static func sample(_ day: DayOption = .today) -> ScheduleEntry {
         let now = Date()
@@ -100,7 +101,8 @@ struct Provider: TimelineProvider {
             let now = Date()
             let live = entry.games.contains { $0.state == "in" }
             let soon = entry.games.contains { $0.state == "pre" && $0.time.timeIntervalSince(now) < 1800 }
-            let minutes: Double = entry.failed ? 10 : (live || soon ? 5 : 30)
+            var minutes: Double = entry.failed ? 10 : (live || soon ? 5 : 30)
+            if entry.editing { minutes = 2.1 } // 收藏模式到时自动退出
             completion(Timeline(entries: [entry], policy: .after(now.addingTimeInterval(minutes * 60))))
         }
     }
@@ -110,8 +112,9 @@ struct Provider: TimelineProvider {
         let key = NBAService.dayKey(target)
         let layout = WidgetLayout.of(context.family)
         let familyKey = "\(context.family)"
-        let favorites = FavoriteStore.load()
-        FavoriteStore.acknowledge(favorites) // 告诉 App：小组件读到了
+        // 小组件上收藏的 + App 里收藏的（签名支持共享时才读得到）
+        let favorites = WidgetFavorites.all.union(FavoriteStore.load())
+        let editing = WidgetFavorites.isEditing(day: day.rawValue, family: familyKey)
 
         var games: [Game] = []
         var stale = false
@@ -135,10 +138,12 @@ struct Provider: TimelineProvider {
             }
         }
 
-        // 喜欢的球队的比赛排在最前面，其余按开赛时间
-        let fav = games.filter { $0.involves(favorites) }
-        let rest = games.filter { !$0.involves(favorites) }
-        games = fav + rest
+        // 喜欢的球队的比赛排在最前面，其余按开赛时间（收藏模式下不重排，免得点着点着位置变了）
+        if !editing {
+            let fav = games.filter { $0.involves(favorites) }
+            let rest = games.filter { !$0.involves(favorites) }
+            games = fav + rest
+        }
 
         let totalPages = max(1, Int(ceil(Double(games.count) / Double(layout.pageSize))))
         let page = PageStore.current(day: day.rawValue, family: familyKey, dateKey: key, total: totalPages)
@@ -147,7 +152,7 @@ struct Provider: TimelineProvider {
 
         return ScheduleEntry(date: Date(), day: day, target: target, familyKey: familyKey,
                              games: pageGames, favorites: favorites, totalCount: games.count, page: page,
-                             totalPages: totalPages, stale: stale, failed: failed)
+                             totalPages: totalPages, stale: stale, failed: failed, editing: editing)
     }
 }
 
@@ -201,7 +206,13 @@ struct ScheduleWidgetView: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
 
-            if family != .systemSmall {
+            if entry.editing {
+                Text("点球队名收藏")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(nbaAccent)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            } else if family != .systemSmall {
                 Text(NBAService.dateLabel(entry.target, withWeekday: true) + (entry.stale ? " · 缓存" : ""))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.secondary)
@@ -212,11 +223,21 @@ struct ScheduleWidgetView: View {
 
             if entry.totalPages > 1 {
                 pageDots
-            } else if family == .systemSmall {
+            } else if family == .systemSmall && !entry.editing {
                 Text(NBAService.dateLabel(entry.target, withWeekday: false))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.secondary)
             }
+
+            // ☆ 进入收藏模式 / ✓ 退出
+            Button(intent: ToggleEditIntent(day: entry.day.rawValue, family: entry.familyKey)) {
+                Image(systemName: entry.editing ? "checkmark.circle.fill" : "star")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(entry.editing ? nbaAccent : Color.secondary)
+                    .frame(width: 24, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -239,7 +260,7 @@ struct ScheduleWidgetView: View {
                         let i = c * layout.rows + r
                         if r > 0 { Spacer(minLength: 1) }
                         if i < entry.games.count {
-                            GameRow(game: entry.games[i], favorites: entry.favorites, fontSize: layout.fontSize)
+                            GameRow(game: entry.games[i], favorites: entry.favorites, fontSize: layout.fontSize, editing: entry.editing)
                         } else {
                             Text(" ").font(.system(size: layout.fontSize)).padding(.vertical, 2)
                         }
@@ -262,19 +283,18 @@ struct GameRow: View {
     let game: Game
     let favorites: Set<String>
     let fontSize: CGFloat
+    var editing: Bool = false
 
     private var isFav: Bool { game.involves(favorites) }
 
     var body: some View {
         HStack(spacing: 4) {
-            teamText(game.away, code: game.awayCode, dim: awayDim)
-                .frame(maxWidth: .infinity, alignment: .trailing)
+            teamCell(game.away, code: game.awayCode, dim: awayDim, alignment: .trailing)
             Text(game.middleText)
                 .font(.system(size: fontSize - 1, weight: .semibold).monospacedDigit())
                 .foregroundStyle(middleColor)
                 .frame(width: fontSize * 3.4)
-            teamText(game.home, code: game.homeCode, dim: homeDim)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            teamCell(game.home, code: game.homeCode, dim: homeDim, alignment: .leading)
         }
         .lineLimit(1)
         .minimumScaleFactor(0.6)
@@ -285,6 +305,27 @@ struct GameRow: View {
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(nbaAccent.opacity(0.16))
             }
+        }
+    }
+
+    /// 收藏模式下球队名是按钮，点一下收藏 / 取消
+    @ViewBuilder
+    private func teamCell(_ name: String, code: String, dim: Bool, alignment: Alignment) -> some View {
+        let label = teamText(name, code: code, dim: dim)
+            .frame(maxWidth: .infinity, alignment: alignment)
+            .contentShape(Rectangle())
+        if editing {
+            Button(intent: ToggleFavoriteIntent(code: code)) {
+                label
+                    .padding(.vertical, 1)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .stroke(Color.secondary.opacity(0.35), lineWidth: 1)
+                    )
+            }
+            .buttonStyle(.plain)
+        } else {
+            label
         }
     }
 

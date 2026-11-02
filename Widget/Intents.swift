@@ -57,3 +57,69 @@ enum PageStore {
         d.set(((p % total) + total) % total, forKey: k) // 循环翻页
     }
 }
+
+/// 小组件自己记住的喜欢的球队（不需要和 App 共享）
+enum WidgetFavorites {
+    private static let d = UserDefaults.standard
+    private static let key = "widgetFavorites"
+
+    static var all: Set<String> { Set(d.stringArray(forKey: key) ?? []) }
+
+    static func toggle(_ code: String) {
+        var f = all
+        if f.contains(code) { f.remove(code) } else { f.insert(code) }
+        d.set(f.sorted(), forKey: key)
+    }
+
+    /// 收藏模式：开了 2 分钟没关就自动退出
+    private static func editKey(_ day: String, _ family: String) -> String { "edit_\(day)_\(family)" }
+
+    static func isEditing(day: String, family: String) -> Bool {
+        guard let t = d.object(forKey: editKey(day, family)) as? Date else { return false }
+        return Date().timeIntervalSince(t) < 120
+    }
+
+    static func toggleEditing(day: String, family: String) {
+        if isEditing(day: day, family: family) {
+            d.removeObject(forKey: editKey(day, family))
+        } else {
+            d.set(Date(), forKey: editKey(day, family))
+        }
+    }
+}
+
+/// 右上角 ☆ / ✓：进入或退出收藏模式
+struct ToggleEditIntent: AppIntent {
+    static var title: LocalizedStringResource = "收藏模式"
+    static var isDiscoverable: Bool = false
+
+    @Parameter(title: "日期") var day: String
+    @Parameter(title: "尺寸") var family: String
+
+    init() {}
+    init(day: String, family: String) {
+        self.day = day
+        self.family = family
+    }
+
+    func perform() async throws -> some IntentResult {
+        WidgetFavorites.toggleEditing(day: day, family: family)
+        return .result()
+    }
+}
+
+/// 收藏模式下点球队名
+struct ToggleFavoriteIntent: AppIntent {
+    static var title: LocalizedStringResource = "收藏球队"
+    static var isDiscoverable: Bool = false
+
+    @Parameter(title: "球队") var code: String
+
+    init() {}
+    init(code: String) { self.code = code }
+
+    func perform() async throws -> some IntentResult {
+        WidgetFavorites.toggle(code)
+        return .result()
+    }
+}
