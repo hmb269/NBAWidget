@@ -53,7 +53,7 @@ struct ContentView: View {
                 }
 
                 Section(header: Text("小组件")) {
-                    Text("长按桌面空白处 → 编辑 → 添加小组件 → 搜索「NBA赛程」，左右滑动可以选「今日 NBA」或「明日 NBA」。\n点一下小组件：多页时翻页，只有一页时刷新。\n长按小组件 →「编辑小组件」→「喜欢的球队」，这些球队的比赛会排在最上面并高亮。")
+                    Text("长按桌面空白处 → 编辑 → 添加小组件 → 搜索「NBA赛程」，左右滑动可以选「今日 NBA」或「明日 NBA」。\n点一下小组件：多页时翻页，只有一页时刷新。\n点右上角 ☆ 选喜欢的球队，他们的比赛会排在最上面并高亮。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -97,12 +97,15 @@ struct ContentView: View {
 struct TeamPicker: View {
     @Binding var favorites: Set<String>
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var refreshTick = 0
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    let status = FavoriteStore.syncStatus
+                    let _ = refreshTick // 从桌面切回来时重新检查同步状态
+                    let status = FavoriteStore.syncStatus(for: favorites)
                     Label(status.text, systemImage: status.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                         .font(.footnote)
                         .foregroundStyle(status.ok ? Color.green : Color.orange)
@@ -111,6 +114,9 @@ struct TeamPicker: View {
                 teamSection("西部", NBAService.west)
             }
             .navigationTitle("我的球队")
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { refreshTick += 1 }
+            }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {

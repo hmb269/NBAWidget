@@ -1,20 +1,30 @@
 import Foundation
 import Security
+import UIKit
 
 /// 喜欢的球队：App 里保存，小组件读取。
-/// 重签名后 App Group 不一定可用，所以同时写钥匙串共享组，哪个能用读哪个。
+/// 重签名后 App Group / 钥匙串共享不一定可用，所以再加一条「命名剪贴板」通道
+/// （同一签名下的 App 和小组件共用，不需要额外权限），哪个能用读哪个。
 enum FavoriteStore {
     static let groupID = "group.com.hmb269.nbawidget"
     private static let key = "favoriteTeams"
+    private static let boardName = UIPasteboard.Name("com.hmb269.nbawidget.favorites")
+    private static let ackName = UIPasteboard.Name("com.hmb269.nbawidget.ack")
 
     private static var groupDefaults: UserDefaults? {
         guard FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupID) != nil else { return nil }
         return UserDefaults(suiteName: groupID)
     }
 
+    private static func encode(_ teams: Set<String>) -> String { teams.sorted().joined(separator: ",") }
+    private static func decode(_ s: String) -> Set<String> {
+        Set(s.split(separator: ",").map(String.init).filter { !$0.isEmpty })
+    }
+
     static func load() -> Set<String> {
         if let d = groupDefaults, let arr = d.stringArray(forKey: key) { return Set(arr) }
         if let arr = SharedKeychain.load() { return Set(arr) }
+        if let s = UIPasteboard(name: boardName, create: false)?.string { return decode(s) }
         // 都不通时，至少 App 自己能记住
         return Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
     }
@@ -24,13 +34,22 @@ enum FavoriteStore {
         UserDefaults.standard.set(arr, forKey: key)
         groupDefaults?.set(arr, forKey: key)
         SharedKeychain.save(arr)
+        UIPasteboard(name: boardName, create: true)?.string = encode(teams)
+    }
+
+    /// 小组件刷新时调用：把读到的球队写回去，App 据此确认同步成功
+    static func acknowledge(_ teams: Set<String>) {
+        UIPasteboard(name: ackName, create: true)?.string = encode(teams)
     }
 
     /// App 里显示：小组件能不能读到
-    static var syncStatus: (ok: Bool, text: String) {
-        if groupDefaults != nil { return (true, "已同步到小组件（App Group）") }
-        if SharedKeychain.group != nil { return (true, "已同步到小组件（钥匙串）") }
-        return (false, "这里的收藏只用于 App 列表。小组件请长按 →「编辑小组件」→「喜欢的球队」单独设置")
+    static func syncStatus(for teams: Set<String>) -> (ok: Bool, text: String) {
+        if groupDefaults != nil { return (true, "已同步到小组件") }
+        if SharedKeychain.group != nil { return (true, "已同步到小组件") }
+        if let ack = UIPasteboard(name: ackName, create: false)?.string, decode(ack) == teams {
+            return (true, "小组件已读到你的球队")
+        }
+        return (false, "已保存，等小组件刷新后确认（回桌面点一下小组件即可刷新，再回来看）")
     }
 }
 
