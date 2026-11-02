@@ -148,6 +148,12 @@ struct Provider: AppIntentTimelineProvider {
 
 // MARK: - 界面
 
+/// 和系统自带小组件一样的底色：深色模式接近纯黑，浅色模式白色
+let widgetBackground = Color(uiColor: UIColor { trait in
+    trait.userInterfaceStyle == .dark
+        ? UIColor(red: 28 / 255, green: 28 / 255, blue: 28 / 255, alpha: 1)
+        : UIColor.white
+})
 let nbaAccent = Color(red: 0.88, green: 0.15, blue: 0.25)
 private let liveRed = Color(red: 1.0, green: 0.27, blue: 0.23)
 
@@ -165,7 +171,7 @@ struct ScheduleWidgetView: View {
             content.contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .containerBackground(Color(uiColor: .secondarySystemGroupedBackground), for: .widget)
+        .containerBackground(widgetBackground, for: .widget)
     }
 
     private var content: some View {
