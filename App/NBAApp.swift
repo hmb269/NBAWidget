@@ -30,11 +30,11 @@ struct ContentView: View {
             List {
                 Section(header: Text("健康")) {
                     HealthRow(icon: "bed.double.fill", title: "睡眠时间", value: health.sleep.map { HealthFormat.duration($0.asleep) })
-                    HealthRow(icon: "scalemass.fill", title: "体重", value: health.weight.map { w in
+                    HealthRow(icon: "figure", title: "体重", value: health.weight.map { w in
                         var t = HealthFormat.kg(w.kg) + " 公斤"
                         if let p = w.previousKg {
                             let d = w.kg - p
-                            t += abs(d) < 0.05 ? "  持平" : (d > 0 ? "  ↑" : "  ↓") + String(format: "%.1f", abs(d))
+                            t += abs(d) < 0.005 ? "  持平" : (d > 0 ? "  ↑" : "  ↓") + String(format: "%.2f", abs(d))
                         }
                         return t
                     })

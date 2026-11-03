@@ -268,5 +268,5 @@ enum HealthFormat {
         return f.string(from: d)
     }
 
-    static func kg(_ v: Double) -> String { String(format: "%.1f", v) }
+    static func kg(_ v: Double) -> String { String(format: "%.2f", v) }
 }
