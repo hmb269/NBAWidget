@@ -7,7 +7,11 @@ enum HealthService {
 
     private static let stepType = HKQuantityType(.stepCount)
     private static let massType = HKQuantityType(.bodyMass)
-    private static let hrvType = HKQuantityType(.heartRateVariabilitySDNN)
+    /// 普通心率变异性（SDNN）
+    private static let sdnnType = HKQuantityType(.heartRateVariabilitySDNN)
+    /// 恢复心率变异性（RMSSD，iOS 27 起才有；打包用的 SDK 还没有这个名字，所以按字符串取，旧系统上是 nil）
+    private static let rmssdType: HKQuantityType? = HKQuantityType.quantityType(
+        forIdentifier: HKQuantityTypeIdentifier(rawValue: "HKQuantityTypeIdentifierHeartRateVariabilityRMSSD"))
     private static let sleepType = HKCategoryType(.sleepAnalysis)
 
     static var isAvailable: Bool { HKHealthStore.isHealthDataAvailable() }
@@ -16,7 +20,7 @@ enum HealthService {
     static func requestAccess() async -> String? {
         guard isAvailable else { return "这台设备不支持健康数据" }
         do {
-            try await store.requestAuthorization(toShare: [], read: [stepType, massType, hrvType, sleepType])
+            try await store.requestAuthorization(toShare: [], read: Set([stepType, massType, sdnnType, sleepType] + (rmssdType.map { [$0] } ?? [])))
             return nil
         } catch {
             return "授权失败：\(error.localizedDescription)"
@@ -260,7 +264,14 @@ enum HealthService {
         let ms = HKUnit.secondUnit(with: .milli)
         let cal = Calendar.current
         let from = cal.date(byAdding: .day, value: -8, to: Date())!
-        let samples = try await quantitySamples(hrvType, from: from, to: Date(), limit: 800)
+        // 优先读「恢复心率变异性」（RMSSD），没有记录再退回普通心率变异性（SDNN）
+        var samples: [HKQuantitySample] = []
+        if let rmssd = rmssdType {
+            samples = (try? await quantitySamples(rmssd, from: from, to: Date(), limit: 800)) ?? []
+        }
+        if samples.isEmpty {
+            samples = try await quantitySamples(sdnnType, from: from, to: Date(), limit: 800)
+        }
         guard let latest = samples.first else { return nil }
 
         let week = samples.filter { $0.endDate > cal.date(byAdding: .day, value: -7, to: Date())! }
