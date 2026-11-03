@@ -7,8 +7,10 @@ struct GlucoseRecord: Identifiable {
     let id: String          // 同步标识（血糖仪导入的）或样本 UUID
     let date: Date
     let mmol: Double
-    let meterMeal: String?  // 血糖仪自带的餐点标记
+    let meterMeal: String?  // 血糖仪自带的餐点标记（或上次同步进健康的标签）
     let source: String
+    var syncVersion: Int = 1
+    var isMine: Bool = false  // 是不是阿波自己写进健康的（只有这种能改）
 }
 
 enum GlucoseStore {
@@ -52,6 +54,32 @@ enum GlucoseStore {
         try await HealthService.store.save(samples)
     }
 
+    /// 把 App 里的餐点标签写进健康：同一个同步标识、版本号加 1 再存一次，健康会用新的替换旧的。
+    /// 别的 App（比如 mySugr）写的记录改不了，跳过。返回（更新条数，跳过条数）
+    static func pushTags(_ records: [GlucoseRecord], tag: (GlucoseRecord) -> String?) async throws -> (Int, Int) {
+        var samples: [HKQuantitySample] = []
+        var skipped = 0
+        for r in records {
+            guard let t = tag(r), t != r.meterMeal else { continue }   // 没标签或者和健康里一样，不用动
+            guard r.isMine else { skipped += 1; continue }
+            var meta: [String: Any] = [
+                HKMetadataKeySyncIdentifier: r.id,
+                HKMetadataKeySyncVersion: r.syncVersion + 1,
+                HKMetadataKeyWasUserEntered: false,
+                mealKey: t
+            ]
+            if t.contains("后") {
+                meta[HKMetadataKeyBloodGlucoseMealTime] = HKBloodGlucoseMealTime.postprandial.rawValue
+            } else if t.contains("前") || t == "空腹" {
+                meta[HKMetadataKeyBloodGlucoseMealTime] = HKBloodGlucoseMealTime.preprandial.rawValue
+            }
+            samples.append(HKQuantitySample(type: type, quantity: HKQuantity(unit: unit, doubleValue: r.mmol),
+                                            start: r.date, end: r.date, metadata: meta))
+        }
+        if !samples.isEmpty { try await HealthService.store.save(samples) }
+        return (samples.count, skipped)
+    }
+
     static func load(days: Int = 180) async throws -> [GlucoseRecord] {
         let start = Calendar.current.date(byAdding: .day, value: -days, to: Date())!
         let predicate = HKQuery.predicateForSamples(withStart: start, end: Date(), options: [])
@@ -68,9 +96,13 @@ enum GlucoseStore {
             if meal == nil, let raw = meta[HKMetadataKeyBloodGlucoseMealTime] as? NSNumber {
                 meal = raw.intValue == HKBloodGlucoseMealTime.preprandial.rawValue ? "餐前" : "餐后"
             }
+            let mine = s.sourceRevision.source.bundleIdentifier == Bundle.main.bundleIdentifier
+                && meta[HKMetadataKeySyncIdentifier] != nil
             return GlucoseRecord(id: (meta[HKMetadataKeySyncIdentifier] as? String) ?? s.uuid.uuidString,
                                  date: s.startDate, mmol: s.quantity.doubleValue(for: unit),
-                                 meterMeal: meal, source: s.sourceRevision.source.name)
+                                 meterMeal: meal, source: s.sourceRevision.source.name,
+                                 syncVersion: (meta[HKMetadataKeySyncVersion] as? NSNumber)?.intValue ?? 1,
+                                 isMine: mine)
         }
     }
 }
@@ -126,6 +158,7 @@ struct GlucoseView: View {
     @State private var tags: [String: String] = GlucoseTags.all
     @State private var message: String?
     @State private var mealTick = 0   // 改了三餐时间后刷新标签
+    @State private var pushing = false
 
     var body: some View {
         List {
@@ -141,6 +174,17 @@ struct GlucoseView: View {
                     }
                 }
                 .disabled(sync.busy)
+                Button {
+                    Task { await pushToHealth() }
+                } label: {
+                    HStack {
+                        Image(systemName: "heart.text.square")
+                        Text(pushing ? "正在同步…" : "从软件同步至健康")
+                        Spacer()
+                        if pushing { ProgressView() }
+                    }
+                }
+                .disabled(pushing || records.isEmpty)
                 Text(sync.status).font(.footnote).foregroundStyle(.secondary)
                 if let message {
                     Text(message).font(.footnote).foregroundStyle(.green)
@@ -265,6 +309,22 @@ struct GlucoseView: View {
         let f = DateFormatter()
         f.dateFormat = "HH:mm"
         return f.string(from: d)
+    }
+
+    private func pushToHealth() async {
+        pushing = true
+        defer { pushing = false }
+        do {
+            try await GlucoseStore.requestAccess()
+            let current = GlucoseTags.all
+            let (done, skipped) = try await GlucoseStore.pushTags(records) { current[$0.id] ?? GlucoseTags.auto($0) }
+            var t = done > 0 ? "已把 \(done) 条记录的餐点标签写进健康" : "健康里的标签已经是最新的"
+            if skipped > 0 { t += "；\(skipped) 条是别的 App（如 mySugr）写的，健康不允许修改，已跳过" }
+            message = t
+        } catch {
+            message = "同步至健康失败：\(error.localizedDescription)"
+        }
+        await reload()
     }
 
     private func reload() async {
