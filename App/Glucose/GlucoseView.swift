@@ -244,6 +244,12 @@ struct GlucoseView: View {
     var body: some View {
         List {
             Section {
+                GlucoseTrendCard(points: shown.map { ($0.date, $0.mmol, label($0) ?? "") })
+            }
+            .listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets())
+
+            Section {
                 Button {
                     sync.start()
                 } label: {

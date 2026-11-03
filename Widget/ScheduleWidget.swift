@@ -8,6 +8,7 @@ struct NBAWidgetBundle: WidgetBundle {
         TodayWidget()
         TomorrowWidget()
         HealthWidget()
+        GlucoseWidget()
     }
 }
 
