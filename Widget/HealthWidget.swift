@@ -21,7 +21,7 @@ struct Theme {
     static let weight = Theme(top: Color(red: 0.80, green: 0.55, blue: 1.0), bottom: Color(red: 0.55, green: 0.32, blue: 0.95))
     static let hrv = Theme(top: Color(red: 1.0, green: 0.45, blue: 0.55), bottom: Color(red: 0.95, green: 0.22, blue: 0.42))
     static let steps = Theme(top: Color(red: 1.0, green: 0.72, blue: 0.25), bottom: Color(red: 1.0, green: 0.45, blue: 0.18))
-    static let sun = Theme(top: Color(red: 1.0, green: 0.86, blue: 0.30), bottom: Color(red: 1.0, green: 0.55, blue: 0.15))
+    static let sun = Theme(top: Color(red: 1.0, green: 0.72, blue: 0.25), bottom: Color(red: 1.0, green: 0.45, blue: 0.18)) // 和今日步数同色
 }
 
 enum HealthColor {
@@ -418,8 +418,8 @@ struct LargeHealthView: View {
     private func sunLine(_ icon: String, _ value: String) -> some View {
         HStack(spacing: 4) {
             Image(systemName: icon)
-                .symbolRenderingMode(.multicolor)
-                .font(.system(size: 12))
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.sun.gradient)
             Text(value)
                 .font(.system(size: 16, weight: .bold, design: .rounded).monospacedDigit())
         }
@@ -809,14 +809,11 @@ struct SleepRing: View {
                     .scaledToFill()
                     .frame(width: size - lw * 1.4, height: size - lw * 1.4)
                     .clipShape(Circle())
-                    .overlay(Circle().fill(Color.black.opacity(0.32)))
-            }
-            if let s = sleep {
+            } else if let s = sleep {
+                // 没换照片才显示小时数；换了照片就只显示照片
                 Text(String(format: "%.1f", s.asleep / 3600))
                     .font(.system(size: size * 0.33, weight: .bold, design: .rounded).monospacedDigit())
-                    .foregroundStyle(photo == nil ? Color.primary : Color.white)
-                    .shadow(color: .black.opacity(photo == nil ? 0 : 0.7), radius: 2)
-            } else if photo == nil {
+            } else {
                 Image(systemName: IconSlot.sleep.symbol).font(.system(size: size * 0.33)).foregroundStyle(Theme.sleep.text)
             }
         }
