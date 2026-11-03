@@ -53,8 +53,13 @@ struct ContentView: View {
                 }
 
                 Section(header: Text("自定义图标"), footer: Text(iconStatus).font(.footnote)) {
-                    ForEach(IconSlot.allCases) { slot in
+                    ForEach(IconSlot.common) { slot in
                         IconRow(slot: slot) { iconTick += 1 }
+                    }
+                    DisclosureGroup("其他数据项的图标") {
+                        ForEach(IconSlot.allCases.filter { !IconSlot.common.contains($0) }) { slot in
+                            IconRow(slot: slot) { iconTick += 1 }
+                        }
                     }
                 }
 
@@ -94,7 +99,7 @@ struct ContentView: View {
                 }
 
                 Section(header: Text("小组件")) {
-                    Text("长按桌面空白处 → 编辑 → 添加小组件 → 搜索「阿波」，左右滑动可以选「今日 NBA」「明日 NBA」，以及大号的「健康」（睡眠、体重、心率变异性、步数、日出日落）。\n点一下小组件：多页时翻页，只有一页时刷新。\n湖人、76人的比赛排在最上面，队名显示为红色。")
+                    Text("长按桌面空白处 → 编辑 → 添加小组件 → 搜索「阿波」，左右滑动可以选「今日 NBA」「明日 NBA」，以及「健康」（小、中、大三种尺寸）。\n健康小组件显示哪 4 项、每项什么颜色：长按小组件 → 编辑小组件。大号里第 1 项会画趋势图。\n点一下小组件：多页时翻页，只有一页时刷新。\n湖人、76人的比赛排在最上面，队名显示为红色。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -108,7 +113,7 @@ struct ContentView: View {
 
     private var iconStatus: String {
         let _ = iconTick
-        let custom = IconSlot.allCases.filter { IconStore.image(for: $0) != nil }
+        let custom = IconSlot.common.filter { IconStore.image(for: $0) != nil }
         var t = "点「换照片」从相册选一张，会自动裁成圆形。照片会放进系统相簿「阿波小组件·xx」，小组件从那里读；也可以直接在照片 App 里往这些相簿放图。第一次会请求相册权限，请选「允许完全访问」。"
         t += "\nApp 相册权限：" + IconStore.photoStatusText
         if let ack = IconStore.widgetAck() {

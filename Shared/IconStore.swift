@@ -3,29 +3,20 @@ import Photos
 
 /// 可以换成自己照片的图标位置
 enum IconSlot: String, CaseIterable, Identifiable {
-    case sleep, weight, hrv, steps, sun
+    case sleep
+    case weight, hrv, steps, sun
+    case restingHR, heartRate, activeEnergy, exercise, stand, distance, flights
+    case oxygen, respiratory, vo2max, bodyFat
 
     var id: String { rawValue }
+    var metric: MetricKind? { MetricKind(rawValue: rawValue) }
+    var title: String { self == .sleep ? "睡眠（圆环中间）" : (metric?.title ?? rawValue) }
+    var symbol: String { self == .sleep ? "bed.double.fill" : (metric?.symbol ?? "circle") }
 
-    var title: String {
-        switch self {
-        case .sleep: return "睡眠"
-        case .weight: return "体重"
-        case .hrv: return "恢复心率变异性"
-        case .steps: return "今日步数"
-        case .sun: return "日出日落"
-        }
-    }
+    init(_ kind: MetricKind) { self = IconSlot(rawValue: kind.rawValue)! }
 
-    var symbol: String {
-        switch self {
-        case .sleep: return "bed.double.fill"
-        case .weight: return "figure"
-        case .hrv: return "waveform.path.ecg"
-        case .steps: return "figure.walk"
-        case .sun: return "sun.horizon.fill"
-        }
-    }
+    /// App 里默认展开的几项
+    static let common: [IconSlot] = [.sleep, .weight, .hrv, .steps, .sun]
 }
 
 /// 自定义图标：App 里选照片保存，小组件读取。
@@ -92,9 +83,9 @@ enum IconStore {
     }
 
     /// 小组件刷新时调用：把读到了哪些自定义图标写回去，App 里据此显示同步状态
-    static func loadAllForWidget() -> [IconSlot: UIImage] {
+    static func loadAllForWidget(_ slots: [IconSlot] = IconSlot.allCases) -> [IconSlot: UIImage] {
         var out: [IconSlot: UIImage] = [:]
-        for slot in IconSlot.allCases {
+        for slot in slots {
             if let img = image(for: slot) { out[slot] = img }
         }
         let f = DateFormatter()
