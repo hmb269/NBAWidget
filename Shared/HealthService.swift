@@ -152,18 +152,43 @@ enum HealthService {
             let detail = sums.sorted { $0.key < $1.key }.map { "\($0.key) \(hms($0.value))" }.joined(separator: "，")
             lines.append("\(name)：睡着合计 \(hms(asleep))；\(detail)")
         }
-        let asleepAll = merge(samples.filter(isAsleep).map { ($0.startDate, $0.endDate) })
-        let unionTotal = asleepAll.reduce(0) { $0 + $1.1.timeIntervalSince($1.0) }
-        lines.append("A 所有来源合并：\(hms(unionTotal))")
-        if let f = asleepAll.first, let l = asleepAll.last {
-            let awake = merge(samples.filter { HKCategoryValueSleepAnalysis(rawValue: $0.value) == .awake }.map { ($0.startDate, $0.endDate) })
-            let span = l.1.timeIntervalSince(f.0)
-            let awakeInSpan = awake.reduce(0.0) { acc, iv in
-                acc + max(0, min(iv.1, l.1).timeIntervalSince(max(iv.0, f.0)))
+        // 逐条列出（按时间）
+        let f = DateFormatter(); f.dateFormat = "HH:mm:ss"
+        func kind(_ x: HKCategorySample) -> String {
+            switch HKCategoryValueSleepAnalysis(rawValue: x.value) {
+            case .asleepDeep: return "深睡"
+            case .asleepCore: return "核心"
+            case .asleepREM: return "快速眼动"
+            case .asleepUnspecified: return "睡眠"
+            case .awake: return "清醒"
+            case .inBed: return "卧床"
+            default: return "其他"
             }
-            lines.append("B 入睡到醒来：\(hms(span))（\(HealthFormat.time(f.0)) - \(HealthFormat.time(l.1))）")
-            lines.append("C 入睡到醒来减清醒：\(hms(span - awakeInSpan))")
         }
+        for x in samples.sorted(by: { $0.startDate < $1.startDate }) {
+            let d = Int(x.endDate.timeIntervalSince(x.startDate).rounded())
+            lines.append("\(f.string(from: x.startDate))-\(f.string(from: x.endDate)) \(kind(x)) \(d / 60)分\(d % 60)秒")
+        }
+
+        let asleepS = samples.filter(isAsleep)
+        let awakeS = samples.filter { HKCategoryValueSleepAnalysis(rawValue: $0.value) == .awake }
+        let base = merge(asleepS.map { ($0.startDate, $0.endDate) }).reduce(0) { $0 + $1.1.timeIntervalSince($1.0) }
+        lines.append("A 睡着合计：\(hms(base))")
+
+        // 按整分钟：起止时间四舍五入到分钟
+        func roundMin(_ d: Date) -> TimeInterval { (d.timeIntervalSince1970 / 60).rounded() * 60 }
+        let rounded = asleepS.reduce(0.0) { $0 + roundMin($1.endDate) - roundMin($1.startDate) }
+        lines.append("D 每段按整分钟四舍五入：\(hms(rounded))")
+        // 起止时间去掉秒
+        func floorMin(_ d: Date) -> TimeInterval { floor(d.timeIntervalSince1970 / 60) * 60 }
+        let floored = asleepS.reduce(0.0) { $0 + floorMin($1.endDate) - floorMin($1.startDate) }
+        lines.append("E 每段起止去掉秒：\(hms(floored))")
+        // 短暂清醒算作睡着
+        for n in 1...5 {
+            let short = awakeS.map { $0.endDate.timeIntervalSince($0.startDate) }.filter { $0 < Double(n * 60) }.reduce(0, +)
+            lines.append("F\(n) 短于\(n)分钟的清醒算睡着：\(hms(base + short))")
+        }
+
         if let d = try await lastNightSleep() {
             lines.append("小组件现在用的：\(hms(d.asleep))")
         }

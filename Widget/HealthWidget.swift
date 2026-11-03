@@ -300,11 +300,11 @@ struct LargeHealthView: View {
     let entry: HealthEntry
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 10) {
             sleepCard
             weightCard
                 .frame(maxHeight: .infinity)
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 hrvCard
                 stepsCard
                 sunCard
@@ -321,6 +321,7 @@ struct LargeHealthView: View {
                 HStack(spacing: 5) {
                     IconBadge(slot: .sleep, theme: .sleep, size: 18, custom: entry.icons[.sleep])
                     CaptionText("睡眠时间", theme: .sleep, size: 13)
+                        .fixedSize()
                     SleepDeltaText(entry: entry)
                 }
                 ValueText(entry.sleepValue, size: 22)
@@ -441,12 +442,12 @@ struct LargeHealthView: View {
 }
 
 extension View {
-    /// 大号里的分组卡片：比底色稍亮一点的圆角块
+    /// 大号里的分组：不画底框，直接融在底色上，只留一点内边距
     func card(padding: CGFloat = 12) -> some View {
         self
-            .padding(padding)
+            .padding(.horizontal, padding / 2)
+            .padding(.vertical, padding / 3)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.primary.opacity(0.07)))
     }
 }
 

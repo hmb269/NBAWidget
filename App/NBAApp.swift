@@ -109,10 +109,12 @@ struct ContentView: View {
     private var iconStatus: String {
         let _ = iconTick
         let custom = IconSlot.allCases.filter { IconStore.image(for: $0) != nil }
-        var t = "点「换照片」从相册选一张，会自动裁成圆形。"
+        var t = "点「换照片」从相册选一张，会自动裁成圆形。照片会放进系统相簿「阿波小组件·xx」，小组件从那里读；也可以直接在照片 App 里往这些相簿放图。第一次会请求相册权限，请选「允许完全访问」。"
+        t += "\nApp 相册权限：" + IconStore.photoStatusText
         if let ack = IconStore.widgetAck() {
             let names = ack.slots.map(\.title).joined(separator: "、")
             t += "\n小组件 \(ack.time) 读到的自定义图标：" + (names.isEmpty ? "无" : names)
+            if !ack.photo.isEmpty { t += "（小组件相册权限：\(ack.photo)）" }
             if !custom.isEmpty && ack.slots.isEmpty {
                 t += "\n如果换了照片小组件没变，等一两分钟或长按小组件编辑一下让它刷新"
             }
@@ -286,6 +288,7 @@ struct IconRow: View {
     let changed: () -> Void
     @State private var item: PhotosPickerItem?
     @State private var image: UIImage?
+    @State private var errorText: String?
 
     var body: some View {
         HStack(spacing: 12) {
@@ -304,7 +307,7 @@ struct IconRow: View {
 
             Text(slot.title)
             Spacer()
-            PhotosPicker(selection: $item, matching: .images) {
+            PhotosPicker(selection: $item, matching: .images, photoLibrary: .shared()) {
                 Text("换照片")
             }
             .buttonStyle(.borderless)
@@ -312,9 +315,17 @@ struct IconRow: View {
                 Button("默认", role: .destructive) {
                     IconStore.reset(slot)
                     image = nil
-                    refresh()
+                    Task {
+                        await IconStore.clearAlbum(slot)
+                        refresh()
+                    }
                 }
                 .buttonStyle(.borderless)
+            }
+        }
+        .overlay(alignment: .bottomLeading) {
+            if let errorText {
+                Text(errorText).font(.caption2).foregroundStyle(.red).offset(y: 14)
             }
         }
         .onAppear { image = IconStore.image(for: slot) }
@@ -323,7 +334,13 @@ struct IconRow: View {
             Task {
                 if let data = try? await newItem.loadTransferable(type: Data.self), let img = UIImage(data: data) {
                     IconStore.save(img, for: slot)
-                    image = IconStore.image(for: slot)
+                    image = img
+                    do {
+                        try await IconStore.putInAlbum(slot, assetID: newItem.itemIdentifier, image: img)
+                        errorText = nil
+                    } catch {
+                        errorText = "放进相簿失败：" + error.localizedDescription
+                    }
                     refresh()
                 }
                 item = nil
