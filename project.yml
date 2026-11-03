@@ -19,10 +19,11 @@ targets:
     info:
       path: App/Info.plist
       properties:
-        CFBundleDisplayName: NBA赛程
+        CFBundleDisplayName: 阿波
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
+        NSHealthShareUsageDescription: 读取今日步数等健康数据，显示在 App 和小组件里
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
     settings:
       base:
@@ -39,11 +40,12 @@ targets:
     info:
       path: Widget/Info.plist
       properties:
-        CFBundleDisplayName: NBA赛程
+        CFBundleDisplayName: 阿波
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
+        NSHealthShareUsageDescription: 读取今日步数等健康数据，显示在 App 和小组件里
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.hmb269.nbawidget.widget

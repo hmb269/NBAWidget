@@ -17,6 +17,8 @@ struct ContentView: View {
     @State private var games: [Game] = []
     @State private var loading = false
     @State private var errorText: String?
+    @State private var steps: HealthService.StepResult?
+    @State private var healthMessage: String?
     private let favorites = myTeams
 
     private var sortedGames: [Game] {
@@ -26,6 +28,21 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section(header: Text("健康")) {
+                    HStack {
+                        Label("今日步数", systemImage: "figure.walk")
+                        Spacer()
+                        Text(steps?.steps.map { $0.formatted() } ?? "--")
+                            .font(.title3.weight(.semibold).monospacedDigit())
+                    }
+                    if let note = healthMessage ?? steps?.note {
+                        Text(note).font(.footnote).foregroundStyle(.orange)
+                    }
+                    Button("授权 / 重新读取健康数据") {
+                        Task { await authorizeAndLoad() }
+                    }
+                }
+
                 Section {
                     Picker("日期", selection: $day) {
                         Text("今天").tag(0)
@@ -51,15 +68,29 @@ struct ContentView: View {
                 }
 
                 Section(header: Text("小组件")) {
-                    Text("长按桌面空白处 → 编辑 → 添加小组件 → 搜索「NBA赛程」，左右滑动可以选「今日 NBA」或「明日 NBA」。\n点一下小组件：多页时翻页，只有一页时刷新。\n湖人、76人的比赛排在最上面，队名显示为红色。")
+                    Text("长按桌面空白处 → 编辑 → 添加小组件 → 搜索「阿波」，左右滑动可以选「今日 NBA」「明日 NBA」「今日步数」。\n点一下小组件：多页时翻页，只有一页时刷新。\n湖人、76人的比赛排在最上面，队名显示为红色。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
             }
-            .navigationTitle("NBA 赛程")
-            .refreshable { await load() }
+            .navigationTitle("阿波")
+            .refreshable { await load(); await loadSteps() }
             .task(id: day) { await load() }
+            .task { await authorizeAndLoad() }
         }
+    }
+
+    private func authorizeAndLoad() async {
+        healthMessage = await HealthService.requestAccess()
+        await loadSteps()
+    }
+
+    private func loadSteps() async {
+        steps = await HealthService.loadSteps()
+        if healthMessage == nil, steps?.steps == 0 {
+            healthMessage = "显示 0 步：可能今天还没走，或者没给读取权限（设置 → 健康 → 数据访问与设备 → 阿波）"
+        }
+        WidgetCenter.shared.reloadTimelines(ofKind: "HealthSteps")
     }
 
     private func load() async {

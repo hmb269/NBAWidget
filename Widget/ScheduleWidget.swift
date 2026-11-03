@@ -7,6 +7,7 @@ struct NBAWidgetBundle: WidgetBundle {
     var body: some Widget {
         TodayWidget()
         TomorrowWidget()
+        StepsWidget()
     }
 }
 
