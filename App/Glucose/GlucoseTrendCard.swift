@@ -133,10 +133,10 @@ struct GlucoseTrendCard: View {
             }
 
             HStack(spacing: 0) {
-                stat("最新", data.last.map { String(format: "%.1f", $0.1) })
+                stat("最新", data.last.map { String(format: "%.1f", $0.1) }, jump: data.last?.0)
                 stat("平均", values.isEmpty ? nil : String(format: "%.1f", values.reduce(0, +) / Double(values.count)))
-                stat("最高", values.max().map { String(format: "%.1f", $0) })
-                stat("最低", values.min().map { String(format: "%.1f", $0) })
+                stat("最高", values.max().map { String(format: "%.1f", $0) }, jump: data.max { $0.1 < $1.1 }?.0)
+                stat("最低", values.min().map { String(format: "%.1f", $0) }, jump: data.min { $0.1 < $1.1 }?.0)
                 stat("超线", values.isEmpty ? nil : "\(values.filter { $0 > kind.safeLine }.count)/\(values.count)")
             }
         }
@@ -196,7 +196,7 @@ struct GlucoseTrendCard: View {
             }
         }
         .chartYScale(domain: lo...hi)
-        .chartXSelection(value: $selected)
+        .tapToSelect($selected)
         .chartYAxis {
             AxisMarks(position: .trailing, values: .automatic(desiredCount: 4)) { v in
                 AxisGridLine().foregroundStyle(.white.opacity(0.08))
@@ -214,13 +214,26 @@ struct GlucoseTrendCard: View {
         }
     }
 
-    private func stat(_ title: String, _ value: String?) -> some View {
-        VStack(spacing: 3) {
-            Text(value ?? "--")
-                .font(.system(size: 17, weight: .bold, design: .rounded).monospacedDigit())
-            Text(title).font(.caption2).foregroundStyle(.secondary)
+    /// 统计数字；带 jump 的点一下会在图上选中那个点
+    private func stat(_ title: String, _ value: String?, jump: Date? = nil) -> some View {
+        Button {
+            if let jump { withAnimation(.easeOut(duration: 0.2)) { selected = jump } }
+        } label: {
+            VStack(spacing: 3) {
+                Text(value ?? "--")
+                    .font(.system(size: 17, weight: .bold, design: .rounded).monospacedDigit())
+                HStack(spacing: 2) {
+                    Text(title)
+                    if jump != nil { Image(systemName: "scope").font(.system(size: 8)) }
+                }
+                .font(.caption2)
+                .foregroundStyle(jump != nil ? kind.color : .secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
         }
-        .frame(maxWidth: .infinity)
+        .buttonStyle(.plain)
+        .disabled(jump == nil)
     }
 
     private func label(_ d: Date) -> String {

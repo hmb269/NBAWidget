@@ -116,10 +116,14 @@ struct HealthDetailView: View {
                         .foregroundStyle(AppColor.rem)
                 }
                 if let p = picked {
-                    RuleMark(x: .value("日期", p.date, unit: .day)).foregroundStyle(.white.opacity(0.3))
+                    RuleMark(x: .value("日期", p.date, unit: .day))
+                        .foregroundStyle(.white.opacity(0.3))
+                        .annotation(position: .top, spacing: 4, overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
+                            bubble(p)
+                        }
                 }
             }
-            .chartXSelection(value: $selected)
+            .tapToSelect($selected)
             .chartYAxis { axisY }
             .chartXAxis { axisX }
         case .steps:
@@ -129,8 +133,15 @@ struct HealthDetailView: View {
                         .foregroundStyle(picked?.date == v.date ? Color.white : kind.color)
                         .cornerRadius(4)
                 }
+                if let p = picked {
+                    RuleMark(x: .value("日期", p.date, unit: .day))
+                        .foregroundStyle(.clear)
+                        .annotation(position: .top, spacing: 4, overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
+                            bubble(p)
+                        }
+                }
             }
-            .chartXSelection(value: $selected)
+            .tapToSelect($selected)
             .chartYAxis { axisY }
             .chartXAxis { axisX }
         default:
@@ -155,10 +166,13 @@ struct HealthDetailView: View {
                     RuleMark(x: .value("日期", p.date, unit: .day)).foregroundStyle(.white.opacity(0.3))
                     PointMark(x: .value("日期", p.date, unit: .day), y: .value("值", p.value))
                         .symbolSize(90).foregroundStyle(.white)
+                        .annotation(position: .top, spacing: 6, overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
+                            bubble(p)
+                        }
                 }
             }
             .chartYScale(domain: (lo - pad)...(hi + pad))
-            .chartXSelection(value: $selected)
+            .tapToSelect($selected)
             .chartYAxis { axisY }
             .chartXAxis { axisX }
         }
@@ -202,23 +216,52 @@ struct HealthDetailView: View {
     // 统计
     private var stats: some View {
         let v = values.map(\.value)
+        let maxDay = values.max { $0.value < $1.value }?.date
+        let minDay = values.min { $0.value < $1.value }?.date
         return HStack(spacing: 0) {
             stat("平均", v.isEmpty ? nil : kind.format(v.reduce(0, +) / Double(v.count)))
-            stat("最高", v.max().map(kind.format))
-            stat("最低", v.min().map(kind.format))
+            stat("最高", v.max().map(kind.format), jump: maxDay)
+            stat("最低", v.min().map(kind.format), jump: minDay)
             stat("天数", v.isEmpty ? nil : "\(v.count)")
         }
         .padding(.vertical, 14)
         .glassCard(22)
     }
 
-    private func stat(_ t: String, _ v: String?) -> some View {
-        VStack(spacing: 3) {
-            Text(v ?? "--").font(.system(size: 16, weight: .bold, design: .rounded).monospacedDigit())
-                .lineLimit(1).minimumScaleFactor(0.7)
-            Text(t).font(.caption2).foregroundStyle(.secondary)
+    /// 统计数字；带 jump 的点一下会在图上选中那一天
+    private func stat(_ t: String, _ v: String?, jump: Date? = nil) -> some View {
+        Button {
+            if let jump { withAnimation(.easeOut(duration: 0.2)) { selected = jump } }
+        } label: {
+            VStack(spacing: 3) {
+                Text(v ?? "--").font(.system(size: 16, weight: .bold, design: .rounded).monospacedDigit())
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                HStack(spacing: 2) {
+                    Text(t)
+                    if jump != nil { Image(systemName: "scope").font(.system(size: 8)) }
+                }
+                .font(.caption2)
+                .foregroundStyle(jump != nil ? kind.color : .secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
         }
-        .frame(maxWidth: .infinity)
+        .buttonStyle(.plain)
+        .disabled(jump == nil)
+    }
+
+    /// 图上的小气泡：日期 + 数值
+    private func bubble(_ p: DayValue) -> some View {
+        VStack(spacing: 1) {
+            Text(kind.format(p.value) + (kind == .sleep ? "" : " " + kind.unit))
+                .font(.system(size: 13, weight: .bold, design: .rounded).monospacedDigit())
+            Text(dayText(p.date, weekday: true))
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .glassCard(10)
     }
 
     // 每天一行
@@ -267,5 +310,23 @@ struct HealthDetailView: View {
         f.locale = Locale(identifier: "zh_CN")
         f.dateFormat = weekday ? "M月d日 EEE" : "M/d"
         return f.string(from: d)
+    }
+}
+
+extension View {
+    /// 在图表上点一下，选中最近的那个日期（和左右翻页不冲突）
+    func tapToSelect(_ selected: Binding<Date?>) -> some View {
+        self.chartOverlay { proxy in
+            GeometryReader { geo in
+                Rectangle().fill(.clear).contentShape(Rectangle())
+                    .onTapGesture { location in
+                        guard let plot = proxy.plotFrame else { return }
+                        let x = location.x - geo[plot].origin.x
+                        if let d: Date = proxy.value(atX: x) {
+                            withAnimation(.easeOut(duration: 0.15)) { selected.wrappedValue = d }
+                        }
+                    }
+            }
+        }
     }
 }
