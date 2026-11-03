@@ -88,6 +88,22 @@ struct HealthEntry: TimelineEntry {
         return (d > 0 ? "+" : "-") + (m >= 60 ? "\(m / 60)时\(m % 60)分" : "\(m)分")
     }
 
+    /// 深睡、核心：和前一晚比，多 1 分钟以上绿色，少 1 分钟以上红色
+    var deepColor: Color? { HealthEntry.compare(sleep.value?.deep, prevSleep.value?.deep) }
+    var coreColor: Color? { HealthEntry.compare(sleep.value?.core, prevSleep.value?.core) }
+    /// 快速眼动：看占总睡眠的比例，≥20% 绿色，15%~20% 正常，<15% 红色
+    var remColor: Color? {
+        guard let s = sleep.value, s.asleep > 0 else { return nil }
+        let r = s.rem / s.asleep
+        if r >= 0.20 { return HealthColor.more }
+        if r < 0.15 { return HealthColor.less }
+        return nil
+    }
+    static func compare(_ a: TimeInterval?, _ b: TimeInterval?) -> Color? {
+        guard let a, let b, abs(a - b) >= 60 else { return nil }
+        return a > b ? HealthColor.more : HealthColor.less
+    }
+
     var sleepValue: String { sleep.value.map { HealthFormat.duration($0.asleep) } ?? "--" }
     var sleepFoot: String {
         if let n = sleep.note { return n }
@@ -252,9 +268,9 @@ struct MediumHealthView: View {
                 if let s = entry.sleep.value {
                     // 三列两行：上面一行名称，下面一行时长
                     HStack(alignment: .top, spacing: 0) {
-                        stageColumn("深睡", s.deep, HealthColor.deep)
-                        stageColumn("核心", s.core, HealthColor.core)
-                        stageColumn("眼动", s.rem, HealthColor.rem)
+                        stageColumn("深睡", s.deep, HealthColor.deep, entry.deepColor)
+                        stageColumn("核心", s.core, HealthColor.core, entry.coreColor)
+                        stageColumn("眼动", s.rem, HealthColor.rem, entry.remColor)
                     }
                     .padding(.top, 2)
                 }
@@ -289,7 +305,7 @@ struct MediumHealthView: View {
         return d > 0 ? HealthColor.more : HealthColor.less
     }
 
-    private func stageColumn(_ name: String, _ t: TimeInterval, _ color: Color) -> some View {
+    private func stageColumn(_ name: String, _ t: TimeInterval, _ color: Color, _ valueColor: Color?) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 3) {
                 Circle().fill(color).frame(width: 6, height: 6)
@@ -297,6 +313,7 @@ struct MediumHealthView: View {
             }
             Text(HealthFormat.clock(t))
                 .font(.system(size: 12, weight: .semibold, design: .rounded).monospacedDigit())
+                .foregroundStyle(valueColor ?? Color.primary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -357,22 +374,23 @@ struct LargeHealthView: View {
             Spacer(minLength: 4)
             if let s = entry.sleep.value {
                 VStack(alignment: .leading, spacing: 3) {
-                    stage("深睡", s.deep, HealthColor.deep)
-                    stage("核心", s.core, HealthColor.core)
-                    stage("快速眼动", s.rem, HealthColor.rem)
+                    stage("深睡", s.deep, HealthColor.deep, entry.deepColor)
+                    stage("核心", s.core, HealthColor.core, entry.coreColor)
+                    stage("快速眼动", s.rem, HealthColor.rem, entry.remColor)
                 }
             }
         }
         .card()
     }
 
-    private func stage(_ name: String, _ t: TimeInterval, _ color: Color) -> some View {
+    private func stage(_ name: String, _ t: TimeInterval, _ color: Color, _ valueColor: Color?) -> some View {
         HStack(spacing: 5) {
             Circle().fill(color).frame(width: 7, height: 7)
             Text(name).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
             Spacer(minLength: 4)
             Text(HealthFormat.clock(t))
                 .font(.system(size: 12, weight: .semibold, design: .rounded).monospacedDigit())
+                .foregroundStyle(valueColor ?? Color.primary)
         }
         .frame(width: 104)
     }
