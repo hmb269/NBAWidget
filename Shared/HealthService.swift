@@ -47,6 +47,7 @@ enum HealthService {
         var ms: Double                // 昨晚睡眠期间的平均值；没有就用最近一次
         var overnight: Bool
         var weekAverage: Double?
+        var previous: Double?         // 前一晚的平均值，用来比较升降
     }
 
     /// 读取结果：值 + 更新时间 + 说明（出错或用了缓存时）
@@ -66,11 +67,11 @@ enum HealthService {
 
     // MARK: - 睡眠
 
-    /// 昨晚的睡眠：昨天 18:00 到今天 15:00 之间。
+    /// 昨晚的睡眠：昨天 18:00 到今天 15:00 之间（nightsAgo = 1 是前一晚）。
     /// iPhone 和手表都会记，选睡眠最长的那个来源，避免重复。
-    static func lastNightSleep() async throws -> SleepData? {
+    static func lastNightSleep(nightsAgo: Int = 0) async throws -> SleepData? {
         let cal = Calendar.current
-        let today = cal.startOfDay(for: Date())
+        let today = cal.date(byAdding: .day, value: -nightsAgo, to: cal.startOfDay(for: Date()))!
         let start = cal.date(byAdding: .hour, value: -6, to: today)!
         let end = min(Date(), cal.date(byAdding: .hour, value: 15, to: today)!)
         let samples = try await categorySamples(sleepType, from: start, to: end)
@@ -122,24 +123,61 @@ enum HealthService {
 
     // MARK: - 心率变异性
 
-    /// 昨晚睡眠期间的平均 HRV（手表夜间测量），没有就用最近一次；附 7 日均值
-    static func recentHRV(sleep: SleepData?) async throws -> HRVData? {
+    /// 恢复心率变异性：昨晚睡眠期间的平均 HRV（手表夜间测量），没有就用最近一次；
+    /// 附前一晚的平均值和 7 日均值
+    static func recentHRV(sleep: SleepData?, prevSleep: SleepData? = nil) async throws -> HRVData? {
         let ms = HKUnit.secondUnit(with: .milli)
-        let weekStart = Calendar.current.date(byAdding: .day, value: -7, to: Date())!
-        let samples = try await quantitySamples(hrvType, from: weekStart, to: Date(), limit: 500)
+        let cal = Calendar.current
+        let from = cal.date(byAdding: .day, value: -8, to: Date())!
+        let samples = try await quantitySamples(hrvType, from: from, to: Date(), limit: 800)
         guard let latest = samples.first else { return nil }
 
-        let values = samples.map { $0.quantity.doubleValue(for: ms) }
-        let weekAvg = values.reduce(0, +) / Double(values.count)
+        let week = samples.filter { $0.endDate > cal.date(byAdding: .day, value: -7, to: Date())! }
+            .map { $0.quantity.doubleValue(for: ms) }
+        let weekAvg = week.isEmpty ? nil : week.reduce(0, +) / Double(week.count)
 
-        if let bed = sleep?.bedtime, let wake = sleep?.wake {
-            let night = samples.filter { $0.startDate >= bed.addingTimeInterval(-1800) && $0.endDate <= wake.addingTimeInterval(1800) }
-            if !night.isEmpty {
-                let avg = night.map { $0.quantity.doubleValue(for: ms) }.reduce(0, +) / Double(night.count)
-                return HRVData(ms: avg, overnight: true, weekAverage: weekAvg)
+        // 某一晚的平均：有睡眠记录就按入睡到醒来，没有就按 20:00 到次日 10:00
+        func nightAverage(_ sleep: SleepData?, nightsAgo: Int) -> Double? {
+            let s: Date, e: Date
+            if let b = sleep?.bedtime, let w = sleep?.wake {
+                s = b.addingTimeInterval(-1800); e = w.addingTimeInterval(1800)
+            } else {
+                let day = cal.date(byAdding: .day, value: -nightsAgo, to: cal.startOfDay(for: Date()))!
+                s = day.addingTimeInterval(-4 * 3600); e = day.addingTimeInterval(10 * 3600)
             }
+            let v = samples.filter { $0.startDate >= s && $0.endDate <= e }.map { $0.quantity.doubleValue(for: ms) }
+            return v.isEmpty ? nil : v.reduce(0, +) / Double(v.count)
         }
-        return HRVData(ms: latest.quantity.doubleValue(for: ms), overnight: false, weekAverage: weekAvg)
+
+        let last = nightAverage(sleep, nightsAgo: 0)
+        let prev = nightAverage(prevSleep, nightsAgo: 1)
+        if let last {
+            return HRVData(ms: last, overnight: true, weekAverage: weekAvg, previous: prev)
+        }
+        // 昨晚没测到：用最近一次，和它之前那一晚比
+        return HRVData(ms: latest.quantity.doubleValue(for: ms), overnight: false, weekAverage: weekAvg, previous: prev)
+    }
+
+    // MARK: - 体重趋势
+
+    struct WeightPoint: Codable {
+        var date: Date
+        var kg: Double
+    }
+
+    /// 最近若干天的体重，每天取最后一次记录，按日期从早到晚
+    static func weightHistory(days: Int) async throws -> [WeightPoint] {
+        let cal = Calendar.current
+        let start = cal.date(byAdding: .day, value: -days, to: cal.startOfDay(for: Date()))!
+        let samples = try await quantitySamples(massType, from: start, to: Date(), limit: 1000)
+        var perDay: [Date: HKQuantitySample] = [:]
+        for smp in samples { // 最新的在前，所以每天第一次遇到的就是当天最后一次
+            let d = cal.startOfDay(for: smp.endDate)
+            if perDay[d] == nil { perDay[d] = smp }
+        }
+        return perDay.keys.sorted().map {
+            WeightPoint(date: $0, kg: perDay[$0]!.quantity.doubleValue(for: .gramUnit(with: .kilo)))
+        }
     }
 
     // MARK: - 带缓存的读取（锁屏时读不到就显示上一次的值）

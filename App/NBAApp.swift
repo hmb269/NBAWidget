@@ -38,7 +38,7 @@ struct ContentView: View {
                         }
                         return t
                     })
-                    HealthRow(icon: "waveform.path.ecg", title: "心率变异性", value: health.hrv.map { "\(Int($0.ms.rounded())) 毫秒" })
+                    HealthRow(icon: "waveform.path.ecg", title: "恢复心率变异性", value: health.hrv.map { "\(Int($0.ms.rounded())) 毫秒" })
                     HealthRow(icon: "figure.walk", title: "今日步数", value: health.steps.map { $0.formatted() })
                     HealthRow(icon: "sun.horizon.fill", title: "日出 / 日落", value: SunTimes.times().map { HealthFormat.time($0.sunrise) + " / " + HealthFormat.time($0.sunset) })
                     if let note = healthMessage {
@@ -96,7 +96,7 @@ struct ContentView: View {
         var errors: [String] = []
         do { h.sleep = try await HealthService.lastNightSleep() } catch { errors.append("睡眠：" + HealthService.describe(error)) }
         do { h.weight = try await HealthService.latestWeight() } catch { errors.append("体重：" + HealthService.describe(error)) }
-        do { h.hrv = try await HealthService.recentHRV(sleep: h.sleep) } catch { errors.append("HRV：" + HealthService.describe(error)) }
+        do { h.hrv = try await HealthService.recentHRV(sleep: h.sleep, prevSleep: try? await HealthService.lastNightSleep(nightsAgo: 1)) } catch { errors.append("HRV：" + HealthService.describe(error)) }
         do { h.steps = try await HealthService.todaySteps() } catch { errors.append("步数：" + HealthService.describe(error)) }
         health = h
         if healthMessage == nil, !errors.isEmpty { healthMessage = errors.joined(separator: "\n") }
