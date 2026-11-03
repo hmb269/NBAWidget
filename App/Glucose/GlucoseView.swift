@@ -80,6 +80,34 @@ enum GlucoseStore {
         return (samples.count, skipped)
     }
 
+    /// 把 App 里的餐点标签写回健康：只改「阿波」导入的记录（同步标识以 accuchek- 开头）。
+    /// 用同一个同步标识、更高的版本号重新保存，健康会用新的替换旧的，不会重复。
+    /// 返回（写入条数，跳过条数）
+    static func writeTags(_ records: [GlucoseRecord], label: (GlucoseRecord) -> String?) async throws -> (Int, Int) {
+        let version = Int(Date().timeIntervalSince1970)
+        var samples: [HKQuantitySample] = []
+        var skipped = 0
+        for r in records {
+            guard r.id.hasPrefix("accuchek-") else { skipped += 1; continue }
+            guard let tag = label(r) else { continue }
+            var meta: [String: Any] = [
+                HKMetadataKeySyncIdentifier: r.id,
+                HKMetadataKeySyncVersion: version,
+                HKMetadataKeyWasUserEntered: false,
+                mealKey: tag
+            ]
+            if tag.contains("后") {
+                meta[HKMetadataKeyBloodGlucoseMealTime] = HKBloodGlucoseMealTime.postprandial.rawValue
+            } else if tag.contains("前") && tag != "睡前" || tag == "空腹" {
+                meta[HKMetadataKeyBloodGlucoseMealTime] = HKBloodGlucoseMealTime.preprandial.rawValue
+            }
+            samples.append(HKQuantitySample(type: type, quantity: HKQuantity(unit: unit, doubleValue: r.mmol),
+                                            start: r.date, end: r.date, metadata: meta))
+        }
+        if !samples.isEmpty { try await HealthService.store.save(samples) }
+        return (samples.count, skipped)
+    }
+
     static func load(days: Int = 180) async throws -> [GlucoseRecord] {
         let start = Calendar.current.date(byAdding: .day, value: -days, to: Date())!
         let predicate = HKQuery.predicateForSamples(withStart: start, end: Date(), options: [])
@@ -157,6 +185,7 @@ struct GlucoseView: View {
     @State private var records: [GlucoseRecord] = []
     @State private var tags: [String: String] = GlucoseTags.all
     @State private var message: String?
+    @State private var working = false
     @State private var mealTick = 0   // 改了三餐时间后刷新标签
     @State private var pushing = false
 
@@ -186,6 +215,28 @@ struct GlucoseView: View {
                 }
                 .disabled(pushing || records.isEmpty)
                 Text(sync.status).font(.footnote).foregroundStyle(.secondary)
+                HStack(spacing: 12) {
+                    Button {
+                        Task { await writeToHealth() }
+                    } label: {
+                        Label("写入健康", systemImage: "square.and.arrow.up")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(working)
+
+                    Button {
+                        Task {
+                            await reload()
+                            message = "已从健康读取 \(records.count) 条记录"
+                        }
+                    } label: {
+                        Label("从健康读取", systemImage: "square.and.arrow.down")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(working)
+                }
                 if let message {
                     Text(message).font(.footnote).foregroundStyle(.green)
                 }
@@ -268,6 +319,21 @@ struct GlucoseView: View {
                     .padding(.vertical, 4)
                     .background(Capsule().fill(Color.accentColor.opacity(0.12)))
             }
+        }
+    }
+
+    private func writeToHealth() async {
+        working = true
+        defer { working = false }
+        do {
+            try await GlucoseStore.requestAccess()
+            let (n, skipped) = try await GlucoseStore.writeTags(records) { r in tags[r.id] ?? GlucoseTags.auto(r) }
+            var t = "已把 \(n) 条记录的餐点写入健康"
+            if skipped > 0 { t += "；\(skipped) 条是其他 App（如 mySugr）写的，无法修改，已跳过" }
+            message = t
+            await reload()
+        } catch {
+            message = "写入失败：\(error.localizedDescription)"
         }
     }
 
