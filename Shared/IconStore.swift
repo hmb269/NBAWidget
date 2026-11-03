@@ -138,6 +138,15 @@ enum IconStore {
         let st = PHPhotoLibrary.authorizationStatus(for: .readWrite)
         guard st == .authorized || st == .limited, let col = album(slot) else { return nil }
         guard let asset = PHAsset.fetchAssets(in: col, options: nil).lastObject else { return nil }
+
+        // 同一张照片（标识和修改时间都没变）直接用缓存，不再解码
+        let d = UserDefaults.standard
+        let stamp = asset.localIdentifier + "|" + String(asset.modificationDate?.timeIntervalSince1970 ?? 0)
+        let stampKey = "album_stamp_" + slot.rawValue, dataKey = "album_data_" + slot.rawValue
+        if d.string(forKey: stampKey) == stamp, let data = d.data(forKey: dataKey), let img = UIImage(data: data) {
+            return img
+        }
+
         let ro = PHImageRequestOptions()
         ro.isSynchronous = true
         ro.deliveryMode = .highQualityFormat
@@ -146,6 +155,10 @@ enum IconStore {
         var out: UIImage?
         PHImageManager.default().requestImage(for: asset, targetSize: CGSize(width: 240, height: 240),
                                               contentMode: .aspectFill, options: ro) { img, _ in out = img }
+        if let out, let data = out.jpegData(compressionQuality: 0.85) {
+            d.set(data, forKey: dataKey)
+            d.set(stamp, forKey: stampKey)
+        }
         return out
     }
 

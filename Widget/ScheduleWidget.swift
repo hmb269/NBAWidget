@@ -90,17 +90,23 @@ struct Provider: TimelineProvider {
 
     func placeholder(in context: Context) -> ScheduleEntry { .sample(day) }
 
+    /// 上一次时间线的结果（按 今天/明天 + 尺寸 分开存），快照时直接用，不再联网
+    private static var lastEntries: [String: ScheduleEntry] = [:]
+    private func cacheKey(_ context: Context) -> String { "\(day.rawValue)-\(context.family)" }
+
     func getSnapshot(in context: Context, completion: @escaping (ScheduleEntry) -> Void) {
         if context.isPreview {
             completion(.sample(day))
             return
         }
+        if let last = Provider.lastEntries[cacheKey(context)] { completion(last); return }
         Task { completion(await makeEntry(context)) }
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<ScheduleEntry>) -> Void) {
         Task {
             let entry = await makeEntry(context)
+            Provider.lastEntries[cacheKey(context)] = entry
             let now = Date()
             let live = entry.games.contains { $0.state == "in" }
             let soon = entry.games.contains { $0.state == "pre" && $0.time.timeIntervalSince(now) < 1800 }

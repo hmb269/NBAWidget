@@ -175,14 +175,19 @@ struct HealthEntry: TimelineEntry {
 struct HealthProvider: TimelineProvider {
     func placeholder(in context: Context) -> HealthEntry { .sample }
 
+    /// 上一次时间线读到的结果。系统要快照（编辑模式、长按菜单、切页动画）时直接用它，不再重新读健康数据
+    private static var lastEntry: HealthEntry?
+
     func getSnapshot(in context: Context, completion: @escaping (HealthEntry) -> Void) {
         if context.isPreview { completion(.sample); return }
+        if let last = HealthProvider.lastEntry { completion(last); return }
         Task { completion(await HealthEntry.load()) }
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<HealthEntry>) -> Void) {
         Task {
             let entry = await HealthEntry.load()
+            HealthProvider.lastEntry = entry
             let next = Calendar.current.date(byAdding: .minute, value: 15, to: Date())!
             completion(Timeline(entries: [entry], policy: .after(next)))
         }
