@@ -16,7 +16,7 @@ enum HealthService {
     static func requestAccess() async -> String? {
         guard isAvailable else { return "这台设备不支持健康数据" }
         do {
-            try await store.requestAuthorization(toShare: [], read: MetricKind.readTypes.union([stepType, massType, hrvType, sleepType]))
+            try await store.requestAuthorization(toShare: [], read: [stepType, massType, hrvType, sleepType])
             return nil
         } catch {
             return "授权失败：\(error.localizedDescription)"
@@ -350,7 +350,7 @@ enum HealthService {
 
     // MARK: - 底层查询
 
-    static func sum(_ type: HKQuantityType, unit: HKUnit, from: Date, to: Date) async throws -> Double {
+    private static func sum(_ type: HKQuantityType, unit: HKUnit, from: Date, to: Date) async throws -> Double {
         let predicate = HKQuery.predicateForSamples(withStart: from, end: to, options: .strictStartDate)
         return try await withCheckedThrowingContinuation { cont in
             let q = HKStatisticsQuery(quantityType: type, quantitySamplePredicate: predicate, options: .cumulativeSum) { _, stats, error in
@@ -366,11 +366,11 @@ enum HealthService {
     }
 
     /// 按时间倒序（最新的在前）
-    static func quantitySamples(_ type: HKQuantityType, from: Date, to: Date, limit: Int) async throws -> [HKQuantitySample] {
+    private static func quantitySamples(_ type: HKQuantityType, from: Date, to: Date, limit: Int) async throws -> [HKQuantitySample] {
         try await samples(type, from: from, to: to, limit: limit, ascending: false).compactMap { $0 as? HKQuantitySample }
     }
 
-    static func categorySamples(_ type: HKCategoryType, from: Date, to: Date) async throws -> [HKCategorySample] {
+    private static func categorySamples(_ type: HKCategoryType, from: Date, to: Date) async throws -> [HKCategorySample] {
         try await samples(type, from: from, to: to, limit: HKObjectQueryNoLimit, ascending: true).compactMap { $0 as? HKCategorySample }
     }
 
