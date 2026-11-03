@@ -263,10 +263,30 @@ struct GlucoseView: View {
     @State private var pickedDay: Date?
     @State private var showCalendar = false
     @State private var editing: GlucoseRecord?
+    @State private var cloudBackup = false
+    @State private var backupTick = 0
     @State private var missingIDs: Set<String> = []
 
     var body: some View {
         PageScroll(title: "血糖", subtitle: "\(records.count) 条记录 · 罗氏智航") {
+            if AutoBackup.cloudOverdue, backupTick >= 0 {
+                CardSection {
+                    HStack(spacing: 10) {
+                        Image(systemName: "icloud.and.arrow.up.fill").foregroundStyle(.orange)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("该备份到 iCloud 了").font(.subheadline.weight(.semibold))
+                            Text("上次：" + AutoBackup.ago(AutoBackup.lastCloud) + "，删 App 或换手机时靠它恢复")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("备份") { cloudBackup = true }
+                            .font(.subheadline.weight(.semibold))
+                            .glassButton()
+                    }
+                    .padding(.vertical, 10)
+                }
+            }
+
             GlucoseTrendCard(points: shown.map {
                 ($0.date, $0.mmol, label($0) ?? "", $0.note, $0.photos?.first.flatMap(GlucoseMedia.thumb))
             })
@@ -383,6 +403,10 @@ struct GlucoseView: View {
             }
         }
         .refreshable { await readFromHealth() }
+        .cloudBackup(isPresented: $cloudBackup) { msg in
+            message = msg
+            backupTick += 1
+        }
         .sheet(item: $editing) { r in
             GlucoseRecordSheet(record: r, tag: label(r), owner: owners[r.id] ?? GlucosePeople.me,
                                missing: missingIDs) { note, photos in

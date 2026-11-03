@@ -167,7 +167,7 @@ struct RootView: View {
         .tint(Color(red: 0.40, green: 0.88, blue: 0.88))
         .preferredColorScheme(.dark)
         .onChange(of: scenePhase) { _, phase in
-            if phase == .background, AutoBackup.isSet { AutoBackup.run() }
+            if phase == .background { AutoBackup.run() }
         }
     }
 
@@ -617,14 +617,8 @@ struct SettingsView: View {
     @State private var iconTick = 0
 
     // 备份
-    @State private var exporting = false
-    @State private var exportDoc: BackupDocument?
+    @State private var cloudBackup = false
     @State private var importing = false
-    @State private var pickFolder = false
-    @State private var folderPurpose: FolderPurpose = .cloud
-    @State private var setupTarget: AutoBackup.Target?
-    @State private var exportFolder: URL?
-    enum FolderPurpose { case cloud, local, restore }
     @State private var backupMessage: String?
     @State private var backupTick = 0
 
@@ -666,151 +660,73 @@ struct SettingsView: View {
                 }
             }
         }
-        .fileExporter(isPresented: $exporting, document: exportDoc, contentType: .json,
-                      defaultFilename: GlucoseBackup.fileName) { result in
-            switch result {
-            case .success: backupMessage = "已导出备份文件"
-            case .failure(let e): backupMessage = "导出失败：\(e.localizedDescription)"
-            }
+        .cloudBackup(isPresented: $cloudBackup) { msg in
+            backupMessage = msg
+            backupTick += 1
         }
-        .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { result in
-            switch result {
-            case .success(let url):
-                let ok = url.startAccessingSecurityScopedResource()
-                defer { if ok { url.stopAccessingSecurityScopedResource() } }
+        .sheet(isPresented: $importing) {
+            ImportPicker { url in
+                importing = false
+                guard let url else { return }
                 do {
-                    let data = try Data(contentsOf: url)
-                    backupMessage = try GlucoseBackup.restore(data)
+                    backupMessage = try GlucoseBackup.restore(Data(contentsOf: url))
                 } catch {
                     backupMessage = "导入失败：\(error.localizedDescription)"
                 }
-            case .failure(let e):
-                backupMessage = "导入失败：\(e.localizedDescription)"
-            }
-        }
-        .confirmationDialog(setupTarget.map { "设置\($0.title)" } ?? "", isPresented: Binding(
-            get: { setupTarget != nil }, set: { if !$0 { setupTarget = nil } }), titleVisibility: .visible) {
-            if let t = setupTarget {
-                Button("新建备份文件夹（推荐）") {
-                    folderPurpose = t == .cloud ? .cloud : .local
-                    if let dir = AutoBackup.prepareFolder() {
-                        exportFolder = dir
-                    } else {
-                        backupMessage = "准备备份文件夹失败"
-                    }
-                }
-                Button("选择已有的文件夹") {
-                    folderPurpose = t == .cloud ? .cloud : .local
-                    pickFolder = true
-                }
-                if AutoBackup.isSet(t) {
-                    Button("停用\(t.title)", role: .destructive) {
-                        AutoBackup.clear(t)
-                        backupTick += 1
-                    }
-                }
-            }
-        } message: {
-            Text(setupTarget == .cloud
-                 ? "新建：接下来在「移动到」里选「iCloud 云盘」，点右上角「移动」。"
-                 : "新建：接下来在「移动到」里选「我的 iPhone」，点右上角「移动」。")
-        }
-        .sheet(isPresented: Binding(get: { exportFolder != nil }, set: { if !$0 { exportFolder = nil } })) {
-            if let dir = exportFolder {
-                // 系统的「移动到…」：把建好的「阿波备份」文件夹放到用户选的位置，返回新位置
-                FolderExporter(url: dir) { url in
-                    exportFolder = nil
-                    handleFolder(url)
-                } onCancel: {
-                    exportFolder = nil
-                }
-                .ignoresSafeArea()
-            }
-        }
-        .sheet(isPresented: $pickFolder) {
-            // 用系统原生的文件夹选择器（和上面的 fileImporter 分开，避免两个选择器冲突收不到结果）
-            FolderPicker { url in
-                pickFolder = false
-                handleFolder(url)
-            } onCancel: {
-                pickFolder = false
             }
             .ignoresSafeArea()
         }
     }
 
-    private func handleFolder(_ url: URL) {
-        do {
-            switch folderPurpose {
-            case .cloud:
-                try AutoBackup.setFolder(url, for: .cloud)
-                backupMessage = AutoBackup.run()
-            case .local:
-                try AutoBackup.setFolder(url, for: .local)
-                backupMessage = AutoBackup.run()
-            case .restore:
-                backupMessage = try AutoBackup.restore(from: url)
-            }
-        } catch {
-            backupMessage = "失败：\(error.localizedDescription)"
-        }
-        backupTick += 1
-    }
-
     private var backupCard: some View {
         let _ = backupTick
-        return CardSection(footer: "两个位置都设上最稳：iCloud 防手机丢了坏了，本机防没网或 iCloud 满了。数据一有变化、App 退到后台都会自动备份；照片只备份新增的。删 App、掉签、换手机后，用「从备份文件夹恢复」选同一个文件夹即可。") {
+        return CardSection(footer: "本机备份在「文件」App →「我的 iPhone」→「阿波」→「阿波备份」，数据一有变化就自动更新，掉签不影响，但删 App 会一起删掉。所以每隔几天点一下「备份到 iCloud」，存到 iCloud 云盘（第二次起选「替换」）；删 App、换手机后用「导入备份文件」选它恢复。") {
             CardTitle("数据备份")
-            ForEach(AutoBackup.Target.allCases, id: \.self) { t in
-                RowDivider()
-                Button {
-                    setupTarget = t
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: t == .cloud ? "icloud.fill" : "iphone")
-                            .frame(width: 22)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(t.title).font(.body.weight(.semibold))
-                            Text(AutoBackup.statusText(t)).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                        }
-                        Spacer()
-                        Image(systemName: AutoBackup.isSet(t) ? "checkmark.circle.fill" : "chevron.right")
-                            .foregroundStyle(AutoBackup.isSet(t) ? Color.green : Color.secondary)
-                    }
-                    .padding(.vertical, 8)
-                    .contentShape(Rectangle())
+            RowDivider()
+            HStack(spacing: 10) {
+                Image(systemName: "iphone").frame(width: 22)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("本机自动备份").font(.body.weight(.semibold))
+                    Text("上次：" + AutoBackup.ago(AutoBackup.lastLocal)).font(.caption).foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain)
-            }
-            if AutoBackup.isSet {
-                RowDivider()
-                Button {
+                Spacer()
+                Button("立即备份") {
                     backupMessage = AutoBackup.run()
                     backupTick += 1
-                } label: {
-                    Label("立即备份", systemImage: "arrow.triangle.2.circlepath").padding(.vertical, 10)
                 }
+                .font(.subheadline.weight(.semibold))
             }
+            .padding(.vertical, 8)
             RowDivider()
             Button {
-                folderPurpose = .restore
-                pickFolder = true
+                cloudBackup = true
             } label: {
-                Label("从备份文件夹恢复", systemImage: "arrow.uturn.backward.circle").padding(.vertical, 10)
+                HStack(spacing: 10) {
+                    Image(systemName: "icloud.and.arrow.up.fill").frame(width: 22)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("备份到 iCloud").font(.body.weight(.semibold))
+                        Text("上次：" + AutoBackup.ago(AutoBackup.lastCloud) + (AutoBackup.cloudOverdue ? " · 该备份了" : ""))
+                            .font(.caption)
+                            .foregroundStyle(AutoBackup.cloudOverdue ? Color.orange : Color.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
             RowDivider()
             Button {
-                exportDoc = GlucoseBackup.make().map(BackupDocument.init(data:))
-                exporting = exportDoc != nil
-                if exportDoc == nil { backupMessage = "生成备份失败" }
+                do { backupMessage = try AutoBackup.restoreLocal() } catch { backupMessage = "恢复失败：\(error.localizedDescription)" }
             } label: {
-                Label("导出单个备份文件（含照片，可发微信）", systemImage: "square.and.arrow.up").padding(.vertical, 10)
+                Label("从本机备份恢复", systemImage: "arrow.uturn.backward.circle").padding(.vertical, 10)
             }
             RowDivider()
             Button {
                 importing = true
             } label: {
-                Label("导入备份文件（.json）", systemImage: "square.and.arrow.down").padding(.vertical, 10)
+                Label("导入备份文件（选「阿波备份-完整.json」）", systemImage: "square.and.arrow.down").padding(.vertical, 10)
             }
             if let backupMessage {
                 RowDivider()
@@ -837,63 +753,3 @@ struct SettingsView: View {
 }
 
 
-/// 系统的文件夹选择器：进入要用的文件夹，点「打开」
-struct FolderPicker: UIViewControllerRepresentable {
-    let onPick: (URL) -> Void
-    let onCancel: () -> Void
-
-    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        let c = UIDocumentPickerViewController(forOpeningContentTypes: [.folder], asCopy: false)
-        c.allowsMultipleSelection = false
-        c.delegate = context.coordinator
-        return c
-    }
-
-    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
-
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
-
-    final class Coordinator: NSObject, UIDocumentPickerDelegate {
-        let parent: FolderPicker
-        init(_ p: FolderPicker) { parent = p }
-
-        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-            if let u = urls.first { parent.onPick(u) } else { parent.onCancel() }
-        }
-
-        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
-            parent.onCancel()
-        }
-    }
-}
-
-
-/// 系统的「移动到…」：把一个文件夹移到用户选的位置，返回移动后的地址（App 之后可以继续写这个文件夹）
-struct FolderExporter: UIViewControllerRepresentable {
-    let url: URL
-    let onDone: (URL) -> Void
-    let onCancel: () -> Void
-
-    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        let c = UIDocumentPickerViewController(forExporting: [url], asCopy: false)
-        c.delegate = context.coordinator
-        return c
-    }
-
-    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
-
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
-
-    final class Coordinator: NSObject, UIDocumentPickerDelegate {
-        let parent: FolderExporter
-        init(_ p: FolderExporter) { parent = p }
-
-        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-            if let u = urls.first { parent.onDone(u) } else { parent.onCancel() }
-        }
-
-        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
-            parent.onCancel()
-        }
-    }
-}
