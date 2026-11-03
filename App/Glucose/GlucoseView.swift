@@ -288,7 +288,9 @@ struct GlucoseView: View {
             }
 
             GlucoseTrendCard(points: shown.map {
-                ($0.date, $0.mmol, label($0) ?? "", $0.note, $0.photos?.first.flatMap(GlucoseMedia.thumb))
+                ($0.date, $0.mmol, label($0) ?? "", $0.note, $0.photos?.first.flatMap(GlucoseMedia.thumb), $0.id)
+            }, onOpen: { id in
+                editing = records.first { $0.id == id }
             })
 
             CardSection(footer: "第一次连接：先把血糖仪关机，再长按「OK」键，直到屏幕上蓝牙图标闪烁，然后点「从罗氏智航同步」。弹出配对框时输入血糖仪背面的 6 位 PIN 码。同步下来的记录先存在 App 里，标好是谁测的、什么餐点后，点「写入健康」选择写入谁的记录。") {
@@ -478,7 +480,8 @@ struct GlucoseView: View {
         let owner = owners[r.id] ?? GlucosePeople.me
         let isMe = owner == GlucosePeople.me
         let photos = r.photos ?? []
-        return HStack(alignment: .center) {
+        // 固定布局：时间 | 数值 + 备注 | 照片（固定一格，每行对齐）| 餐点标签
+        return HStack(alignment: .center, spacing: 8) {
             Button {
                 editing = r
             } label: {
@@ -486,40 +489,45 @@ struct GlucoseView: View {
                     Text(timeText(r.date))
                         .font(.subheadline.monospacedDigit())
                         .foregroundStyle(.secondary)
-                        .frame(width: 48, alignment: .leading)
+                        .frame(width: 46, alignment: .leading)
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(alignment: .firstTextBaseline, spacing: 3) {
                             Text(String(format: "%.1f", r.mmol))
                                 .font(.system(size: 24, weight: .bold, design: .rounded).monospacedDigit())
-                            Text("mmol/L").font(.caption).foregroundStyle(.secondary)
+                                .fixedSize()
+                            Text("mmol/L").font(.caption2).foregroundStyle(.secondary).fixedSize()
                         }
                         if let n = r.note, !n.isEmpty {
                             Text(n).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         }
                     }
-                    if let p = photos.first {
-                        GlucosePhotoView(photo: p, missing: p.assetID.map(missingIDs.contains) ?? false, side: 120)
-                            .frame(width: 36, height: 36)
-                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                            .overlay(alignment: .bottomTrailing) {
-                                if photos.count > 1 {
-                                    Text("\(photos.count)")
-                                        .font(.system(size: 9, weight: .bold))
-                                        .padding(.horizontal, 3)
-                                        .background(Capsule().fill(.black.opacity(0.6)))
-                                        .offset(x: 3, y: 3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    // 照片格：有照片显示缩略图，没有显示相机图标，宽度固定
+                    ZStack {
+                        if let p = photos.first {
+                            GlucosePhotoView(photo: p, missing: p.assetID.map(missingIDs.contains) ?? false, side: 120)
+                                .frame(width: 40, height: 40)
+                                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                                .overlay(alignment: .bottomTrailing) {
+                                    if photos.count > 1 {
+                                        Text("\(photos.count)")
+                                            .font(.system(size: 9, weight: .bold))
+                                            .padding(.horizontal, 4)
+                                            .background(Capsule().fill(.black.opacity(0.65)))
+                                            .offset(x: 3, y: 3)
+                                    }
                                 }
-                            }
-                    } else if r.note == nil {
-                        Image(systemName: "camera")
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.25))
+                        } else {
+                            Image(systemName: "camera")
+                                .font(.footnote)
+                                .foregroundStyle(.white.opacity(0.25))
+                        }
                     }
+                    .frame(width: 40, height: 40)
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            Spacer(minLength: 6)
             Menu {
                 Button("照片和备注…", systemImage: "camera") { editing = r }
                 Section("谁测的") {
@@ -556,6 +564,7 @@ struct GlucoseView: View {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
                     .background(Capsule().fill((isMe ? Color.accentColor : Color.orange).opacity(0.12)))
+                    .fixedSize()
             }
         }
     }

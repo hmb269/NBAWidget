@@ -360,9 +360,14 @@ struct GlucoseRecordSheet: View {
                 let cols = Array(repeating: GridItem(.flexible(), spacing: 8), count: 3)
                 LazyVGrid(columns: cols, spacing: 8) {
                     ForEach(photos) { p in
-                        GlucosePhotoView(photo: p, missing: p.assetID.map(missing.contains) ?? false)
-                            .aspectRatio(1, contentMode: .fill)
+                        // 先占一个正方形格子，照片放在里面裁剪，不会溢出盖住别的内容
+                        Color.clear
+                            .aspectRatio(1, contentMode: .fit)
+                            .overlay {
+                                GlucosePhotoView(photo: p, missing: p.assetID.map(missing.contains) ?? false)
+                            }
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                             .onTapGesture { viewing = p }
                             .contextMenu {
                                 Button("从这条记录移除", systemImage: "trash", role: .destructive) {
@@ -402,18 +407,23 @@ struct GlucoseRecordSheet: View {
                 .lineLimit(2...6)
                 .padding(12)
                 .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.white.opacity(0.06)))
-            HStack(spacing: 8) {
-                ForEach(["饭后散步", "运动了", "吃了甜食", "吃得多", "吃得少", "熬夜了"], id: \.self) { q in
-                    Button(q) { note = note.isEmpty ? q : note + "，" + q }
-                        .font(.caption.weight(.semibold))
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(["饭后散步", "运动了", "吃了甜食", "吃得多", "吃得少", "熬夜了"], id: \.self) { q in
+                        Button(q) {
+                            // 已经写过的不重复加
+                            guard !note.contains(q) else { return }
+                            note = note.isEmpty ? q : note + "，" + q
+                        }
+                        .font(.footnote.weight(.semibold))
+                        .fixedSize()
                         .buttonStyle(.plain)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background(Capsule().fill(Color.white.opacity(0.08)))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(note.contains(q) ? Color.accentColor.opacity(0.3) : Color.white.opacity(0.08)))
+                    }
                 }
             }
-            .lineLimit(1)
-            .minimumScaleFactor(0.8)
         }
         .padding(18)
         .glassCard(24)

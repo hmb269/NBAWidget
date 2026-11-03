@@ -37,7 +37,7 @@ enum GlucoseKind: String, CaseIterable, Identifiable {
 }
 
 /// 趋势图上的一个点：时间、数值、餐点、备注、照片小图
-typealias GPoint = (Date, Double, String, String?, UIImage?)
+typealias GPoint = (Date, Double, String, String?, UIImage?, String)   // 最后一个是记录 id
 
 /// 只看某一餐
 enum MealFilter: String, CaseIterable, Identifiable {
@@ -64,6 +64,8 @@ enum MealFilter: String, CaseIterable, Identifiable {
 struct GlucoseTrendCard: View {
     /// (时间, 数值, 标签)
     let points: [GPoint]
+    /// 点「这条记录」打开详情
+    var onOpen: (String) -> Void = { _ in }
 
     @State private var kind: GlucoseKind = .after2
     @State private var days = 30
@@ -135,6 +137,10 @@ struct GlucoseTrendCard: View {
                     .frame(maxWidth: .infinity, minHeight: 120)
             }
 
+            if let p = picked {
+                pickedRow(p)
+            }
+
             HStack(spacing: 0) {
                 stat("最新", data.last.map { String(format: "%.1f", $0.1) }, jump: data.last?.0)
                 stat("平均", values.isEmpty ? nil : String(format: "%.1f", values.reduce(0, +) / Double(values.count)))
@@ -148,6 +154,45 @@ struct GlucoseTrendCard: View {
         .onChange(of: kind) { _, _ in selected = nil }
         .onChange(of: days) { _, _ in selected = nil }
         .onChange(of: meal) { _, _ in selected = nil }
+    }
+
+    /// 选中的点：照片 + 数值 + 时间 + 备注，点一下打开这条记录的「照片和备注」
+    private func pickedRow(_ p: GPoint) -> some View {
+        Button {
+            onOpen(p.5)
+        } label: {
+            HStack(spacing: 10) {
+                Group {
+                    if let img = p.4 {
+                        Image(uiImage: img).resizable().scaledToFill()
+                    } else {
+                        Image(systemName: "camera").foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .background(Color.white.opacity(0.08))
+                    }
+                }
+                .frame(width: 48, height: 48)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text(String(format: "%.1f", p.1))
+                            .font(.system(size: 18, weight: .bold, design: .rounded).monospacedDigit())
+                            .foregroundStyle(p.1 > kind.safeLine ? Color(red: 1.0, green: 0.32, blue: 0.32) : .primary)
+                        Text(label(p.0) + " · " + p.2).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Text(p.3.flatMap { $0.isEmpty ? nil : $0 } ?? (p.4 == nil ? "点这里加照片和备注" : "点这里查看照片和备注"))
+                        .font(.caption)
+                        .foregroundStyle(p.3 == nil ? Color.secondary : Color.primary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(.secondary)
+            }
+            .padding(10)
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.white.opacity(0.06)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private func chart(_ data: [GPoint]) -> some View {
