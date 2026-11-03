@@ -156,12 +156,12 @@ struct HealthHomeView: View {
                 }
                 .padding(.horizontal, 4)
 
-                sleepCard
+                detailLink(.sleep) { sleepCard }
 
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible())], spacing: 14) {
-                    weightCard
-                    hrvCard
-                    stepsCard
+                    detailLink(.weight) { weightCard }
+                    detailLink(.hrv) { hrvCard }
+                    detailLink(.steps) { stepsCard }
                     sunCard
                 }
 
@@ -191,6 +191,22 @@ struct HealthHomeView: View {
         .navigationTitle("阿波")
         .refreshable { await load() }
         .task { await authorizeAndLoad() }
+    }
+
+    /// 点卡片进详情页（最近 7 / 30 天）
+    private func detailLink<C: View>(_ kind: HealthDetailKind, @ViewBuilder _ content: () -> C) -> some View {
+        NavigationLink {
+            HealthDetailView(kind: kind)
+        } label: {
+            content()
+                .overlay(alignment: .topTrailing) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.white.opacity(0.35))
+                        .padding(14)
+                }
+        }
+        .buttonStyle(.plain)
     }
 
     // 睡眠大卡片

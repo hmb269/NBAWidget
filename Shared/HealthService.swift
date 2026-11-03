@@ -10,6 +10,7 @@ enum HealthService {
     /// 普通心率变异性（SDNN）
     private static let sdnnType = HKQuantityType(.heartRateVariabilitySDNN)
     /// 恢复心率变异性（RMSSD，iOS 27 起才有；打包用的 SDK 还没有这个名字，所以按字符串取，旧系统上是 nil）
+    static var hrvTypeForDaily: HKQuantityType { rmssdType ?? sdnnType }
     private static let rmssdType: HKQuantityType? = HKQuantityType.quantityType(
         forIdentifier: HKQuantityTypeIdentifier(rawValue: "HKQuantityTypeIdentifierHeartRateVariabilityRMSSD"))
     private static let sleepType = HKCategoryType(.sleepAnalysis)
@@ -399,6 +400,67 @@ enum HealthService {
             }
             store.execute(q)
         }
+    }
+}
+
+// MARK: - 按天汇总（App 里的详情页用）
+
+struct DayValue: Identifiable {
+    var date: Date
+    var value: Double
+    var id: Date { date }
+}
+
+extension HealthService {
+    /// 最近若干天每天一个值：步数取当天总和，HRV 取当天平均（优先恢复 HRV）
+    static func daily(_ kind: DailyKind, days: Int) async throws -> [DayValue] {
+        let cal = Calendar.current
+        let end = Date()
+        let start = cal.date(byAdding: .day, value: -(days - 1), to: cal.startOfDay(for: end))!
+        let type: HKQuantityType
+        let unit: HKUnit
+        let cumulative: Bool
+        switch kind {
+        case .steps:
+            type = HKQuantityType(.stepCount); unit = .count(); cumulative = true
+        case .hrv:
+            type = hrvTypeForDaily; unit = .secondUnit(with: .milli); cumulative = false
+        }
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
+        return try await withCheckedThrowingContinuation { cont in
+            let q = HKStatisticsCollectionQuery(quantityType: type, quantitySamplePredicate: predicate,
+                                                options: cumulative ? .cumulativeSum : .discreteAverage,
+                                                anchorDate: start, intervalComponents: DateComponents(day: 1))
+            q.initialResultsHandler = { _, results, error in
+                if let error {
+                    if let hk = error as? HKError, hk.code == .errorNoData { cont.resume(returning: []) }
+                    else { cont.resume(throwing: error) }
+                    return
+                }
+                var out: [DayValue] = []
+                results?.enumerateStatistics(from: start, to: end) { st, _ in
+                    let qty = cumulative ? st.sumQuantity() : st.averageQuantity()
+                    if let qty { out.append(DayValue(date: st.startDate, value: qty.doubleValue(for: unit))) }
+                }
+                cont.resume(returning: out)
+            }
+            store.execute(q)
+        }
+    }
+
+    enum DailyKind { case steps, hrv }
+
+    /// 每晚的睡眠（最近 days 晚，从早到晚）
+    static func nightlySleep(days: Int) async -> [(Date, SleepData)] {
+        let cal = Calendar.current
+        var out: [(Date, SleepData)] = []
+        for n in (0..<days).reversed() {
+            if let s = try? await lastNightSleep(nightsAgo: n) {
+                let day = cal.date(byAdding: .day, value: -n, to: cal.startOfDay(for: Date()))!
+                out.append((day, s))
+            }
+        }
+        return out
     }
 }
 
