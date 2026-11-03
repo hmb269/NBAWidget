@@ -686,29 +686,34 @@ struct SettingsView: View {
                 backupMessage = "导入失败：\(e.localizedDescription)"
             }
         }
-        .background {
-            // 选自动备份文件夹（一个页面只能挂一个 fileImporter，放在背景里的另一个视图上）
-            Color.clear
-                .fileImporter(isPresented: $pickFolder, allowedContentTypes: [.folder]) { result in
-                    if case .success(let url) = result {
-                        do {
-                            switch folderPurpose {
-                            case .cloud:
-                                try AutoBackup.setFolder(url, for: .cloud)
-                                backupMessage = AutoBackup.run()
-                            case .local:
-                                try AutoBackup.setFolder(url, for: .local)
-                                backupMessage = AutoBackup.run()
-                            case .restore:
-                                backupMessage = try AutoBackup.restore(from: url)
-                            }
-                        } catch {
-                            backupMessage = "失败：\(error.localizedDescription)"
-                        }
-                        backupTick += 1
-                    }
-                }
+        .sheet(isPresented: $pickFolder) {
+            // 用系统原生的文件夹选择器（和上面的 fileImporter 分开，避免两个选择器冲突收不到结果）
+            FolderPicker { url in
+                pickFolder = false
+                handleFolder(url)
+            } onCancel: {
+                pickFolder = false
+            }
+            .ignoresSafeArea()
         }
+    }
+
+    private func handleFolder(_ url: URL) {
+        do {
+            switch folderPurpose {
+            case .cloud:
+                try AutoBackup.setFolder(url, for: .cloud)
+                backupMessage = AutoBackup.run()
+            case .local:
+                try AutoBackup.setFolder(url, for: .local)
+                backupMessage = AutoBackup.run()
+            case .restore:
+                backupMessage = try AutoBackup.restore(from: url)
+            }
+        } catch {
+            backupMessage = "失败：\(error.localizedDescription)"
+        }
+        backupTick += 1
     }
 
     private var backupCard: some View {
@@ -788,5 +793,36 @@ struct SettingsView: View {
     private func loadSleepDebug() async {
         do { sleepDebug = try await HealthService.sleepDebug() }
         catch { sleepDebug = ["读取失败：" + HealthService.describe(error)] }
+    }
+}
+
+
+/// 系统的文件夹选择器：进入要用的文件夹，点「打开」
+struct FolderPicker: UIViewControllerRepresentable {
+    let onPick: (URL) -> Void
+    let onCancel: () -> Void
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let c = UIDocumentPickerViewController(forOpeningContentTypes: [.folder], asCopy: false)
+        c.allowsMultipleSelection = false
+        c.delegate = context.coordinator
+        return c
+    }
+
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let parent: FolderPicker
+        init(_ p: FolderPicker) { parent = p }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            if let u = urls.first { parent.onPick(u) } else { parent.onCancel() }
+        }
+
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            parent.onCancel()
+        }
     }
 }
