@@ -132,16 +132,11 @@ enum IconStore {
         let ro = PHImageRequestOptions()
         ro.isSynchronous = true
         ro.deliveryMode = .highQualityFormat
-        ro.resizeMode = .fast
-        ro.isNetworkAccessAllowed = false   // 只用手机上已有的，不等 iCloud 下载，免得小组件超时
+        ro.resizeMode = .exact
+        ro.isNetworkAccessAllowed = true
         var out: UIImage?
         PHImageManager.default().requestImage(for: asset, targetSize: CGSize(width: 240, height: 240),
                                               contentMode: .aspectFill, options: ro) { img, _ in out = img }
-        if out == nil { // 本地没有高清的，退一步用缩略图
-            ro.deliveryMode = .fastFormat
-            PHImageManager.default().requestImage(for: asset, targetSize: CGSize(width: 240, height: 240),
-                                                  contentMode: .aspectFill, options: ro) { img, _ in out = img }
-        }
         return out
     }
 

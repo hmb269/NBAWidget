@@ -159,28 +159,24 @@ struct HealthEntry: TimelineEntry {
     }
 
     static func load(_ config: HealthConfigIntent) async -> HealthEntry {
-        // 先把所有健康数据同时读，不排队
         async let sleep = HealthService.load("sleep", keepFor: 18) { try await HealthService.lastNightSleep() }
         async let prevSleep = HealthService.load("sleepPrev", keepFor: 18) { try await HealthService.lastNightSleep(nightsAgo: 1) }
-        let kinds = config.items
-        let first = kinds[0]
-        async let history: HealthService.Reading<[DayPoint]> = first.chartable
-            ? HealthService.load("history_" + first.rawValue, keepFor: 72) { try await HealthService.dailyHistory(first, days: 30) }
-            : HealthService.Reading<[DayPoint]>(value: [])
-
         let s = await sleep
         let ps = await prevSleep
-        let readings = await withTaskGroup(of: (MetricKind, HealthService.Reading<MetricReading>).self) { group in
-            for k in Set(kinds) where k != .sun {
-                group.addTask {
-                    (k, await HealthService.load("metric_" + k.rawValue, keepFor: k.cumulative ? 12 : 72) {
-                        try await HealthService.fetch(k, sleep: s.value, prevSleep: ps.value)
-                    })
-                }
+
+        let kinds = config.items
+        var readings: [MetricKind: HealthService.Reading<MetricReading>] = [:]
+        for k in Set(kinds) where k != .sun {
+            readings[k] = await HealthService.load("metric_" + k.rawValue, keepFor: k.cumulative ? 12 : 72) {
+                try await HealthService.fetch(k, sleep: s.value, prevSleep: ps.value)
             }
-            var out: [MetricKind: HealthService.Reading<MetricReading>] = [:]
-            for await (k, r) in group { out[k] = r }
-            return out
+        }
+        let first = kinds[0]
+        var history = HealthService.Reading<[DayPoint]>(value: [])
+        if first.chartable {
+            history = await HealthService.load("history_" + first.rawValue, keepFor: 72) {
+                try await HealthService.dailyHistory(first, days: 30)
+            }
         }
 
         let icons = IconStore.loadAllForWidget([.sleep] + kinds.map { IconSlot($0) })
@@ -188,31 +184,7 @@ struct HealthEntry: TimelineEntry {
             ItemModel(kind: k, theme: Theme(c.colors ?? k.defaultColors),
                       reading: readings[k] ?? .init(value: nil), icon: icons[IconSlot(k)])
         }
-        return HealthEntry(date: Date(), sleep: s, prevSleep: ps, items: items, history: await history, sleepPhoto: icons[.sleep])
-    }
-
-    /// 带超时：超过 8 秒还没读完，就先用上次的结果，避免小组件一直停在灰色占位
-    static func loadWithTimeout(_ config: HealthConfigIntent) async -> HealthEntry {
-        await withTaskGroup(of: HealthEntry?.self) { group in
-            group.addTask { await load(config) }
-            group.addTask {
-                try? await Task.sleep(nanoseconds: 8_000_000_000)
-                return nil
-            }
-            for await result in group {
-                if let entry = result {
-                    group.cancelAll()
-                    LastEntry.save(entry)
-                    return entry
-                }
-                // 超时：用上次成功的那份
-                if let last = LastEntry.last {
-                    group.cancelAll()
-                    return last
-                }
-            }
-            return .sample(config)
-        }
+        return HealthEntry(date: Date(), sleep: s, prevSleep: ps, items: items, history: history, sleepPhoto: icons[.sleep])
     }
 
     // 睡眠显示
@@ -239,11 +211,11 @@ struct HealthProvider: AppIntentTimelineProvider {
 
     func snapshot(for configuration: HealthConfigIntent, in context: Context) async -> HealthEntry {
         if context.isPreview { return .sample(configuration) }
-        return await HealthEntry.loadWithTimeout(configuration)
+        return await HealthEntry.load(configuration)
     }
 
     func timeline(for configuration: HealthConfigIntent, in context: Context) async -> Timeline<HealthEntry> {
-        let entry = await HealthEntry.loadWithTimeout(configuration)
+        let entry = await HealthEntry.load(configuration)
         let next = Calendar.current.date(byAdding: .minute, value: 15, to: Date())!
         return Timeline(entries: [entry], policy: .after(next))
     }
@@ -259,13 +231,6 @@ struct HealthWidget: Widget {
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
         .contentMarginsDisabled() // 自己画底色，避免系统把底色提亮
     }
-}
-
-/// 小组件进程里记住上一次成功读到的结果（超时时先拿来顶上）
-enum LastEntry {
-    private static var cached: HealthEntry?
-    static var last: HealthEntry? { cached }
-    static func save(_ e: HealthEntry) { cached = e }
 }
 
 // MARK: - 外框：底色画在内容层，和系统小组件一样黑
