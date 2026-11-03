@@ -268,25 +268,8 @@ struct MediumHealthView: View {
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                // 圆环右边放「清醒」，底部对齐
-                HStack(alignment: .bottom, spacing: 3) {
-                    SleepRing(sleep: entry.sleep.value, size: 54, photo: entry.icons[.sleep])
-                    if let s = entry.sleep.value {
-                        VStack(alignment: .leading, spacing: 1) {
-                            HStack(spacing: 2) {
-                                Circle().fill(HealthColor.awake).frame(width: 6, height: 6)
-                                Text("清醒").font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
-                            }
-                            Text(HealthFormat.clock(s.awake))
-                                .font(.system(size: 12, weight: .semibold, design: .rounded).monospacedDigit())
-                                .foregroundStyle(entry.awakeColor ?? Color.primary)
-                        }
-                        .fixedSize()
-                        .layoutPriority(1)
-                        .padding(.bottom, 4)
-                    }
-                }
-                .padding(.bottom, 2)
+                SleepRing(sleep: entry.sleep.value, size: 60, photo: entry.icons[.sleep])
+                    .padding(.bottom, 2)
                 // 比前一晚少睡：红色 + 向下箭头；多睡：绿色 + 向上箭头
                 HStack(alignment: .firstTextBaseline, spacing: 3) {
                     ValueText(entry.sleepValue, size: 17, color: sleepColor)
@@ -295,16 +278,17 @@ struct MediumHealthView: View {
                     }
                 }
                 if let s = entry.sleep.value {
-                    // 三列两行：上面一行名称，下面一行时长
+                    // 四列两行：上面一行名称，下面一行时长
                     HStack(alignment: .top, spacing: 0) {
                         stageColumn("深睡", s.deep, HealthColor.deep, entry.deepColor)
                         stageColumn("核心", s.core, HealthColor.core, entry.coreColor)
                         stageColumn("眼动", s.rem, HealthColor.rem, entry.remColor)
+                        stageColumn("清醒", s.awake, HealthColor.awake, entry.awakeColor)
                     }
                     .padding(.top, 2)
                 }
             }
-            .frame(width: 104, alignment: .leading)
+            .frame(width: 136, alignment: .leading)
 
             Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 12) {
                 gridRow(.weight, .weight, "体重", color: entry.weightColor) {
@@ -312,7 +296,7 @@ struct MediumHealthView: View {
                     if entry.weight.value != nil { UnitText("公斤", theme: .weight, color: entry.weightColor) }
                     if let t = entry.weightTrend { TrendView(delta: t, threshold: 0.005, compact: true) }
                 }
-                gridRow(.hrv, .hrv, "恢复心率变异性", color: entry.hrvColor) {
+                gridRow(.hrv, .hrv, "恢复HRV", color: entry.hrvColor) {
                     ValueText(entry.hrvValue, size: 15, color: entry.hrvColor, shrink: false)
                     if entry.hrv.value != nil { UnitText("毫秒", theme: .hrv, color: entry.hrvColor) }
                     if let d = entry.hrvDelta { TrendView(delta: d, threshold: 0.5, compact: true) }
@@ -458,7 +442,7 @@ struct LargeHealthView: View {
 
     // 下面三格
     private var hrvCard: some View {
-        tile(.hrv, .hrv, "恢复心率变异性", titleColor: entry.hrvColor) {
+        tile(.hrv, .hrv, "恢复HRV", titleColor: entry.hrvColor) {
             HStack(alignment: .firstTextBaseline, spacing: 2) {
                 ValueText(entry.hrvValue, size: 20, color: entry.hrvColor)
                 if entry.hrv.value != nil { UnitText("毫秒", theme: .hrv, color: entry.hrvColor) }
