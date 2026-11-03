@@ -564,26 +564,54 @@ enum AutoBackup {
     static func folderName(_ t: Target) -> String? { resolve(t)?.lastPathComponent }
     static func lastRun(_ t: Target) -> Date? { UserDefaults.standard.object(forKey: t.lastKey) as? Date }
 
+    /// 这次打开 App 期间直接用选择器交回来的地址（不依赖书签）
+    private static var sessionURLs: [Target: URL] = [:]
+    /// 最近一次读取书签失败的原因（显示出来方便排查）
+    private static var resolveErrors: [Target: String] = [:]
+
     static func setFolder(_ url: URL, for t: Target) throws {
         let ok = url.startAccessingSecurityScopedResource()
         defer { if ok { url.stopAccessingSecurityScopedResource() } }
-        let data = try url.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil)
+        sessionURLs[t] = url
+        resolveErrors[t] = nil
+        // 先用完整书签，不行再用精简书签
+        let data: Data
+        if let d = try? url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil) {
+            data = d
+        } else {
+            data = try url.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil)
+        }
         UserDefaults.standard.set(data, forKey: t.bookmarkKey)
     }
 
     static func clear(_ t: Target) {
+        sessionURLs[t] = nil
+        resolveErrors[t] = nil
         UserDefaults.standard.removeObject(forKey: t.bookmarkKey)
         UserDefaults.standard.removeObject(forKey: t.lastKey)
     }
 
     private static func resolve(_ t: Target) -> URL? {
+        if let u = sessionURLs[t] { return u }
         guard let d = UserDefaults.standard.data(forKey: t.bookmarkKey) else { return nil }
         var stale = false
-        guard let u = try? URL(resolvingBookmarkData: d, options: [], relativeTo: nil, bookmarkDataIsStale: &stale) else { return nil }
-        if stale, let nd = try? u.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil) {
-            UserDefaults.standard.set(nd, forKey: t.bookmarkKey)
+        do {
+            let u = try URL(resolvingBookmarkData: d, options: [.withoutUI], relativeTo: nil, bookmarkDataIsStale: &stale)
+            if stale {
+                let ok = u.startAccessingSecurityScopedResource()
+                if let nd = try? u.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil) {
+                    UserDefaults.standard.set(nd, forKey: t.bookmarkKey)
+                }
+                if ok { u.stopAccessingSecurityScopedResource() }
+            }
+            sessionURLs[t] = u
+            resolveErrors[t] = nil
+            return u
+        } catch {
+            let e = error as NSError
+            resolveErrors[t] = "\(e.localizedDescription)（\(e.domain) \(e.code)）"
+            return nil
         }
-        return u
     }
 
     /// 备份到所有设置过的文件夹，返回结果说明
@@ -596,7 +624,7 @@ enum AutoBackup {
     }
 
     private static func run(_ t: Target, data: Data) -> String {
-        guard let folder = resolve(t) else { return "文件夹失效，请重新选择" }
+        guard let folder = resolve(t) else { return "文件夹失效：" + (resolveErrors[t] ?? "未知原因") }
         let ok = folder.startAccessingSecurityScopedResource()
         defer { if ok { folder.stopAccessingSecurityScopedResource() } }
         let fm = FileManager.default
@@ -710,7 +738,8 @@ enum AutoBackup {
 
     static func statusText(_ t: Target) -> String {
         guard isSet(t) else { return "未设置（\(t.hint)）" }
-        var s = "「\(folderName(t) ?? "失效，请重新选择")」"
+        guard let name = folderName(t) else { return "失效：" + (resolveErrors[t] ?? "未知原因") }
+        var s = "「\(name)」"
         if let d = lastRun(t) {
             let f = DateFormatter()
             f.dateFormat = "M月d日 HH:mm"
