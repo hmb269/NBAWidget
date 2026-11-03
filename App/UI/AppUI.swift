@@ -622,6 +622,8 @@ struct SettingsView: View {
     @State private var importing = false
     @State private var pickFolder = false
     @State private var folderPurpose: FolderPurpose = .cloud
+    @State private var setupTarget: AutoBackup.Target?
+    @State private var exportFolder: URL?
     enum FolderPurpose { case cloud, local, restore }
     @State private var backupMessage: String?
     @State private var backupTick = 0
@@ -686,6 +688,45 @@ struct SettingsView: View {
                 backupMessage = "导入失败：\(e.localizedDescription)"
             }
         }
+        .confirmationDialog(setupTarget.map { "设置\($0.title)" } ?? "", isPresented: Binding(
+            get: { setupTarget != nil }, set: { if !$0 { setupTarget = nil } }), titleVisibility: .visible) {
+            if let t = setupTarget {
+                Button("新建备份文件夹（推荐）") {
+                    folderPurpose = t == .cloud ? .cloud : .local
+                    if let dir = AutoBackup.prepareFolder() {
+                        exportFolder = dir
+                    } else {
+                        backupMessage = "准备备份文件夹失败"
+                    }
+                }
+                Button("选择已有的文件夹") {
+                    folderPurpose = t == .cloud ? .cloud : .local
+                    pickFolder = true
+                }
+                if AutoBackup.isSet(t) {
+                    Button("停用\(t.title)", role: .destructive) {
+                        AutoBackup.clear(t)
+                        backupTick += 1
+                    }
+                }
+            }
+        } message: {
+            Text(setupTarget == .cloud
+                 ? "新建：接下来在「移动到」里选「iCloud 云盘」，点右上角「移动」。"
+                 : "新建：接下来在「移动到」里选「我的 iPhone」，点右上角「移动」。")
+        }
+        .sheet(isPresented: Binding(get: { exportFolder != nil }, set: { if !$0 { exportFolder = nil } })) {
+            if let dir = exportFolder {
+                // 系统的「移动到…」：把建好的「阿波备份」文件夹放到用户选的位置，返回新位置
+                FolderExporter(url: dir) { url in
+                    exportFolder = nil
+                    handleFolder(url)
+                } onCancel: {
+                    exportFolder = nil
+                }
+                .ignoresSafeArea()
+            }
+        }
         .sheet(isPresented: $pickFolder) {
             // 用系统原生的文件夹选择器（和上面的 fileImporter 分开，避免两个选择器冲突收不到结果）
             FolderPicker { url in
@@ -723,8 +764,7 @@ struct SettingsView: View {
             ForEach(AutoBackup.Target.allCases, id: \.self) { t in
                 RowDivider()
                 Button {
-                    folderPurpose = t == .cloud ? .cloud : .local
-                    pickFolder = true
+                    setupTarget = t
                 } label: {
                     HStack(spacing: 10) {
                         Image(systemName: t == .cloud ? "icloud.fill" : "iphone")
@@ -770,7 +810,7 @@ struct SettingsView: View {
             Button {
                 importing = true
             } label: {
-                Label("导入单个备份文件", systemImage: "square.and.arrow.down").padding(.vertical, 10)
+                Label("导入备份文件（.json）", systemImage: "square.and.arrow.down").padding(.vertical, 10)
             }
             if let backupMessage {
                 RowDivider()
@@ -819,6 +859,37 @@ struct FolderPicker: UIViewControllerRepresentable {
 
         func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
             if let u = urls.first { parent.onPick(u) } else { parent.onCancel() }
+        }
+
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            parent.onCancel()
+        }
+    }
+}
+
+
+/// 系统的「移动到…」：把一个文件夹移到用户选的位置，返回移动后的地址（App 之后可以继续写这个文件夹）
+struct FolderExporter: UIViewControllerRepresentable {
+    let url: URL
+    let onDone: (URL) -> Void
+    let onCancel: () -> Void
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let c = UIDocumentPickerViewController(forExporting: [url], asCopy: false)
+        c.delegate = context.coordinator
+        return c
+    }
+
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let parent: FolderExporter
+        init(_ p: FolderExporter) { parent = p }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            if let u = urls.first { parent.onDone(u) } else { parent.onCancel() }
         }
 
         func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {

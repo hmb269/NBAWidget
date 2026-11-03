@@ -637,6 +637,29 @@ enum AutoBackup {
         return "已备份到「\(folder.lastPathComponent)」" + (copied > 0 ? "，新增 \(copied) 张照片" : "")
     }
 
+    /// 在临时目录建好「阿波备份」文件夹（记录 + 照片小图），交给系统「移动到…」放到 iCloud 或本机
+    static func prepareFolder() -> URL? {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("阿波备份", isDirectory: true)
+        try? fm.removeItem(at: dir)
+        do {
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            guard let data = GlucoseBackup.make(includeThumbs: false) else { return nil }
+            try data.write(to: dir.appendingPathComponent(recordsName))
+            let photos = dir.appendingPathComponent(photosDir, isDirectory: true)
+            try fm.createDirectory(at: photos, withIntermediateDirectories: true)
+            for p in GlucoseLocal.load().flatMap({ $0.photos ?? [] }) {
+                let src = GlucoseMedia.thumbURL(p.id)
+                if fm.fileExists(atPath: src.path) {
+                    try? fm.copyItem(at: src, to: photos.appendingPathComponent(p.id + ".jpg"))
+                }
+            }
+            return dir
+        } catch {
+            return nil
+        }
+    }
+
     /// 从备份文件夹恢复：记录 + 照片小图
     static func restore(from folder: URL) throws -> String {
         let ok = folder.startAccessingSecurityScopedResource()
