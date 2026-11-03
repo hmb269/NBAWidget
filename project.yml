@@ -24,6 +24,8 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
         CADisableMinimumFrameDurationOnPhone: true
+        NSBluetoothAlwaysUsageDescription: 通过蓝牙连接罗氏血糖仪，读取血糖记录
+        NSHealthUpdateUsageDescription: 把血糖仪读到的血糖记录保存到健康 App
         NSHealthShareUsageDescription: 读取睡眠、体重、心率变异性和步数，显示在 App 和小组件里
         NSPhotoLibraryUsageDescription: 把你选的照片放进「阿波小组件」相簿，用作小组件图标
         NSPhotoLibraryAddUsageDescription: 把你选的照片放进「阿波小组件」相簿，用作小组件图标

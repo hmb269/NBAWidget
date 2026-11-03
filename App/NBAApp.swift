@@ -31,6 +31,14 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section {
+                    NavigationLink {
+                        GlucoseView()
+                    } label: {
+                        Label("血糖记录", systemImage: "drop.fill")
+                    }
+                }
+
                 Section(header: Text("健康")) {
                     HealthRow(icon: "bed.double.fill", title: "睡眠时间", value: health.sleep.map { HealthFormat.duration($0.asleep) })
                     HealthRow(icon: "figure", title: "体重", value: health.weight.map { w in
