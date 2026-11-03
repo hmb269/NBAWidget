@@ -88,9 +88,17 @@ struct HealthEntry: TimelineEntry {
         return (d > 0 ? "+" : "-") + (m >= 60 ? "\(m / 60)时\(m % 60)分" : "\(m)分")
     }
 
-    /// 深睡、核心：和前一晚比，多 1 分钟以上绿色，少 1 分钟以上红色
+    /// 深睡：和前一晚比，多 1 分钟以上绿色，少 1 分钟以上红色
     var deepColor: Color? { HealthEntry.compare(sleep.value?.deep, prevSleep.value?.deep) }
-    var coreColor: Color? { HealthEntry.compare(sleep.value?.core, prevSleep.value?.core) }
+    /// 核心（N1+N2）：看占比。正常约 50%~70%，占比过高说明深睡、眼动被挤掉了
+    /// ≤70% 绿色，70%~75% 正常，>75% 红色
+    var coreColor: Color? {
+        guard let s = sleep.value, s.asleep > 0 else { return nil }
+        let r = s.core / s.asleep
+        if r <= 0.70 { return HealthColor.more }
+        if r > 0.75 { return HealthColor.less }
+        return nil
+    }
     /// 快速眼动：看占总睡眠的比例，≥20% 绿色，15%~20% 正常，<15% 红色
     var remColor: Color? {
         guard let s = sleep.value, s.asleep > 0 else { return nil }
