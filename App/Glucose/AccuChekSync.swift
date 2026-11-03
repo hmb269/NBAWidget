@@ -54,6 +54,13 @@ final class AccuChekSync: NSObject, ObservableObject, CBCentralManagerDelegate, 
         armTimeout(45, message: "没找到血糖仪。请按一下血糖仪的开机键让它亮屏，靠近手机再试")
     }
 
+    /// 用户点「取消」：停止找蓝牙并断开
+    func cancel() {
+        guard busy else { return }
+        finish(measurements.isEmpty ? "已取消" : "已取消（读到的 \(measurements.count) 条已保存）",
+               deliver: !measurements.isEmpty)
+    }
+
     private func finish(_ message: String, deliver: Bool) {
         timeoutWork?.cancel()
         central?.stopScan()

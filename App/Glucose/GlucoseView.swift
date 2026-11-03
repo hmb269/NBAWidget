@@ -240,25 +240,35 @@ struct GlucoseView: View {
     @State private var pendingOwnerId: String?
     @State private var showWriteChoice = false
     @State private var filter: String = "全部"
+    @State private var pickedDay: Date?
+    @State private var showCalendar = false
 
     var body: some View {
         PageScroll(title: "血糖", subtitle: "\(records.count) 条记录 · 罗氏智航") {
             GlucoseTrendCard(points: shown.map { ($0.date, $0.mmol, label($0) ?? "") })
 
             CardSection(footer: "第一次连接：先把血糖仪关机，再长按「OK」键，直到屏幕上蓝牙图标闪烁，然后点「从罗氏智航同步」。弹出配对框时输入血糖仪背面的 6 位 PIN 码。同步下来的记录先存在 App 里，标好是谁测的、什么餐点后，点「写入健康」选择写入谁的记录。") {
-                Button {
-                    sync.start()
-                } label: {
-                    HStack {
-                        Image(systemName: "dot.radiowaves.left.and.right")
-                        Text(sync.busy ? "同步中…" : "从罗氏智航同步")
-                        Spacer()
-                        if sync.busy { ProgressView() }
+                HStack {
+                    Button {
+                        sync.start()
+                    } label: {
+                        HStack {
+                            Image(systemName: "dot.radiowaves.left.and.right")
+                            Text(sync.busy ? "同步中…" : "从罗氏智航同步")
+                            Spacer()
+                            if sync.busy { ProgressView() }
+                        }
+                        .font(.body.weight(.semibold))
+                        .padding(.vertical, 10)
                     }
-                    .font(.body.weight(.semibold))
-                    .padding(.vertical, 10)
+                    .disabled(sync.busy)
+                    if sync.busy {
+                        Button("取消", role: .cancel) { sync.cancel() }
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(.orange)
+                            .padding(.leading, 8)
+                    }
                 }
-                .disabled(sync.busy)
                 RowDivider()
                 Text(sync.status).font(.footnote).foregroundStyle(.secondary).padding(.vertical, 8)
                 HStack(spacing: 12) {
@@ -301,9 +311,31 @@ struct GlucoseView: View {
                 .pickerStyle(.segmented)
             }
 
-            if shown.isEmpty {
+            // 记录列表上方：按日期查找
+            HStack(spacing: 10) {
+                Text(pickedDay.map { "\(dayTitle($0))的记录" } ?? "全部记录")
+                    .font(.headline)
+                Spacer()
+                if pickedDay != nil {
+                    Button("全部") { withAnimation { pickedDay = nil } }
+                        .font(.subheadline.weight(.semibold))
+                        .glassButton()
+                }
+                Button {
+                    showCalendar = true
+                } label: {
+                    Label("选日期", systemImage: "calendar")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .glassButton()
+            }
+            .padding(.horizontal, 4)
+            .padding(.top, 4)
+
+            if listed.isEmpty {
                 CardSection {
-                    Text("还没有血糖记录").foregroundStyle(.secondary).padding(.vertical, 10)
+                    Text(pickedDay == nil ? "还没有血糖记录" : "这一天没有记录")
+                        .foregroundStyle(.secondary).padding(.vertical, 10)
                 }
             }
 
@@ -317,6 +349,17 @@ struct GlucoseView: View {
             }
         }
         .refreshable { await readFromHealth() }
+        .sheet(isPresented: $showCalendar) {
+            GlucoseCalendarSheet(
+                days: Set(shown.map { Calendar.current.startOfDay(for: $0.date) }),
+                selected: pickedDay
+            ) { d in
+                pickedDay = d
+                showCalendar = false
+            }
+            .presentationDetents([.medium, .large])
+            .presentationBackground(.ultraThinMaterial)
+        }
         .confirmationDialog("写入谁的血糖到健康？", isPresented: $showWriteChoice, titleVisibility: .visible) {
             Button(GlucosePeople.me) { Task { await writeToHealth(person: GlucosePeople.me) } }
             ForEach(people, id: \.self) { p in
@@ -493,9 +536,15 @@ struct GlucoseView: View {
         return records.filter { (owners[$0.id] ?? GlucosePeople.me) == filter }
     }
 
+    /// 列表里显示的：按测量人筛选后，再按选中的日期筛选
+    private var listed: [GlucoseRecord] {
+        guard let d = pickedDay else { return shown }
+        return shown.filter { Calendar.current.isDate($0.date, inSameDayAs: d) }
+    }
+
     private var groupedDays: [(Date, [GlucoseRecord])] {
         let cal = Calendar.current
-        let groups = Dictionary(grouping: shown) { cal.startOfDay(for: $0.date) }
+        let groups = Dictionary(grouping: listed) { cal.startOfDay(for: $0.date) }
         return groups.keys.sorted(by: >).map { ($0, groups[$0]!.sorted { $0.date > $1.date }) }
     }
 
@@ -513,5 +562,96 @@ struct GlucoseView: View {
         let f = DateFormatter()
         f.dateFormat = "HH:mm"
         return f.string(from: d)
+    }
+}
+
+/// 选日期：月历，有记录的日子下面带一个小红点
+struct GlucoseCalendarSheet: View {
+    let days: Set<Date>
+    let selected: Date?
+    let onPick: (Date) -> Void
+
+    @State private var month: Date = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: Date()))!
+    private let cal = Calendar.current
+    private let red = Color(red: 1.0, green: 0.40, blue: 0.55)
+
+    var body: some View {
+        VStack(spacing: 16) {
+            HStack {
+                Button { shift(-1) } label: { Image(systemName: "chevron.left").font(.headline) }
+                Spacer()
+                Text(monthTitle).font(.headline)
+                Spacer()
+                Button { shift(1) } label: { Image(systemName: "chevron.right").font(.headline) }
+                    .disabled(cal.isDate(month, equalTo: Date(), toGranularity: .month))
+            }
+            .padding(.horizontal, 8)
+
+            let cols = Array(repeating: GridItem(.flexible(), spacing: 4), count: 7)
+            LazyVGrid(columns: cols, spacing: 10) {
+                ForEach(["日", "一", "二", "三", "四", "五", "六"], id: \.self) {
+                    Text($0).font(.caption).foregroundStyle(.secondary)
+                }
+                ForEach(Array(cells.enumerated()), id: \.offset) { _, d in
+                    if let d { dayCell(d) } else { Color.clear.frame(height: 40) }
+                }
+            }
+
+            Text("有红点的日子有血糖记录")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+        }
+        .padding(20)
+        .onAppear {
+            if let s = selected {
+                month = cal.date(from: cal.dateComponents([.year, .month], from: s))!
+            } else if let latest = days.max() {
+                month = cal.date(from: cal.dateComponents([.year, .month], from: latest))!
+            }
+        }
+    }
+
+    private func dayCell(_ d: Date) -> some View {
+        let has = days.contains(cal.startOfDay(for: d))
+        let isSel = selected.map { cal.isDate($0, inSameDayAs: d) } ?? false
+        let future = d > Date()
+        return Button {
+            onPick(cal.startOfDay(for: d))
+        } label: {
+            VStack(spacing: 3) {
+                Text("\(cal.component(.day, from: d))")
+                    .font(.system(size: 16, weight: has ? .bold : .regular, design: .rounded))
+                    .foregroundStyle(future ? Color.secondary.opacity(0.4) : (has ? Color.primary : Color.secondary))
+                Circle().fill(has ? red : .clear).frame(width: 5, height: 5)
+            }
+            .frame(maxWidth: .infinity, minHeight: 40)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(isSel ? red.opacity(0.35) : (cal.isDateInToday(d) ? Color.white.opacity(0.08) : .clear))
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(future)
+    }
+
+    /// 这个月的格子（前面补空位对齐星期）
+    private var cells: [Date?] {
+        let range = cal.range(of: .day, in: .month, for: month)!
+        let firstWeekday = cal.component(.weekday, from: month) - 1
+        var out: [Date?] = Array(repeating: nil, count: firstWeekday)
+        for day in range {
+            out.append(cal.date(byAdding: .day, value: day - 1, to: month))
+        }
+        return out
+    }
+
+    private var monthTitle: String {
+        let c = cal.dateComponents([.year, .month], from: month)
+        return "\(c.year ?? 0)年\(c.month ?? 0)月"
+    }
+
+    private func shift(_ n: Int) {
+        if let m = cal.date(byAdding: .month, value: n, to: month) { month = m }
     }
 }

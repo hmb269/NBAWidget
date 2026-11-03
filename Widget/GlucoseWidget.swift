@@ -215,9 +215,17 @@ struct GlucoseWidgetView: View {
         let week = entry.after2(days: GlucosePrefs.days)
         return VStack(alignment: .leading, spacing: 0) {
             header
-            Spacer(minLength: 4)
-            latestBlock(size: 34)
-            Spacer(minLength: 4)
+            Spacer(minLength: 2)
+            latestBlock(size: 30)
+            Spacer(minLength: 2)
+            if let hi = week.map(\.mmol).max(), let lo = week.map(\.mmol).min() {
+                HStack(spacing: 6) {
+                    Text("高 " + String(format: "%.1f", hi)).foregroundStyle(hi > safeLine2h ? dangerRed : .primary)
+                    Text("低 " + String(format: "%.1f", lo))
+                }
+                .font(.system(size: 10, weight: .semibold, design: .rounded).monospacedDigit())
+                .padding(.bottom, 2)
+            }
             HStack(spacing: 4) {
                 Text("\(GlucosePrefs.days)天" + (GlucosePrefs.kind == "空腹" || GlucosePrefs.meal == "全部" ? "" : GlucosePrefs.meal) + GlucosePrefs.kind)
                     .font(.system(size: 10, weight: .medium))
@@ -236,10 +244,10 @@ struct GlucoseWidgetView: View {
         let over = list.filter { $0.mmol > safeLine2h }.count
         return HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 0) {
-                header
-                Spacer(minLength: 4)
-                latestBlock(size: 32)
-                Spacer(minLength: 4)
+                header.tapToRefresh()
+                Spacer(minLength: 2)
+                latestBlock(size: 30).tapToRefresh()
+                Spacer(minLength: 2)
                 HStack(spacing: 4) {
                     Text("平均")
                         .font(.system(size: 10, weight: .medium))
@@ -253,9 +261,15 @@ struct GlucoseWidgetView: View {
                             .foregroundStyle(over > 0 ? dangerRed : .secondary)
                     }
                 }
+                .tapToRefresh()
+                // 最高、最低：点一下跳到曲线上那个点
+                HStack(spacing: 6) {
+                    if let hi = list.max(by: { $0.mmol < $1.mmol }) { extreme("高", hi) }
+                    if let lo = list.min(by: { $0.mmol < $1.mmol }) { extreme("低", lo) }
+                }
+                .padding(.top, 3)
             }
             .frame(width: 112, alignment: .leading)
-            .tapToRefresh()
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 5) {
@@ -276,6 +290,23 @@ struct GlucoseWidgetView: View {
                 }
             }
         }
+    }
+
+    /// 「高 8.5」「低 4.6」小按钮，点了在曲线上选中那个点
+    private func extreme(_ title: String, _ p: GlucosePoint) -> some View {
+        let on = abs(GlucosePrefs.selected - p.date.timeIntervalSince1970) < 1
+        return Button(intent: SelectGlucosePointIntent(time: p.date.timeIntervalSince1970)) {
+            HStack(spacing: 2) {
+                Text(title).font(.system(size: 9, weight: .semibold))
+                Text(String(format: "%.1f", p.mmol))
+                    .font(.system(size: 11, weight: .bold, design: .rounded).monospacedDigit())
+            }
+            .foregroundStyle(p.mmol > safeLine2h ? dangerRed : Color.primary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(on ? glucoseRed.opacity(0.5) : Color.white.opacity(0.1)))
+        }
+        .buttonStyle(.plain)
     }
 
     private func chip<I: AppIntent>(_ title: String, intent: I, strong: Bool = false) -> some View {
