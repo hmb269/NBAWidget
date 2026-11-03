@@ -281,6 +281,7 @@ struct GlucoseView: View {
             } footer: {
                 Text("第一次连接：先把血糖仪关机，再长按「OK」键，直到屏幕上蓝牙图标闪烁，然后点「从罗氏智航同步」。弹出配对框时输入血糖仪背面的 6 位 PIN 码。\n同步下来的记录先存在 App 里，标好是谁测的、什么餐点后，点「写入健康」选择写入谁的记录。")
             }
+            .listRowBackground(GlassRow())
 
             Section {
                 mealPicker("早餐", key: "mealBreakfast", value: $breakfast)
@@ -291,6 +292,7 @@ struct GlucoseView: View {
             } footer: {
                 Text("血糖仪记成「餐后」的，按这里的时间判断是哪一餐，默认标成「餐后2小时」。不是 2 小时的点标签手动改。")
             }
+            .listRowBackground(GlassRow())
 
             if !people.isEmpty {
                 Section {
@@ -301,18 +303,23 @@ struct GlucoseView: View {
                     }
                     .pickerStyle(.segmented)
                 }
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets())
             }
 
             if shown.isEmpty {
                 Section { Text("还没有血糖记录").foregroundStyle(.secondary) }
+                    .listRowBackground(GlassRow())
             }
 
             ForEach(groupedDays, id: \.0) { day, items in
                 Section(header: Text(dayTitle(day))) {
                     ForEach(items) { r in row(r) }
                 }
+                .listRowBackground(GlassRow())
             }
         }
+        .glassList()
         .navigationTitle("血糖")
         .refreshable { await readFromHealth() }
         .confirmationDialog("写入谁的血糖到健康？", isPresented: $showWriteChoice, titleVisibility: .visible) {
