@@ -100,8 +100,53 @@ enum HealthService {
                 d.wake = max(d.wake ?? s.endDate, s.endDate)
             }
         }
-        d.asleep = d.deep + d.core + d.rem + d.other
+        // 总时长和健康 App 一样：所有来源的睡眠时段合并（重叠只算一次），
+        // 再扣掉主来源（通常是手表）标记为清醒的时段
+        let asleepIntervals = samples
+            .filter { HKCategoryValueSleepAnalysis.allAsleepValues.contains(HKCategoryValueSleepAnalysis(rawValue: $0.value)!) }
+            .map { ($0.startDate, $0.endDate) }
+        let awakeIntervals = best
+            .filter { HKCategoryValueSleepAnalysis(rawValue: $0.value) == .awake }
+            .map { ($0.startDate, $0.endDate) }
+        let merged = subtract(merge(asleepIntervals), merge(awakeIntervals))
+        d.asleep = merged.reduce(0) { $0 + $1.1.timeIntervalSince($1.0) }
+        if let first = merged.first, let last = merged.last {
+            d.bedtime = first.0
+            d.wake = last.1
+        }
         return d.asleep > 0 ? d : nil
+    }
+
+    /// 合并重叠的时段
+    private static func merge(_ list: [(Date, Date)]) -> [(Date, Date)] {
+        var out: [(Date, Date)] = []
+        for iv in list.sorted(by: { $0.0 < $1.0 }) {
+            if let last = out.last, iv.0 <= last.1 {
+                out[out.count - 1].1 = max(last.1, iv.1)
+            } else {
+                out.append(iv)
+            }
+        }
+        return out
+    }
+
+    /// 从 a 里挖掉 b 覆盖的部分（两边都已合并、按时间排好）
+    private static func subtract(_ a: [(Date, Date)], _ b: [(Date, Date)]) -> [(Date, Date)] {
+        var out: [(Date, Date)] = []
+        for iv in a {
+            var pieces = [iv]
+            for cut in b where cut.1 > iv.0 && cut.0 < iv.1 {
+                pieces = pieces.flatMap { p -> [(Date, Date)] in
+                    guard cut.1 > p.0 && cut.0 < p.1 else { return [p] }
+                    var r: [(Date, Date)] = []
+                    if cut.0 > p.0 { r.append((p.0, cut.0)) }
+                    if cut.1 < p.1 { r.append((cut.1, p.1)) }
+                    return r
+                }
+            }
+            out += pieces
+        }
+        return out
     }
 
     // MARK: - 体重

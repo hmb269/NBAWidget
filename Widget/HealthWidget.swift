@@ -121,6 +121,14 @@ struct HealthEntry: TimelineEntry {
         return h.ms - p
     }
 
+    /// 体重 / 恢复心率变异性：下降整行红色，上升整行绿色，持平用原来的颜色
+    var weightColor: Color? { HealthEntry.trendColor(weightTrend, threshold: 0.005) }
+    var hrvColor: Color? { HealthEntry.trendColor(hrvDelta, threshold: 0.5) }
+    static func trendColor(_ d: Double?, threshold: Double) -> Color? {
+        guard let d, abs(d) >= threshold else { return nil }
+        return d > 0 ? HealthColor.more : HealthColor.less
+    }
+
     var hrvFoot: String {
         if let n = hrv.note { return n }
         guard let h = hrv.value else { return " " }
@@ -201,9 +209,9 @@ struct SmallHealthView: View {
         VStack(alignment: .leading, spacing: 0) {
             row(Icon.sleep, .sleep, entry.sleepValue, trend: entry.sleepDelta.map { $0 / 60 }, threshold: 1)
             Spacer(minLength: 0)
-            row(Icon.weight, .weight, entry.weightValue, trend: entry.weightTrend, threshold: 0.005)
+            row(Icon.weight, .weight, entry.weightValue, trend: entry.weightTrend, threshold: 0.005, color: entry.weightColor)
             Spacer(minLength: 0)
-            row(Icon.hrv, .hrv, entry.hrvValue, unit: entry.hrv.value == nil ? "" : "毫秒", trend: entry.hrvDelta, threshold: 0.5)
+            row(Icon.hrv, .hrv, entry.hrvValue, unit: entry.hrv.value == nil ? "" : "毫秒", trend: entry.hrvDelta, threshold: 0.5, color: entry.hrvColor)
             Spacer(minLength: 0)
             row(Icon.steps, .steps, entry.stepsValue, unit: entry.stepsValue == "--" ? "" : "步")
             Spacer(minLength: 0)
@@ -212,11 +220,11 @@ struct SmallHealthView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func row(_ icon: String, _ theme: Theme, _ value: String, unit: String = "", trend: Double? = nil, threshold: Double = 0) -> some View {
+    private func row(_ icon: String, _ theme: Theme, _ value: String, unit: String = "", trend: Double? = nil, threshold: Double = 0, color: Color? = nil) -> some View {
         HStack(spacing: 6) {
             IconBadge(symbol: icon, theme: theme, size: 22)
-            ValueText(value, size: 15)
-            if !unit.isEmpty { UnitText(unit, theme: theme) }
+            ValueText(value, size: 15, color: color)
+            if !unit.isEmpty { UnitText(unit, theme: theme, color: color) }
             if let trend { TrendView(delta: trend, threshold: threshold, compact: true) }
         }
     }
@@ -228,56 +236,55 @@ struct MediumHealthView: View {
     let entry: HealthEntry
 
     var body: some View {
-        HStack(alignment: .center, spacing: 16) {
+        HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
-                SleepRing(sleep: entry.sleep.value, prevAsleep: entry.prevSleep.value?.asleep, size: 56)
+                SleepRing(sleep: entry.sleep.value, prevAsleep: entry.prevSleep.value?.asleep, size: 52)
                     .padding(.bottom, 6)
                 HStack(spacing: 4) {
                     CaptionText("睡眠时间", theme: .sleep)
                     SleepDeltaText(entry: entry)
                 }
-                ValueText(entry.sleepValue, size: 22)
+                ValueText(entry.sleepValue, size: 20)
                 FootText(entry.sleepFoot)
             }
-            .frame(width: 128, alignment: .leading)
+            .frame(width: 112, alignment: .leading)
 
-            VStack(spacing: 0) {
-                line(Icon.weight, .weight, "体重") {
-                    HStack(alignment: .firstTextBaseline, spacing: 3) {
-                        ValueText(entry.weightValue, size: 16)
-                        if entry.weight.value != nil { UnitText("公斤", theme: .weight) }
-                        if let t = entry.weightTrend { TrendView(delta: t, threshold: 0.005, compact: true) }
-                    }
+            Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 13) {
+                gridRow(Icon.weight, .weight, "体重", color: entry.weightColor) {
+                    ValueText(entry.weightValue, size: 16, color: entry.weightColor)
+                    if entry.weight.value != nil { UnitText("公斤", theme: .weight, color: entry.weightColor) }
+                    if let t = entry.weightTrend { TrendView(delta: t, threshold: 0.005, compact: true) }
                 }
-                Spacer(minLength: 0)
-                line(Icon.hrv, .hrv, "恢复心率变异性") {
-                    HStack(alignment: .firstTextBaseline, spacing: 3) {
-                        ValueText(entry.hrvValue, size: 16)
-                        if entry.hrv.value != nil { UnitText("毫秒", theme: .hrv) }
-                        if let d = entry.hrvDelta { TrendView(delta: d, threshold: 0.5, compact: true) }
-                    }
+                gridRow(Icon.hrv, .hrv, "恢复心率变异性", color: entry.hrvColor) {
+                    ValueText(entry.hrvValue, size: 16, color: entry.hrvColor)
+                    if entry.hrv.value != nil { UnitText("毫秒", theme: .hrv, color: entry.hrvColor) }
+                    if let d = entry.hrvDelta { TrendView(delta: d, threshold: 0.5, compact: true) }
                 }
-                Spacer(minLength: 0)
-                line(Icon.steps, .steps, "今日步数") {
+                gridRow(Icon.steps, .steps, "今日步数") {
                     ValueText(entry.stepsValue, size: 16)
                 }
-                Spacer(minLength: 0)
-                line(Icon.sun, .sun, "日出日落") {
+                gridRow(Icon.sun, .sun, "日出日落") {
                     ValueText(SunTimes.times().map { HealthFormat.time($0.sunrise) + " / " + HealthFormat.time($0.sunset) } ?? "--", size: 16)
                 }
             }
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    private func line<V: View>(_ icon: String, _ theme: Theme, _ title: String, @ViewBuilder value: () -> V) -> some View {
-        HStack(spacing: 7) {
-            IconBadge(symbol: icon, theme: theme, size: 22)
-            CaptionText(title, theme: theme, size: 13)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-            Spacer(minLength: 4)
-            value()
+    private func gridRow<V: View>(_ icon: String, _ theme: Theme, _ title: String, color: Color? = nil,
+                                  @ViewBuilder value: () -> V) -> some View {
+        GridRow(alignment: .center) {
+            HStack(spacing: 6) {
+                IconBadge(symbol: icon, theme: theme, size: 22)
+                CaptionText(title, theme: theme, size: 13, color: color)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                value()
+            }
+            .lineLimit(1)
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
@@ -305,10 +312,10 @@ struct LargeHealthView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     IconBadge(symbol: Icon.weight, theme: .weight, size: 54)
                         .padding(.bottom, 5)
-                    CaptionText("体重", theme: .weight)
+                    CaptionText("体重", theme: .weight, color: entry.weightColor)
                     HStack(alignment: .firstTextBaseline, spacing: 4) {
-                        ValueText(entry.weightValue, size: 22)
-                        if entry.weight.value != nil { UnitText("公斤", theme: .weight) }
+                        ValueText(entry.weightValue, size: 22, color: entry.weightColor)
+                        if entry.weight.value != nil { UnitText("公斤", theme: .weight, color: entry.weightColor) }
                         if let t = entry.weightTrend { TrendView(delta: t, threshold: 0.005, compact: false) }
                     }
                     FootText(entry.weightFoot)
@@ -326,11 +333,11 @@ struct LargeHealthView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         IconBadge(symbol: Icon.hrv, theme: .hrv, size: 20)
-                        CaptionText("恢复心率变异性", theme: .hrv, size: 14).lineLimit(1).minimumScaleFactor(0.8)
+                        CaptionText("恢复心率变异性", theme: .hrv, size: 14, color: entry.hrvColor).lineLimit(1).minimumScaleFactor(0.8)
                     }
                     HStack(alignment: .firstTextBaseline, spacing: 4) {
-                        ValueText(entry.hrvValue, size: 20)
-                        if entry.hrv.value != nil { UnitText("毫秒", theme: .hrv) }
+                        ValueText(entry.hrvValue, size: 20, color: entry.hrvColor)
+                        if entry.hrv.value != nil { UnitText("毫秒", theme: .hrv, color: entry.hrvColor) }
                         if let d = entry.hrvDelta { TrendView(delta: d, threshold: 0.5, text: String(Int(abs(d).rounded())), compact: false) }
                     }
                     FootText(entry.hrvFoot)
@@ -362,7 +369,24 @@ struct LargeHealthView: View {
 enum WeightRange {
     private static let key = "weightRange"
     static var current: Int { UserDefaults.standard.integer(forKey: key) == 7 ? 7 : 30 }
-    static func toggle() { UserDefaults.standard.set(current == 7 ? 30 : 7, forKey: key) }
+    static func toggle() {
+        UserDefaults.standard.set(current == 7 ? 30 : 7, forKey: key)
+        WeightSelection.clear()
+    }
+}
+
+/// 图上选中的那一天（再点一次同一天取消）
+enum WeightSelection {
+    private static let key = "weightSelectedDay"
+    static var day: Date? {
+        let t = UserDefaults.standard.double(forKey: key)
+        return t > 0 ? Date(timeIntervalSince1970: t) : nil
+    }
+    static func toggle(_ day: Date) {
+        if let d = self.day, Calendar.current.isDate(d, inSameDayAs: day) { clear() }
+        else { UserDefaults.standard.set(day.timeIntervalSince1970, forKey: key) }
+    }
+    static func clear() { UserDefaults.standard.removeObject(forKey: key) }
 }
 
 struct WeightRangeIntent: AppIntent {
@@ -375,6 +399,18 @@ struct WeightRangeIntent: AppIntent {
     }
 }
 
+struct SelectWeightDayIntent: AppIntent {
+    static var title: LocalizedStringResource = "查看某天体重"
+    static var isDiscoverable: Bool = false
+    @Parameter(title: "日期") var time: Double
+    init() {}
+    init(day: Date) { self.time = day.timeIntervalSince1970 }
+    func perform() async throws -> some IntentResult {
+        WeightSelection.toggle(Date(timeIntervalSince1970: time))
+        return .result()
+    }
+}
+
 struct WeightChart: View {
     let points: [HealthService.WeightPoint]
     let note: String?
@@ -382,10 +418,17 @@ struct WeightChart: View {
     var body: some View {
         let days = WeightRange.current
         let cal = Calendar.current
-        let start = cal.date(byAdding: .day, value: -days, to: cal.startOfDay(for: Date()))!
-        let pts = points.filter { $0.date > start }
-        let lo = (pts.map(\.kg).min() ?? 0) - 0.2
-        let hi = (pts.map(\.kg).max() ?? 1) + 0.2
+        let today = cal.startOfDay(for: Date())
+        let start = cal.date(byAdding: .day, value: -(days - 1), to: today)!
+        let end = cal.date(byAdding: .day, value: 1, to: today)!
+        let pts = points.filter { $0.date >= start }
+        let lo = (pts.map(\.kg).min() ?? 0) - 0.3
+        let hi = (pts.map(\.kg).max() ?? 1) + 0.3
+        // 选中的那天：有记录就用当天，没有就找最近的一天
+        let picked: HealthService.WeightPoint? = WeightSelection.day.flatMap { sel in
+            pts.min { abs($0.date.timeIntervalSince(sel)) < abs($1.date.timeIntervalSince(sel)) }
+        }
+        let mid = { (d: Date) in d.addingTimeInterval(12 * 3600) } // 点画在当天中间，和点击格子对齐
 
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
@@ -409,23 +452,50 @@ struct WeightChart: View {
             if pts.count >= 2 {
                 Chart {
                     ForEach(Array(pts.enumerated()), id: \.offset) { _, p in
-                        AreaMark(x: .value("日期", p.date),
+                        AreaMark(x: .value("日期", mid(p.date)),
                                  yStart: .value("下限", lo),
                                  yEnd: .value("体重", p.kg))
                             .interpolationMethod(.catmullRom)
                             .foregroundStyle(LinearGradient(colors: [Theme.weight.top.opacity(0.35), Theme.weight.top.opacity(0.02)],
                                                             startPoint: .top, endPoint: .bottom))
-                        LineMark(x: .value("日期", p.date), y: .value("体重", p.kg))
+                        LineMark(x: .value("日期", mid(p.date)), y: .value("体重", p.kg))
                             .interpolationMethod(.catmullRom)
                             .lineStyle(StrokeStyle(lineWidth: 2.2, lineCap: .round))
                             .foregroundStyle(Theme.weight.gradient)
+                        if days == 7 {
+                            PointMark(x: .value("日期", mid(p.date)), y: .value("体重", p.kg))
+                                .symbolSize(22)
+                                .foregroundStyle(Theme.weight.top)
+                        }
                     }
-                    if let l = pts.last {
-                        PointMark(x: .value("日期", l.date), y: .value("体重", l.kg))
+                    if let p = picked {
+                        RuleMark(x: .value("日期", mid(p.date)))
+                            .foregroundStyle(Color.secondary.opacity(0.5))
+                            .lineStyle(StrokeStyle(lineWidth: 1))
+                        PointMark(x: .value("日期", mid(p.date)), y: .value("体重", p.kg))
+                            .symbolSize(70)
+                            .foregroundStyle(.white)
+                            .annotation(position: .top, spacing: 4,
+                                        overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
+                                VStack(spacing: 0) {
+                                    Text(String(format: "%.2f 公斤", p.kg))
+                                        .font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit())
+                                        .foregroundStyle(Color.primary)
+                                    Text(dayLabel(p.date))
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(RoundedRectangle(cornerRadius: 6).fill(Color(white: 0.25)))
+                            }
+                    } else if let l = pts.last {
+                        PointMark(x: .value("日期", mid(l.date)), y: .value("体重", l.kg))
                             .symbolSize(40)
                             .foregroundStyle(Theme.weight.top)
                     }
                 }
+                .chartXScale(domain: start...end)
                 .chartYScale(domain: lo...hi)
                 .chartXAxis(.hidden)
                 .chartYAxis {
@@ -438,6 +508,24 @@ struct WeightChart: View {
                         }
                     }
                 }
+                // 每天一个透明按钮，点哪天就显示哪天的体重
+                .chartOverlay { proxy in
+                    GeometryReader { geo in
+                        if let plot = proxy.plotFrame {
+                            let rect = geo[plot]
+                            HStack(spacing: 0) {
+                                ForEach(0..<days, id: \.self) { i in
+                                    Button(intent: SelectWeightDayIntent(day: cal.date(byAdding: .day, value: i, to: start)!)) {
+                                        Color.clear.contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .frame(width: rect.width, height: rect.height)
+                            .offset(x: rect.minX, y: rect.minY)
+                        }
+                    }
+                }
             } else {
                 Spacer(minLength: 0)
                 FootText(note ?? "近\(days)天体重记录不足两天")
@@ -445,6 +533,12 @@ struct WeightChart: View {
                 Spacer(minLength: 0)
             }
         }
+    }
+
+    private func dayLabel(_ d: Date) -> String {
+        let c = Calendar.current.dateComponents([.month, .day, .weekday], from: d)
+        let w = ["日", "一", "二", "三", "四", "五", "六"][(c.weekday ?? 1) - 1]
+        return "\(c.month ?? 0)月\(c.day ?? 0)日 周\(w)"
     }
 }
 
@@ -471,22 +565,24 @@ struct CaptionText: View {
     let text: String
     let theme: Theme
     var size: CGFloat = 15
-    init(_ text: String, theme: Theme, size: CGFloat = 15) {
-        self.text = text; self.theme = theme; self.size = size
+    var color: Color? = nil
+    init(_ text: String, theme: Theme, size: CGFloat = 15, color: Color? = nil) {
+        self.text = text; self.theme = theme; self.size = size; self.color = color
     }
     var body: some View {
-        Text(text).font(.system(size: size, weight: .semibold)).foregroundStyle(theme.text)
+        Text(text).font(.system(size: size, weight: .semibold)).foregroundStyle(color ?? theme.text)
     }
 }
 
 struct ValueText: View {
     let text: String
     let size: CGFloat
-    init(_ text: String, size: CGFloat) { self.text = text; self.size = size }
+    var color: Color? = nil
+    init(_ text: String, size: CGFloat, color: Color? = nil) { self.text = text; self.size = size; self.color = color }
     var body: some View {
         Text(text)
             .font(.system(size: size, weight: .bold, design: .rounded).monospacedDigit())
-            .foregroundStyle(text == "--" ? Color.secondary : Color.primary)
+            .foregroundStyle(text == "--" ? Color.secondary : (color ?? Color.primary))
             .lineLimit(1)
             .minimumScaleFactor(0.6)
     }
@@ -495,9 +591,10 @@ struct ValueText: View {
 struct UnitText: View {
     let text: String
     let theme: Theme
-    init(_ text: String, theme: Theme) { self.text = text; self.theme = theme }
+    var color: Color? = nil
+    init(_ text: String, theme: Theme, color: Color? = nil) { self.text = text; self.theme = theme; self.color = color }
     var body: some View {
-        Text(text).font(.caption.weight(.semibold)).foregroundStyle(theme.text.opacity(0.85))
+        Text(text).font(.caption.weight(.semibold)).foregroundStyle((color ?? theme.text).opacity(0.85)).fixedSize()
     }
 }
 
