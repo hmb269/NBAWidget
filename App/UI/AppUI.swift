@@ -71,19 +71,71 @@ enum AppColor {
 // MARK: - 根视图：四个标签页
 
 struct RootView: View {
+    @State private var tab = 0
+
+    private let tabs: [(String, String)] = [
+        ("健康", "heart.fill"), ("血糖", "drop.fill"), ("NBA", "basketball.fill"), ("设置", "gearshape.fill")
+    ]
+
     var body: some View {
-        TabView {
-            NavigationStack { HealthHomeView() }
-                .tabItem { Label("健康", systemImage: "heart.fill") }
-            NavigationStack { GlucoseView() }
-                .tabItem { Label("血糖", systemImage: "drop.fill") }
-            NavigationStack { NBAView() }
-                .tabItem { Label("NBA", systemImage: "basketball.fill") }
-            NavigationStack { SettingsView() }
-                .tabItem { Label("设置", systemImage: "gearshape.fill") }
+        // 左右滑动翻页；底部是自己画的玻璃标签栏，点图标也能切换
+        TabView(selection: $tab) {
+            NavigationStack { HealthHomeView() }.tag(0)
+            NavigationStack { GlucoseView() }.tag(1)
+            NavigationStack { NBAView() }.tag(2)
+            NavigationStack { SettingsView() }.tag(3)
         }
+        .tabViewStyle(.page(indexDisplayMode: .never))
+        .background(AppBackground())
+        .ignoresSafeArea(.container, edges: .bottom)
+        .safeAreaInset(edge: .bottom) { tabBar }
         .tint(Color(red: 0.40, green: 0.88, blue: 0.88))
         .preferredColorScheme(.dark)
+    }
+
+    private var tabBar: some View {
+        HStack(spacing: 0) {
+            ForEach(Array(tabs.enumerated()), id: \.offset) { i, t in
+                Button {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { tab = i }
+                } label: {
+                    VStack(spacing: 3) {
+                        Image(systemName: t.1).font(.system(size: 19, weight: .semibold))
+                        Text(t.0).font(.system(size: 10, weight: .semibold))
+                    }
+                    .foregroundStyle(tab == i ? Color(red: 0.40, green: 0.88, blue: 0.88) : Color.white.opacity(0.85))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .background {
+                        if tab == i {
+                            Capsule().fill(Color.white.opacity(0.12))
+                                .matchedGeometryEffect(id: "tab", in: tabSpace)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(5)
+        .glassCapsule()
+        .padding(.horizontal, 20)
+        .padding(.bottom, 2)
+    }
+
+    @Namespace private var tabSpace
+}
+
+extension View {
+    /// 胶囊形玻璃（底部标签栏用）
+    @ViewBuilder
+    func glassCapsule() -> some View {
+        if #available(iOS 26.0, *) {
+            self.glassEffect(.regular, in: Capsule())
+        } else {
+            self.background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().stroke(.white.opacity(0.14), lineWidth: 0.8))
+        }
     }
 }
 
@@ -379,8 +431,9 @@ struct NBAView: View {
                         .padding(12).glassCard(16)
                 }
                 // 今天、明天左右并排，一屏看完
-                HStack(alignment: .top, spacing: 10) {
+                HStack(alignment: .top, spacing: 8) {
                     dayColumn(title: "今天", offset: 0, games: today)
+                    Rectangle().fill(Color.white.opacity(0.10)).frame(width: 0.6)
                     dayColumn(title: "明天", offset: 1, games: tomorrow)
                 }
                 Text("北京时间 · 湖人、76人排在最前 · 下拉刷新")
@@ -422,9 +475,8 @@ struct NBAView: View {
                 }
             }
         }
-        .padding(10)
+        .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .glassCard(20)
     }
 
     private func load() async {
