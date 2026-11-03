@@ -269,11 +269,21 @@ struct MediumHealthView: View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 // 圆环右边放「清醒」，底部对齐
-                HStack(alignment: .bottom, spacing: 4) {
-                    SleepRing(sleep: entry.sleep.value, size: 60, photo: entry.icons[.sleep])
+                HStack(alignment: .bottom, spacing: 3) {
+                    SleepRing(sleep: entry.sleep.value, size: 54, photo: entry.icons[.sleep])
                     if let s = entry.sleep.value {
-                        stageColumn("清醒", s.awake, HealthColor.awake, entry.awakeColor)
-                            .padding(.bottom, 4)
+                        VStack(alignment: .leading, spacing: 1) {
+                            HStack(spacing: 2) {
+                                Circle().fill(HealthColor.awake).frame(width: 6, height: 6)
+                                Text("清醒").font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+                            }
+                            Text(HealthFormat.clock(s.awake))
+                                .font(.system(size: 12, weight: .semibold, design: .rounded).monospacedDigit())
+                                .foregroundStyle(entry.awakeColor ?? Color.primary)
+                        }
+                        .fixedSize()
+                        .layoutPriority(1)
+                        .padding(.bottom, 4)
                     }
                 }
                 .padding(.bottom, 2)
