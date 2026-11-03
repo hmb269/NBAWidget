@@ -99,8 +99,8 @@ enum GlucoseTags {
             else if m >= lunch && m < dinner { (name, meal) = ("午餐后", lunch) }
             else if m >= dinner { (name, meal) = ("晚餐后", dinner) }
             else { (name, meal) = ("晚餐后", dinner - 24 * 60) }   // 过了半夜算前一天晚餐
-            let hours = Int((Double(m - meal) / 60).rounded())
-            return (1...4).contains(hours) ? "\(name)\(hours)小时" : name
+            _ = meal
+            return name + "2小时"   // 大部分是餐后 2 小时测的，默认就按 2 小时；不是的话手动改
         case "餐前":
             if m < 10 * 60 && m >= 4 * 60 { return "空腹" }
             if m >= 10 * 60 && m < 15 * 60 { return "午餐前" }
@@ -156,7 +156,7 @@ struct GlucoseView: View {
             } header: {
                 Text("三餐时间")
             } footer: {
-                Text("血糖仪记成「餐后」的，按这里的时间算出是饭后几小时，例如「午餐后2小时」。")
+                Text("血糖仪记成「餐后」的，按这里的时间判断是哪一餐，默认标成「餐后2小时」，例如「午餐后2小时」。不是 2 小时的点标签手动改。")
             }
 
             if records.isEmpty {
