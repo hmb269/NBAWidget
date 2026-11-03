@@ -364,58 +364,122 @@ struct StageRing: View {
 
 
 struct NBAView: View {
-    @State private var day = 0
-    @State private var games: [Game] = []
+    @State private var today: [Game] = []
+    @State private var tomorrow: [Game] = []
     @State private var loading = false
     @State private var errorText: String?
     private let favorites = myTeams
 
-    private var sortedGames: [Game] {
-        games.filter { $0.involves(favorites) } + games.filter { !$0.involves(favorites) }
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 12) {
+                if let errorText {
+                    Text(errorText).font(.footnote).foregroundStyle(.orange)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12).glassCard(16)
+                }
+                dayCard(title: "今天", offset: 0, games: today)
+                dayCard(title: "明天", offset: 1, games: tomorrow)
+                Text("北京时间 · 湖人、76人排在最前")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+        }
+        .background(AppBackground())
+        .navigationTitle("NBA 赛程")
+        .navigationBarTitleDisplayMode(.inline)
+        .refreshable { await load() }
+        .task { await load() }
     }
 
-    var body: some View {
-        List {
-            Section {
-                Picker("日期", selection: $day) {
-                    Text("今天").tag(0)
-                    Text("明天").tag(1)
-                }
-                .pickerStyle(.segmented)
-            }
-            .listRowBackground(Color.clear)
-            .listRowInsets(EdgeInsets())
+    private func sorted(_ g: [Game]) -> [Game] {
+        g.filter { $0.involves(favorites) } + g.filter { !$0.involves(favorites) }
+    }
 
-            Section(header: Text(NBAService.dateLabel(NBAService.targetDate(offset: day), withWeekday: true) + "（北京时间）")) {
-                if loading && games.isEmpty {
-                    HStack { Spacer(); ProgressView(); Spacer() }
-                } else if let errorText {
-                    Text(errorText).foregroundStyle(.secondary)
-                } else if games.isEmpty {
-                    Text(day == 0 ? "今天没有比赛" : "明天没有比赛").foregroundStyle(.secondary)
-                } else {
-                    ForEach(sortedGames) { g in
-                        AppGameRow(game: g, favorites: favorites)
-                    }
+    private func dayCard(title: String, offset: Int, games: [Game]) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(title).font(.headline)
+                Text(NBAService.dateLabel(NBAService.targetDate(offset: offset), withWeekday: true))
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                if !games.isEmpty {
+                    Text("\(games.count) 场").font(.caption).foregroundStyle(.secondary)
                 }
             }
-            .listRowBackground(GlassRow())
+            .padding(.bottom, 6)
+
+            if loading && games.isEmpty {
+                HStack { Spacer(); ProgressView(); Spacer() }.padding(.vertical, 8)
+            } else if games.isEmpty {
+                Text("没有比赛").font(.footnote).foregroundStyle(.secondary).padding(.vertical, 6)
+            } else {
+                ForEach(Array(sorted(games).enumerated()), id: \.element.id) { i, g in
+                    if i > 0 { Divider().overlay(Color.white.opacity(0.06)) }
+                    CompactGameRow(game: g, favorites: favorites)
+                }
+            }
         }
-        .glassList()
-        .navigationTitle("NBA 赛程")
-        .refreshable { await load() }
-        .task(id: day) { await load() }
+        .padding(14)
+        .glassCard(22)
     }
 
     private func load() async {
         loading = true
         defer { loading = false }
         do {
-            games = try await NBAService.fetch(offset: day)
+            async let a = NBAService.fetch(offset: 0)
+            async let b = NBAService.fetch(offset: 1)
+            today = try await a
+            tomorrow = try await b
             errorText = nil
             WidgetCenter.shared.reloadAllTimelines()
         } catch {
             errorText = "加载失败：\(error.localizedDescription)"
+        }
+    }
+}
+
+/// 一场比赛一行：客队 · 比分/时间 · 主队，字小一点，一页能看完
+struct CompactGameRow: View {
+    let game: Game
+    let favorites: Set<String>
+    private let red = Color(red: 1.0, green: 0.30, blue: 0.35)
+
+    var body: some View {
+        HStack(spacing: 6) {
+            team(game.away, game.awayCode, won: game.state == "post" && game.awayScore > game.homeScore)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            VStack(spacing: 0) {
+                Text(game.middleText)
+                    .font(.system(size: 15, weight: .bold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(game.state == "in" ? red : .primary)
+                Text(status)
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(game.state == "in" ? red : .secondary)
+            }
+            .frame(width: 78)
+            team(game.home, game.homeCode, won: game.state == "post" && game.homeScore > game.awayScore)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, 6)
+    }
+
+    private func team(_ name: String, _ code: String, won: Bool) -> some View {
+        let fav = favorites.contains(code)
+        return Text(name)
+            .font(.system(size: 14, weight: fav ? .heavy : (won ? .semibold : .regular)))
+            .foregroundStyle(fav ? red : (game.state == "post" && !won ? Color.secondary : Color.primary))
+            .lineLimit(1)
+    }
+
+    private var status: String {
+        switch game.state {
+        case "pre": return "未开始"
+        case "in": return game.liveText
+        default: return game.isPostponed ? "" : "已结束"
         }
     }
 }

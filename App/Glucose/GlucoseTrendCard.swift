@@ -17,11 +17,42 @@ enum GlucoseKind: String, CaseIterable, Identifiable {
         return nil
     }
 
+    /// 安全线：空腹 6.1（WHO/中国指南正常上限）、餐后2小时 7.8（WHO 正常糖耐量上限）、
+    /// 餐后1小时 8.6（IDF 2024 立场声明）。是「正常与否」的界值，不是个人治疗目标
+    var safeLine: Double {
+        switch self {
+        case .fasting: return 6.1
+        case .after1: return 8.6
+        case .after2: return 7.8
+        }
+    }
+
     var color: Color {
         switch self {
         case .fasting: return Color(red: 0.40, green: 0.80, blue: 1.0)
         case .after1: return Color(red: 1.0, green: 0.70, blue: 0.30)
         case .after2: return Color(red: 1.0, green: 0.40, blue: 0.55)
+        }
+    }
+}
+
+/// 只看某一餐
+enum MealFilter: String, CaseIterable, Identifiable {
+    case all = "全部"
+    case lunchDinner = "午餐+晚餐"
+    case breakfast = "早餐"
+    case lunch = "午餐"
+    case dinner = "晚餐"
+
+    var id: String { rawValue }
+
+    func matches(_ tag: String) -> Bool {
+        switch self {
+        case .all: return true
+        case .lunchDinner: return tag.hasPrefix("午餐") || tag.hasPrefix("晚餐")
+        case .breakfast: return tag.hasPrefix("早餐")
+        case .lunch: return tag.hasPrefix("午餐")
+        case .dinner: return tag.hasPrefix("晚餐")
         }
     }
 }
@@ -33,11 +64,14 @@ struct GlucoseTrendCard: View {
 
     @State private var kind: GlucoseKind = .after2
     @State private var days = 30
+    @State private var meal: MealFilter = .all
     @State private var selected: Date?
 
     private var series: [(Date, Double, String)] {
         let start = Calendar.current.date(byAdding: .day, value: -days, to: Date())!
-        return points.filter { $0.0 >= start && GlucoseKind.of($0.2) == kind }.sorted { $0.0 < $1.0 }
+        return points.filter {
+            $0.0 >= start && GlucoseKind.of($0.2) == kind && (kind == .fasting || meal.matches($0.2))
+        }.sorted { $0.0 < $1.0 }
     }
 
     private var picked: (Date, Double, String)? {
@@ -68,6 +102,26 @@ struct GlucoseTrendCard: View {
             }
             .pickerStyle(.segmented)
 
+            if kind != .fasting {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(MealFilter.allCases) { m in
+                            Button {
+                                meal = m
+                            } label: {
+                                Text(m.rawValue)
+                                    .font(.footnote.weight(.semibold))
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .foregroundStyle(meal == m ? Color.white : Color.secondary)
+                                    .background(Capsule().fill(meal == m ? kind.color.opacity(0.85) : Color.white.opacity(0.08)))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+
             if data.count >= 1 {
                 chart(data)
                     .frame(height: 180)
@@ -83,19 +137,30 @@ struct GlucoseTrendCard: View {
                 stat("平均", values.isEmpty ? nil : String(format: "%.1f", values.reduce(0, +) / Double(values.count)))
                 stat("最高", values.max().map { String(format: "%.1f", $0) })
                 stat("最低", values.min().map { String(format: "%.1f", $0) })
-                stat("次数", values.isEmpty ? nil : "\(values.count)")
+                stat("超线", values.isEmpty ? nil : "\(values.filter { $0 > kind.safeLine }.count)/\(values.count)")
             }
         }
         .padding(18)
         .glassCard(26)
         .onChange(of: kind) { _, _ in selected = nil }
         .onChange(of: days) { _, _ in selected = nil }
+        .onChange(of: meal) { _, _ in selected = nil }
     }
 
     private func chart(_ data: [(Date, Double, String)]) -> some View {
-        let lo = max(0, (data.map(\.1).min() ?? 4) - 1)
-        let hi = (data.map(\.1).max() ?? 8) + 1
+        let line = kind.safeLine
+        let lo = max(0, min(data.map(\.1).min() ?? 4, line) - 1)
+        let hi = max(data.map(\.1).max() ?? 8, line) + 1
+        let danger = Color(red: 1.0, green: 0.32, blue: 0.32)
         return Chart {
+            RuleMark(y: .value("安全线", line))
+                .foregroundStyle(danger.opacity(0.7))
+                .lineStyle(StrokeStyle(lineWidth: 1.2, dash: [5, 4]))
+                .annotation(position: .top, alignment: .leading, spacing: 2) {
+                    Text("安全线 \(String(format: "%.1f", line))")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(danger)
+                }
             ForEach(Array(data.enumerated()), id: \.offset) { _, p in
                 AreaMark(x: .value("时间", p.0), yStart: .value("下限", lo), yEnd: .value("血糖", p.1))
                     .interpolationMethod(.catmullRom)
@@ -106,8 +171,8 @@ struct GlucoseTrendCard: View {
                     .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round))
                     .foregroundStyle(kind.color)
                 PointMark(x: .value("时间", p.0), y: .value("血糖", p.1))
-                    .symbolSize(28)
-                    .foregroundStyle(kind.color)
+                    .symbolSize(p.1 > line ? 46 : 28)
+                    .foregroundStyle(p.1 > line ? danger : kind.color)
             }
             if let p = picked {
                 RuleMark(x: .value("时间", p.0))

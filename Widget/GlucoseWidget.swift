@@ -2,12 +2,54 @@ import WidgetKit
 import SwiftUI
 import Charts
 import HealthKit
+import AppIntents
 
 // 血糖小组件：直接读健康里的血糖（App 里「写入健康」的那些，带「餐点」标签）
 // 小号：最近一次 + 7 天餐后2小时平均；中号：最近一次 + 14 天餐后2小时曲线
 
 private let glucoseRed = Color(red: 1.0, green: 0.40, blue: 0.55)
 private let glucoseRedDeep = Color(red: 0.92, green: 0.20, blue: 0.40)
+
+private let dangerRed = Color(red: 1.0, green: 0.32, blue: 0.32)
+private let safeLine2h = 7.8   // 餐后2小时安全线（WHO 正常糖耐量上限）
+
+/// 小组件上的切换：天数 7 / 30，餐次 全部 / 午+晚 / 午餐 / 晚餐 / 早餐
+enum GlucosePrefs {
+    private static let d = UserDefaults.standard
+    static var days: Int { d.integer(forKey: "glucoseDays") == 30 ? 30 : 7 }
+    static func toggleDays() { d.set(days == 7 ? 30 : 7, forKey: "glucoseDays") }
+
+    static let meals = ["全部", "午+晚", "午餐", "晚餐", "早餐"]
+    static var meal: String { d.string(forKey: "glucoseMeal").flatMap { meals.contains($0) ? $0 : nil } ?? "全部" }
+    static func nextMeal() {
+        let i = meals.firstIndex(of: meal) ?? 0
+        d.set(meals[(i + 1) % meals.count], forKey: "glucoseMeal")
+    }
+    static func matches(_ tag: String?) -> Bool {
+        guard let t = tag else { return false }
+        switch meal {
+        case "午+晚": return t.hasPrefix("午餐") || t.hasPrefix("晚餐")
+        case "午餐": return t.hasPrefix("午餐")
+        case "晚餐": return t.hasPrefix("晚餐")
+        case "早餐": return t.hasPrefix("早餐")
+        default: return true
+        }
+    }
+}
+
+struct GlucoseDaysIntent: AppIntent {
+    static var title: LocalizedStringResource = "切换血糖天数"
+    static var isDiscoverable: Bool = false
+    init() {}
+    func perform() async throws -> some IntentResult { GlucosePrefs.toggleDays(); return .result() }
+}
+
+struct GlucoseMealIntent: AppIntent {
+    static var title: LocalizedStringResource = "切换血糖餐次"
+    static var isDiscoverable: Bool = false
+    init() {}
+    func perform() async throws -> some IntentResult { GlucosePrefs.nextMeal(); return .result() }
+}
 
 struct GlucosePoint: Codable {
     var date: Date
@@ -50,7 +92,7 @@ struct GlucoseEntry: TimelineEntry {
 
     func after2(days: Int) -> [GlucosePoint] {
         let start = Calendar.current.date(byAdding: .day, value: -days, to: Date())!
-        return points.filter { $0.isAfter2 && $0.date >= start }
+        return points.filter { $0.isAfter2 && $0.date >= start && GlucosePrefs.matches($0.tag) }
     }
 
     func average(_ list: [GlucosePoint]) -> Double? {
@@ -110,25 +152,24 @@ struct GlucoseWidgetView: View {
 
     var body: some View {
         Group {
-            if family == .systemSmall { small } else { medium }
+            if family == .systemSmall { small.tapToRefresh() } else { medium }
         }
         .padding(14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(widgetBackground)
-        .tapToRefresh()
         .containerBackground(widgetBackground, for: .widget)
     }
 
     // 小号
     private var small: some View {
-        let week = entry.after2(days: 7)
+        let week = entry.after2(days: GlucosePrefs.days)
         return VStack(alignment: .leading, spacing: 0) {
             header
             Spacer(minLength: 4)
             latestBlock(size: 34)
             Spacer(minLength: 4)
             HStack(spacing: 4) {
-                Text("7天餐后2h")
+                Text("\(GlucosePrefs.days)天\(GlucosePrefs.meal == "全部" ? "" : GlucosePrefs.meal)餐后2h")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
                 Text(entry.average(week).map { String(format: "%.1f", $0) } ?? "--")
@@ -140,38 +181,63 @@ struct GlucoseWidgetView: View {
 
     // 中号
     private var medium: some View {
-        let list = entry.after2(days: 14)
-        return HStack(alignment: .top, spacing: 14) {
+        let days = GlucosePrefs.days
+        let list = entry.after2(days: days)
+        let over = list.filter { $0.mmol > safeLine2h }.count
+        return HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 0) {
                 header
                 Spacer(minLength: 4)
-                latestBlock(size: 34)
+                latestBlock(size: 32)
                 Spacer(minLength: 4)
                 HStack(spacing: 4) {
-                    Text("14天平均")
+                    Text("平均")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.secondary)
                     Text(entry.average(list).map { String(format: "%.1f", $0) } ?? "--")
                         .font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit())
                         .foregroundStyle(glucoseRed)
+                    if !list.isEmpty {
+                        Text("超线 \(over)")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(over > 0 ? dangerRed : .secondary)
+                    }
                 }
             }
-            .frame(width: 118, alignment: .leading)
+            .frame(width: 112, alignment: .leading)
+            .tapToRefresh()
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("餐后2小时 · 近14天")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(glucoseRed)
+                HStack(spacing: 5) {
+                    Text("餐后2h")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(glucoseRed)
+                    Spacer(minLength: 0)
+                    chip(GlucosePrefs.meal, intent: GlucoseMealIntent())
+                    chip("\(days)天", intent: GlucoseDaysIntent())
+                }
                 if list.count >= 2 {
                     chart(list)
                 } else {
-                    Text("记录不足两条")
+                    Text(list.isEmpty ? "这段时间没有记录" : "记录不足两条")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
         }
+    }
+
+    private func chip<I: AppIntent>(_ title: String, intent: I) -> some View {
+        Button(intent: intent) {
+            Text(title)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(glucoseRed.opacity(0.35)))
+        }
+        .buttonStyle(.plain)
     }
 
     private var header: some View {
@@ -208,9 +274,15 @@ struct GlucoseWidgetView: View {
     }
 
     private func chart(_ list: [GlucosePoint]) -> some View {
-        let lo = max(0, (list.map(\.mmol).min() ?? 4) - 0.8)
-        let hi = (list.map(\.mmol).max() ?? 8) + 0.8
+        let lo = max(0, min(list.map(\.mmol).min() ?? 4, safeLine2h) - 0.8)
+        let hi = max(list.map(\.mmol).max() ?? 8, safeLine2h) + 0.8
         return Chart {
+            RuleMark(y: .value("安全线", safeLine2h))
+                .foregroundStyle(dangerRed.opacity(0.75))
+                .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                .annotation(position: .top, alignment: .leading, spacing: 1) {
+                    Text("7.8").font(.system(size: 8, weight: .bold)).foregroundStyle(dangerRed)
+                }
             ForEach(Array(list.enumerated()), id: \.offset) { _, p in
                 AreaMark(x: .value("时间", p.date), yStart: .value("下限", lo), yEnd: .value("血糖", p.mmol))
                     .interpolationMethod(.catmullRom)
@@ -221,8 +293,8 @@ struct GlucoseWidgetView: View {
                     .lineStyle(StrokeStyle(lineWidth: 2.2, lineCap: .round))
                     .foregroundStyle(LinearGradient(colors: [glucoseRed, glucoseRedDeep], startPoint: .leading, endPoint: .trailing))
                 PointMark(x: .value("时间", p.date), y: .value("血糖", p.mmol))
-                    .symbolSize(14)
-                    .foregroundStyle(glucoseRed)
+                    .symbolSize(p.mmol > safeLine2h ? 26 : 14)
+                    .foregroundStyle(p.mmol > safeLine2h ? dangerRed : glucoseRed)
             }
         }
         .chartYScale(domain: lo...hi)
