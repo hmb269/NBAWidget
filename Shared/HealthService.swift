@@ -117,6 +117,59 @@ enum HealthService {
         return d.asleep > 0 ? d : nil
     }
 
+    /// 排查用：列出昨晚每个来源的原始数据，和几种算法的结果
+    static func sleepDebug() async throws -> [String] {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        let start = cal.date(byAdding: .hour, value: -6, to: today)!
+        let end = min(Date(), cal.date(byAdding: .hour, value: 15, to: today)!)
+        let samples = try await categorySamples(sleepType, from: start, to: end)
+        func hms(_ t: TimeInterval) -> String {
+            let x = Int(t.rounded())
+            return String(format: "%d:%02d:%02d", x / 3600, x / 60 % 60, x % 60)
+        }
+        func isAsleep(_ s: HKCategorySample) -> Bool {
+            HKCategoryValueSleepAnalysis.allAsleepValues.contains(HKCategoryValueSleepAnalysis(rawValue: s.value)!)
+        }
+        var lines: [String] = ["样本 \(samples.count) 条"]
+        let bySource = Dictionary(grouping: samples) { $0.sourceRevision.source.name + "（" + $0.sourceRevision.source.bundleIdentifier + "）" }
+        for (name, list) in bySource.sorted(by: { $0.key < $1.key }) {
+            var sums: [String: TimeInterval] = [:]
+            for x in list {
+                let k: String
+                switch HKCategoryValueSleepAnalysis(rawValue: x.value) {
+                case .asleepDeep: k = "深睡"
+                case .asleepCore: k = "核心"
+                case .asleepREM: k = "快速眼动"
+                case .asleepUnspecified: k = "睡眠"
+                case .awake: k = "清醒"
+                case .inBed: k = "卧床"
+                default: k = "其他"
+                }
+                sums[k, default: 0] += x.endDate.timeIntervalSince(x.startDate)
+            }
+            let asleep = list.filter(isAsleep).reduce(0) { $0 + $1.endDate.timeIntervalSince($1.startDate) }
+            let detail = sums.sorted { $0.key < $1.key }.map { "\($0.key) \(hms($0.value))" }.joined(separator: "，")
+            lines.append("\(name)：睡着合计 \(hms(asleep))；\(detail)")
+        }
+        let asleepAll = merge(samples.filter(isAsleep).map { ($0.startDate, $0.endDate) })
+        let unionTotal = asleepAll.reduce(0) { $0 + $1.1.timeIntervalSince($1.0) }
+        lines.append("A 所有来源合并：\(hms(unionTotal))")
+        if let f = asleepAll.first, let l = asleepAll.last {
+            let awake = merge(samples.filter { HKCategoryValueSleepAnalysis(rawValue: $0.value) == .awake }.map { ($0.startDate, $0.endDate) })
+            let span = l.1.timeIntervalSince(f.0)
+            let awakeInSpan = awake.reduce(0.0) { acc, iv in
+                acc + max(0, min(iv.1, l.1).timeIntervalSince(max(iv.0, f.0)))
+            }
+            lines.append("B 入睡到醒来：\(hms(span))（\(HealthFormat.time(f.0)) - \(HealthFormat.time(l.1))）")
+            lines.append("C 入睡到醒来减清醒：\(hms(span - awakeInSpan))")
+        }
+        if let d = try await lastNightSleep() {
+            lines.append("小组件现在用的：\(hms(d.asleep))")
+        }
+        return lines
+    }
+
     /// 合并重叠的时段
     private static func merge(_ list: [(Date, Date)]) -> [(Date, Date)] {
         var out: [(Date, Date)] = []
@@ -349,6 +402,12 @@ enum HealthFormat {
         let f = DateFormatter()
         f.dateFormat = "H:mm"
         return f.string(from: d)
+    }
+
+    /// 时长写成 1:05 这种
+    static func clock(_ t: TimeInterval) -> String {
+        let m = Int(t / 60)
+        return String(format: "%d:%02d", m / 60, m % 60)
     }
 
     static func kg(_ v: Double) -> String { String(format: "%.2f", v) }
