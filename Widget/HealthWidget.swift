@@ -240,14 +240,23 @@ struct MediumHealthView: View {
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                SleepRing(sleep: entry.sleep.value, size: 62, photo: entry.icons[.sleep])
+                SleepRing(sleep: entry.sleep.value, size: 60, photo: entry.icons[.sleep])
                     .padding(.bottom, 2)
-                HStack(spacing: 4) {
-                    CaptionText("睡眠时间", theme: .sleep, size: 13).fixedSize()
-                    SleepDeltaText(entry: entry)
+                // 比前一晚少睡：红色 + 向下箭头；多睡：绿色 + 向上箭头
+                HStack(alignment: .firstTextBaseline, spacing: 3) {
+                    ValueText(entry.sleepValue, size: 17, color: sleepColor)
+                    if let d = entry.sleepDelta, abs(d) >= 60 {
+                        TrendView(delta: d, threshold: 60, compact: true)
+                    }
                 }
-                ValueText(entry.sleepValue, size: 18)
-                StageLegend()
+                if let s = entry.sleep.value {
+                    VStack(alignment: .leading, spacing: 1) {
+                        stageRow("深睡", s.deep, HealthColor.deep)
+                        stageRow("核心", s.core, HealthColor.core)
+                        stageRow("眼动", s.rem, HealthColor.rem)
+                    }
+                    .padding(.top, 1)
+                }
             }
             .frame(width: 104, alignment: .leading)
 
@@ -271,6 +280,21 @@ struct MediumHealthView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var sleepColor: Color? {
+        guard let d = entry.sleepDelta, abs(d) >= 60 else { return nil }
+        return d > 0 ? HealthColor.more : HealthColor.less
+    }
+
+    private func stageRow(_ name: String, _ t: TimeInterval, _ color: Color) -> some View {
+        HStack(spacing: 4) {
+            Circle().fill(color).frame(width: 6, height: 6)
+            Text(name).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+            Spacer(minLength: 2)
+            Text(HealthFormat.clock(t))
+                .font(.system(size: 11, weight: .semibold, design: .rounded).monospacedDigit())
         }
     }
 
