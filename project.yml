@@ -20,6 +20,7 @@ targets:
       path: App/Info.plist
       properties:
         CFBundleDisplayName: 阿波
+        CFBundleName: 阿波
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}

@@ -16,7 +16,8 @@ struct GlucoseRecord: Identifiable {
 enum GlucoseStore {
     static let type = HKQuantityType(.bloodGlucose)
     static let unit = HKUnit.moleUnit(with: .milli, molarMass: HKUnitMolarMassBloodGlucose).unitDivided(by: .liter())
-    private static let mealKey = "阿波餐点"
+    private static let mealKey = "餐点"
+    private static let oldMealKey = "阿波餐点"   // 早期版本用的字段名，读取时兼容
 
     static func requestAccess() async throws {
         try await HealthService.store.requestAuthorization(toShare: [type], read: [type])
@@ -120,7 +121,7 @@ enum GlucoseStore {
         }
         return samples.map { s in
             let meta = s.metadata ?? [:]
-            var meal = meta[mealKey] as? String
+            var meal = (meta[mealKey] as? String) ?? (meta[oldMealKey] as? String)
             if meal == nil, let raw = meta[HKMetadataKeyBloodGlucoseMealTime] as? NSNumber {
                 meal = raw.intValue == HKBloodGlucoseMealTime.preprandial.rawValue ? "餐前" : "餐后"
             }
