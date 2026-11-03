@@ -23,6 +23,7 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
+        CADisableMinimumFrameDurationOnPhone: true
         NSHealthShareUsageDescription: 读取睡眠、体重、心率变异性和步数，显示在 App 和小组件里
         NSPhotoLibraryUsageDescription: 把你选的照片放进「阿波小组件」相簿，用作小组件图标
         NSPhotoLibraryAddUsageDescription: 把你选的照片放进「阿波小组件」相簿，用作小组件图标
