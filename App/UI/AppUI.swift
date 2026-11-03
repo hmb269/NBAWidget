@@ -372,20 +372,23 @@ struct NBAView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 12) {
+            VStack(spacing: 10) {
                 if let errorText {
                     Text(errorText).font(.footnote).foregroundStyle(.orange)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(12).glassCard(16)
                 }
-                dayCard(title: "今天", offset: 0, games: today)
-                dayCard(title: "明天", offset: 1, games: tomorrow)
-                Text("北京时间 · 湖人、76人排在最前")
+                // 今天、明天左右并排，一屏看完
+                HStack(alignment: .top, spacing: 10) {
+                    dayColumn(title: "今天", offset: 0, games: today)
+                    dayColumn(title: "明天", offset: 1, games: tomorrow)
+                }
+                Text("北京时间 · 湖人、76人排在最前 · 下拉刷新")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
         }
         .background(AppBackground())
         .navigationTitle("NBA 赛程")
@@ -398,23 +401,20 @@ struct NBAView: View {
         g.filter { $0.involves(favorites) } + g.filter { !$0.involves(favorites) }
     }
 
-    private func dayCard(title: String, offset: Int, games: [Game]) -> some View {
+    private func dayColumn(title: String, offset: Int, games: [Game]) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(title).font(.headline)
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(title).font(.system(size: 15, weight: .bold))
                 Text(NBAService.dateLabel(NBAService.targetDate(offset: offset), withWeekday: true))
-                    .font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                if !games.isEmpty {
-                    Text("\(games.count) 场").font(.caption).foregroundStyle(.secondary)
-                }
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                    .lineLimit(1).minimumScaleFactor(0.8)
             }
             .padding(.bottom, 6)
 
             if loading && games.isEmpty {
                 HStack { Spacer(); ProgressView(); Spacer() }.padding(.vertical, 8)
             } else if games.isEmpty {
-                Text("没有比赛").font(.footnote).foregroundStyle(.secondary).padding(.vertical, 6)
+                Text("没有比赛").font(.system(size: 12)).foregroundStyle(.secondary).padding(.vertical, 6)
             } else {
                 ForEach(Array(sorted(games).enumerated()), id: \.element.id) { i, g in
                     if i > 0 { Divider().overlay(Color.white.opacity(0.06)) }
@@ -422,8 +422,9 @@ struct NBAView: View {
                 }
             }
         }
-        .padding(14)
-        .glassCard(22)
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .glassCard(20)
     }
 
     private func load() async {
@@ -442,45 +443,43 @@ struct NBAView: View {
     }
 }
 
-/// 一场比赛一行：客队 · 比分/时间 · 主队，字小一点，一页能看完
+/// 一场比赛一行：客队 · 比分/时间 · 主队（窄列用的小字号）
 struct CompactGameRow: View {
     let game: Game
     let favorites: Set<String>
     private let red = Color(red: 1.0, green: 0.30, blue: 0.35)
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 3) {
             team(game.away, game.awayCode, won: game.state == "post" && game.awayScore > game.homeScore)
                 .frame(maxWidth: .infinity, alignment: .trailing)
             VStack(spacing: 0) {
                 Text(game.middleText)
-                    .font(.system(size: 15, weight: .bold, design: .rounded).monospacedDigit())
+                    .font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit())
                     .foregroundStyle(game.state == "in" ? red : .primary)
-                Text(status)
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(game.state == "in" ? red : .secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                if game.state == "in" {
+                    Text(game.liveText)
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(red)
+                        .lineLimit(1)
+                }
             }
-            .frame(width: 78)
+            .frame(width: 58)
             team(game.home, game.homeCode, won: game.state == "post" && game.homeScore > game.awayScore)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 5)
     }
 
     private func team(_ name: String, _ code: String, won: Bool) -> some View {
         let fav = favorites.contains(code)
         return Text(name)
-            .font(.system(size: 14, weight: fav ? .heavy : (won ? .semibold : .regular)))
+            .font(.system(size: 12, weight: fav ? .heavy : (won ? .semibold : .regular)))
             .foregroundStyle(fav ? red : (game.state == "post" && !won ? Color.secondary : Color.primary))
             .lineLimit(1)
-    }
-
-    private var status: String {
-        switch game.state {
-        case "pre": return "未开始"
-        case "in": return game.liveText
-        default: return game.isPostponed ? "" : "已结束"
-        }
+            .minimumScaleFactor(0.75)
     }
 }
 

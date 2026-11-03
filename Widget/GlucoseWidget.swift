@@ -156,6 +156,7 @@ struct GlucoseWidgetView: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(RefreshBackground())
         .background(widgetBackground)
         .containerBackground(widgetBackground, for: .widget)
     }
@@ -217,7 +218,7 @@ struct GlucoseWidgetView: View {
                     chip("\(days)天", intent: GlucoseDaysIntent())
                 }
                 if list.count >= 2 {
-                    chart(list)
+                    chart(list).tapToRefresh()
                 } else {
                     Text(list.isEmpty ? "这段时间没有记录" : "记录不足两条")
                         .font(.system(size: 11))

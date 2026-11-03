@@ -222,6 +222,7 @@ struct HealthWidgetView: View {
         }
         .padding(family == .systemLarge ? 12 : 14)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(RefreshBackground())
         .background(widgetBackground)
         .containerBackground(widgetBackground, for: .widget)
     }
@@ -528,6 +529,16 @@ struct RefreshHealthIntent: AppIntent {
     init() {}
     // 什么都不用做：按钮点完后系统会重新跑一次时间线，读到最新数据
     func perform() async throws -> some IntentResult { .result() }
+}
+
+/// 铺在小组件最底层的刷新按钮：点到空白处（留白、坐标轴等）也只刷新，不打开 App
+struct RefreshBackground: View {
+    var body: some View {
+        Button(intent: RefreshHealthIntent()) {
+            Color.clear.contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
 }
 
 extension View {
