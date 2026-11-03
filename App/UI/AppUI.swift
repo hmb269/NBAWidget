@@ -107,6 +107,18 @@ struct CardSection<Content: View>: View {
     }
 }
 
+/// 卡片里面第一行的小标题
+struct CardTitle: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+    var body: some View {
+        Text(text)
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.vertical, 10)
+    }
+}
+
 /// 卡片里两行之间的分隔线
 struct RowDivider: View {
     var body: some View { Divider().overlay(Color.white.opacity(0.06)) }
@@ -601,22 +613,27 @@ struct SettingsView: View {
 
     var body: some View {
         PageScroll(title: "设置", subtitle: "图标 · 小组件 · 排查") {
-            CardSection(title: "自定义图标", footer: iconStatus) {
+            CardSection(footer: iconStatus) {
+                CardTitle("自定义图标")
                 ForEach(Array(IconSlot.allCases.enumerated()), id: \.element.id) { i, slot in
-                    if i > 0 { RowDivider() }
+                    RowDivider()
                     IconRow(slot: slot) { iconTick += 1 }
                         .padding(.vertical, 8)
                 }
             }
 
-            CardSection(title: "小组件") {
+            CardSection {
+                CardTitle("小组件")
+                RowDivider()
                 Text("长按桌面空白处 → 编辑 → 添加小组件 → 搜索「阿波」，可以选 NBA、健康和血糖。\n所有小组件点空白处都只刷新，不会打开 App。\n湖人、76人的比赛排在最上面，队名显示为红色。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 10)
             }
 
-            CardSection(title: "睡眠明细（排查用）") {
+            CardSection {
+                CardTitle("睡眠明细（排查用）")
+                RowDivider()
                 if sleepDebug.isEmpty {
                     Button("读取昨晚睡眠明细") { Task { await loadSleepDebug() } }
                         .padding(.vertical, 10)

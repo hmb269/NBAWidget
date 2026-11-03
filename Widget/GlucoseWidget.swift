@@ -11,7 +11,14 @@ private let glucoseRed = Color(red: 1.0, green: 0.40, blue: 0.55)
 private let glucoseRedDeep = Color(red: 0.92, green: 0.20, blue: 0.40)
 
 private let dangerRed = Color(red: 1.0, green: 0.32, blue: 0.32)
-private let safeLine2h = 7.8   // 餐后2小时安全线（WHO 正常糖耐量上限）
+/// 安全线：餐后2小时 7.8（WHO），餐后1小时 8.6（IDF 2024），空腹 6.1（WHO/中国指南）
+private var safeLine2h: Double {
+    switch GlucosePrefs.kind {
+    case "空腹": return 6.1
+    case "餐后1h": return 8.6
+    default: return 7.8
+    }
+}
 
 /// 小组件上的切换：天数 7 / 30，餐次 全部 / 午+晚 / 午餐 / 晚餐 / 早餐
 enum GlucosePrefs {
@@ -23,6 +30,23 @@ enum GlucosePrefs {
     static var selected: Double { d.double(forKey: "glucoseSelected") }
     static func select(_ t: Double) { d.set(abs(selected - t) < 1 ? 0 : t, forKey: "glucoseSelected") }
     static func clearSelection() { d.removeObject(forKey: "glucoseSelected") }
+
+    /// 类型：餐后2h → 餐后1h → 空腹
+    static let kinds = ["餐后2h", "餐后1h", "空腹"]
+    static var kind: String { d.string(forKey: "glucoseKind").flatMap { kinds.contains($0) ? $0 : nil } ?? "餐后2h" }
+    static func nextKind() {
+        let i = kinds.firstIndex(of: kind) ?? 0
+        d.set(kinds[(i + 1) % kinds.count], forKey: "glucoseKind")
+        clearSelection()
+    }
+    static func isKind(_ tag: String?) -> Bool {
+        guard let t = tag else { return false }
+        switch kind {
+        case "空腹": return t == "空腹"
+        case "餐后1h": return t.hasSuffix("后1小时")
+        default: return t.hasSuffix("后2小时")
+        }
+    }
 
     static let meals = ["全部", "午+晚", "午餐", "晚餐", "早餐"]
     static var meal: String { d.string(forKey: "glucoseMeal").flatMap { meals.contains($0) ? $0 : nil } ?? "全部" }
@@ -48,6 +72,13 @@ struct GlucoseDaysIntent: AppIntent {
     static var isDiscoverable: Bool = false
     init() {}
     func perform() async throws -> some IntentResult { GlucosePrefs.toggleDays(); return .result() }
+}
+
+struct GlucoseKindIntent: AppIntent {
+    static var title: LocalizedStringResource = "切换血糖类型"
+    static var isDiscoverable: Bool = false
+    init() {}
+    func perform() async throws -> some IntentResult { GlucosePrefs.nextKind(); return .result() }
 }
 
 struct GlucoseMealIntent: AppIntent {
@@ -107,7 +138,10 @@ struct GlucoseEntry: TimelineEntry {
 
     func after2(days: Int) -> [GlucosePoint] {
         let start = Calendar.current.date(byAdding: .day, value: -days, to: Date())!
-        return points.filter { $0.isAfter2 && $0.date >= start && GlucosePrefs.matches($0.tag) }
+        return points.filter {
+            GlucosePrefs.isKind($0.tag) && $0.date >= start
+                && (GlucosePrefs.kind == "空腹" || GlucosePrefs.matches($0.tag))
+        }
     }
 
     func average(_ list: [GlucosePoint]) -> Double? {
@@ -185,7 +219,7 @@ struct GlucoseWidgetView: View {
             latestBlock(size: 34)
             Spacer(minLength: 4)
             HStack(spacing: 4) {
-                Text("\(GlucosePrefs.days)天\(GlucosePrefs.meal == "全部" ? "" : GlucosePrefs.meal)餐后2h")
+                Text("\(GlucosePrefs.days)天" + (GlucosePrefs.kind == "空腹" || GlucosePrefs.meal == "全部" ? "" : GlucosePrefs.meal) + GlucosePrefs.kind)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
                 Text(entry.average(week).map { String(format: "%.1f", $0) } ?? "--")
@@ -225,11 +259,11 @@ struct GlucoseWidgetView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 5) {
-                    Text("餐后2h")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(glucoseRed)
+                    chip(GlucosePrefs.kind, intent: GlucoseKindIntent(), strong: true)
                     Spacer(minLength: 0)
-                    chip(GlucosePrefs.meal, intent: GlucoseMealIntent())
+                    if GlucosePrefs.kind != "空腹" {
+                        chip(GlucosePrefs.meal, intent: GlucoseMealIntent())
+                    }
                     chip("\(days)天", intent: GlucoseDaysIntent())
                 }
                 if list.count >= 2 {
@@ -244,14 +278,14 @@ struct GlucoseWidgetView: View {
         }
     }
 
-    private func chip<I: AppIntent>(_ title: String, intent: I) -> some View {
+    private func chip<I: AppIntent>(_ title: String, intent: I, strong: Bool = false) -> some View {
         Button(intent: intent) {
             Text(title)
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(.white)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 3)
-                .background(Capsule().fill(glucoseRed.opacity(0.35)))
+                .background(Capsule().fill(glucoseRed.opacity(strong ? 0.7 : 0.35)))
         }
         .buttonStyle(.plain)
     }
@@ -299,7 +333,7 @@ struct GlucoseWidgetView: View {
                 .foregroundStyle(dangerRed.opacity(0.75))
                 .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
                 .annotation(position: .top, alignment: .leading, spacing: 1) {
-                    Text("7.8").font(.system(size: 8, weight: .bold)).foregroundStyle(dangerRed)
+                    Text(String(format: "%.1f", safeLine2h)).font(.system(size: 8, weight: .bold)).foregroundStyle(dangerRed)
                 }
             ForEach(Array(list.enumerated()), id: \.offset) { _, p in
                 AreaMark(x: .value("时间", p.date), yStart: .value("下限", lo), yEnd: .value("血糖", p.mmol))
