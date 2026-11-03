@@ -242,14 +242,10 @@ struct GlucoseView: View {
     @State private var filter: String = "全部"
 
     var body: some View {
-        List {
-            Section {
-                GlucoseTrendCard(points: shown.map { ($0.date, $0.mmol, label($0) ?? "") })
-            }
-            .listRowBackground(Color.clear)
-            .listRowInsets(EdgeInsets())
+        PageScroll(title: "血糖", subtitle: "\(records.count) 条记录 · 罗氏智航") {
+            GlucoseTrendCard(points: shown.map { ($0.date, $0.mmol, label($0) ?? "") })
 
-            Section {
+            CardSection(footer: "第一次连接：先把血糖仪关机，再长按「OK」键，直到屏幕上蓝牙图标闪烁，然后点「从罗氏智航同步」。弹出配对框时输入血糖仪背面的 6 位 PIN 码。同步下来的记录先存在 App 里，标好是谁测的、什么餐点后，点「写入健康」选择写入谁的记录。") {
                 Button {
                     sync.start()
                 } label: {
@@ -259,74 +255,67 @@ struct GlucoseView: View {
                         Spacer()
                         if sync.busy { ProgressView() }
                     }
+                    .font(.body.weight(.semibold))
+                    .padding(.vertical, 10)
                 }
                 .disabled(sync.busy)
-                Text(sync.status).font(.footnote).foregroundStyle(.secondary)
+                RowDivider()
+                Text(sync.status).font(.footnote).foregroundStyle(.secondary).padding(.vertical, 8)
                 HStack(spacing: 12) {
                     Button {
                         showWriteChoice = true
                     } label: {
-                        Label("写入健康", systemImage: "square.and.arrow.up")
-                            .frame(maxWidth: .infinity)
+                        Label("写入健康", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.bordered)
+                    .glassButton()
                     .disabled(working || records.isEmpty)
 
                     Button {
                         Task { await readFromHealth() }
                     } label: {
-                        Label("从健康读取", systemImage: "square.and.arrow.down")
-                            .frame(maxWidth: .infinity)
+                        Label("从健康读取", systemImage: "square.and.arrow.down").frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.bordered)
+                    .glassButton()
                     .disabled(working)
                 }
+                .padding(.vertical, 8)
                 if let message {
-                    Text(message).font(.footnote).foregroundStyle(.green)
+                    Text(message).font(.footnote).foregroundStyle(.green).padding(.bottom, 8)
                 }
-            } footer: {
-                Text("第一次连接：先把血糖仪关机，再长按「OK」键，直到屏幕上蓝牙图标闪烁，然后点「从罗氏智航同步」。弹出配对框时输入血糖仪背面的 6 位 PIN 码。\n同步下来的记录先存在 App 里，标好是谁测的、什么餐点后，点「写入健康」选择写入谁的记录。")
             }
-            .listRowBackground(GlassRow())
 
-            Section {
-                mealPicker("早餐", key: "mealBreakfast", value: $breakfast)
-                mealPicker("午餐", key: "mealLunch", value: $lunch)
-                mealPicker("晚餐", key: "mealDinner", value: $dinner)
-            } header: {
-                Text("三餐时间")
-            } footer: {
-                Text("血糖仪记成「餐后」的，按这里的时间判断是哪一餐，默认标成「餐后2小时」。不是 2 小时的点标签手动改。")
+            CardSection(title: "三餐时间", footer: "血糖仪记成「餐后」的，按这里的时间判断是哪一餐，默认标成「餐后2小时」。不是 2 小时的点标签手动改。") {
+                mealPicker("早餐", key: "mealBreakfast", value: $breakfast).padding(.vertical, 6)
+                RowDivider()
+                mealPicker("午餐", key: "mealLunch", value: $lunch).padding(.vertical, 6)
+                RowDivider()
+                mealPicker("晚餐", key: "mealDinner", value: $dinner).padding(.vertical, 6)
             }
-            .listRowBackground(GlassRow())
 
             if !people.isEmpty {
-                Section {
-                    Picker("显示", selection: $filter) {
-                        Text("全部").tag("全部")
-                        Text(GlucosePeople.me).tag(GlucosePeople.me)
-                        ForEach(people, id: \.self) { Text($0).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
+                Picker("显示", selection: $filter) {
+                    Text("全部").tag("全部")
+                    Text(GlucosePeople.me).tag(GlucosePeople.me)
+                    ForEach(people, id: \.self) { Text($0).tag($0) }
                 }
-                .listRowBackground(Color.clear)
-                .listRowInsets(EdgeInsets())
+                .pickerStyle(.segmented)
             }
 
             if shown.isEmpty {
-                Section { Text("还没有血糖记录").foregroundStyle(.secondary) }
-                    .listRowBackground(GlassRow())
+                CardSection {
+                    Text("还没有血糖记录").foregroundStyle(.secondary).padding(.vertical, 10)
+                }
             }
 
             ForEach(groupedDays, id: \.0) { day, items in
-                Section(header: Text(dayTitle(day))) {
-                    ForEach(items) { r in row(r) }
+                CardSection(title: dayTitle(day)) {
+                    ForEach(Array(items.enumerated()), id: \.element.id) { i, r in
+                        if i > 0 { RowDivider() }
+                        row(r).padding(.vertical, 8)
+                    }
                 }
-                .listRowBackground(GlassRow())
             }
         }
-        .glassList()
-        .navigationTitle("血糖")
         .refreshable { await readFromHealth() }
         .confirmationDialog("写入谁的血糖到健康？", isPresented: $showWriteChoice, titleVisibility: .visible) {
             Button(GlucosePeople.me) { Task { await writeToHealth(person: GlucosePeople.me) } }

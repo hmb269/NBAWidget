@@ -51,6 +51,67 @@ extension View {
     }
 }
 
+/// 每页顶部统一的标题（大标题 + 一行小字），四个页面左右滑动时上下对齐
+struct PageHeader: View {
+    let title: String
+    let subtitle: String
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.system(size: 34, weight: .bold))
+            Text(subtitle).font(.subheadline.weight(.medium)).foregroundStyle(.secondary).lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 4)
+        .padding(.top, 10)
+    }
+}
+
+/// 每页统一的容器：同样的边距、同样的起始位置、隐藏系统导航栏
+struct PageScroll<Content: View>: View {
+    let title: String
+    let subtitle: String
+    @ViewBuilder let content: () -> Content
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 14) {
+                PageHeader(title: title, subtitle: subtitle)
+                content()
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
+        }
+        .background(AppBackground())
+        .toolbar(.hidden, for: .navigationBar)
+    }
+}
+
+/// 一组玻璃卡片：上面一行小标题，下面一行说明
+struct CardSection<Content: View>: View {
+    var title: String? = nil
+    var footer: String? = nil
+    @ViewBuilder let content: () -> Content
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let title {
+                Text(title).font(.footnote.weight(.semibold)).foregroundStyle(.secondary).padding(.leading, 6)
+            }
+            VStack(alignment: .leading, spacing: 0) { content() }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .glassCard(22)
+            if let footer {
+                Text(footer).font(.caption).foregroundStyle(.secondary).padding(.horizontal, 6)
+            }
+        }
+    }
+}
+
+/// 卡片里两行之间的分隔线
+struct RowDivider: View {
+    var body: some View { Divider().overlay(Color.white.opacity(0.06)) }
+}
+
 /// 列表行的玻璃底
 struct GlassRow: View {
     var body: some View {
@@ -148,14 +209,7 @@ struct HealthHomeView: View {
     @State private var photo: UIImage?
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 14) {
-                HStack {
-                    Text(todayText).font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
-                    Spacer()
-                }
-                .padding(.horizontal, 4)
-
+        PageScroll(title: "阿波", subtitle: todayText) {
                 detailLink(.sleep) { sleepCard }
 
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible())], spacing: 14) {
@@ -184,11 +238,7 @@ struct HealthHomeView: View {
                 }
                 .glassButton()
                 .padding(.top, 4)
-            }
-            .padding(16)
         }
-        .background(AppBackground())
-        .navigationTitle("阿波")
         .refreshable { await load() }
         .task { await authorizeAndLoad() }
     }
@@ -439,29 +489,21 @@ struct NBAView: View {
     private let favorites = myTeams
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 10) {
-                if let errorText {
-                    Text(errorText).font(.footnote).foregroundStyle(.orange)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(12).glassCard(16)
-                }
-                // 今天、明天左右并排，一屏看完
-                HStack(alignment: .top, spacing: 8) {
-                    dayColumn(title: "今天", offset: 0, games: today)
-                    Rectangle().fill(Color.white.opacity(0.10)).frame(width: 0.6)
-                    dayColumn(title: "明天", offset: 1, games: tomorrow)
-                }
-                Text("北京时间 · 湖人、76人排在最前 · 下拉刷新")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+        PageScroll(title: "NBA", subtitle: "北京时间 · 湖人、76人排在最前") {
+            if let errorText {
+                Text(errorText).font(.footnote).foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12).glassCard(16)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            // 今天、明天左右并排，装在一张玻璃卡片里
+            HStack(alignment: .top, spacing: 8) {
+                dayColumn(title: "今天", offset: 0, games: today)
+                Rectangle().fill(Color.white.opacity(0.10)).frame(width: 0.6)
+                dayColumn(title: "明天", offset: 1, games: tomorrow)
+            }
+            .padding(12)
+            .glassCard(24)
         }
-        .background(AppBackground())
-        .navigationTitle("NBA 赛程")
-        .navigationBarTitleDisplayMode(.inline)
         .refreshable { await load() }
         .task { await load() }
     }
@@ -558,35 +600,36 @@ struct SettingsView: View {
     @State private var iconTick = 0
 
     var body: some View {
-        List {
-            Section(header: Text("自定义图标"), footer: Text(iconStatus).font(.footnote)) {
-                ForEach(IconSlot.allCases) { slot in
+        PageScroll(title: "设置", subtitle: "图标 · 小组件 · 排查") {
+            CardSection(title: "自定义图标", footer: iconStatus) {
+                ForEach(Array(IconSlot.allCases.enumerated()), id: \.element.id) { i, slot in
+                    if i > 0 { RowDivider() }
                     IconRow(slot: slot) { iconTick += 1 }
+                        .padding(.vertical, 8)
                 }
             }
-            .listRowBackground(GlassRow())
 
-            Section(header: Text("小组件")) {
-                Text("长按桌面空白处 → 编辑 → 添加小组件 → 搜索「阿波」，可以选「今日 NBA」「明日 NBA」和「健康」（小 / 中 / 大）。\n健康小组件点一下刷新；NBA 小组件多页时点一下翻页，只有一页时刷新。\n湖人、76人的比赛排在最上面，队名显示为红色。")
+            CardSection(title: "小组件") {
+                Text("长按桌面空白处 → 编辑 → 添加小组件 → 搜索「阿波」，可以选 NBA、健康和血糖。\n所有小组件点空白处都只刷新，不会打开 App。\n湖人、76人的比赛排在最上面，队名显示为红色。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+                    .padding(.vertical, 10)
             }
-            .listRowBackground(GlassRow())
 
-            Section(header: Text("睡眠明细（排查用）")) {
+            CardSection(title: "睡眠明细（排查用）") {
                 if sleepDebug.isEmpty {
                     Button("读取昨晚睡眠明细") { Task { await loadSleepDebug() } }
+                        .padding(.vertical, 10)
                 } else {
                     ForEach(sleepDebug, id: \.self) { line in
                         Text(line).font(.caption.monospacedDigit()).textSelection(.enabled)
+                            .padding(.vertical, 4)
                     }
                     Button("重新读取") { Task { await loadSleepDebug() } }
+                        .padding(.vertical, 10)
                 }
             }
-            .listRowBackground(GlassRow())
         }
-        .glassList()
-        .navigationTitle("设置")
     }
 
     private var iconStatus: String {

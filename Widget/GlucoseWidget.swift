@@ -17,13 +17,19 @@ private let safeLine2h = 7.8   // 餐后2小时安全线（WHO 正常糖耐量�
 enum GlucosePrefs {
     private static let d = UserDefaults.standard
     static var days: Int { d.integer(forKey: "glucoseDays") == 30 ? 30 : 7 }
-    static func toggleDays() { d.set(days == 7 ? 30 : 7, forKey: "glucoseDays") }
+    static func toggleDays() { d.set(days == 7 ? 30 : 7, forKey: "glucoseDays"); clearSelection() }
+
+    /// 曲线上点中的那个点（再点一次同一个点取消）
+    static var selected: Double { d.double(forKey: "glucoseSelected") }
+    static func select(_ t: Double) { d.set(abs(selected - t) < 1 ? 0 : t, forKey: "glucoseSelected") }
+    static func clearSelection() { d.removeObject(forKey: "glucoseSelected") }
 
     static let meals = ["全部", "午+晚", "午餐", "晚餐", "早餐"]
     static var meal: String { d.string(forKey: "glucoseMeal").flatMap { meals.contains($0) ? $0 : nil } ?? "全部" }
     static func nextMeal() {
         let i = meals.firstIndex(of: meal) ?? 0
         d.set(meals[(i + 1) % meals.count], forKey: "glucoseMeal")
+        clearSelection()
     }
     static func matches(_ tag: String?) -> Bool {
         guard let t = tag else { return false }
@@ -49,6 +55,15 @@ struct GlucoseMealIntent: AppIntent {
     static var isDiscoverable: Bool = false
     init() {}
     func perform() async throws -> some IntentResult { GlucosePrefs.nextMeal(); return .result() }
+}
+
+struct SelectGlucosePointIntent: AppIntent {
+    static var title: LocalizedStringResource = "查看血糖点"
+    static var isDiscoverable: Bool = false
+    @Parameter(title: "时间") var time: Double
+    init() {}
+    init(time: Double) { self.time = time }
+    func perform() async throws -> some IntentResult { GlucosePrefs.select(time); return .result() }
 }
 
 struct GlucosePoint: Codable {
@@ -218,7 +233,7 @@ struct GlucoseWidgetView: View {
                     chip("\(days)天", intent: GlucoseDaysIntent())
                 }
                 if list.count >= 2 {
-                    chart(list).tapToRefresh()
+                    chart(list)
                 } else {
                     Text(list.isEmpty ? "这段时间没有记录" : "记录不足两条")
                         .font(.system(size: 11))
@@ -276,7 +291,9 @@ struct GlucoseWidgetView: View {
 
     private func chart(_ list: [GlucosePoint]) -> some View {
         let lo = max(0, min(list.map(\.mmol).min() ?? 4, safeLine2h) - 0.8)
-        let hi = max(list.map(\.mmol).max() ?? 8, safeLine2h) + 0.8
+        let hi = max(list.map(\.mmol).max() ?? 8, safeLine2h) + 1.6   // 顶部留出放气泡的位置
+        let sel = GlucosePrefs.selected
+        let picked = sel > 0 ? list.first { abs($0.date.timeIntervalSince1970 - sel) < 1 } : nil
         return Chart {
             RuleMark(y: .value("安全线", safeLine2h))
                 .foregroundStyle(dangerRed.opacity(0.75))
@@ -297,9 +314,49 @@ struct GlucoseWidgetView: View {
                     .symbolSize(p.mmol > safeLine2h ? 26 : 14)
                     .foregroundStyle(p.mmol > safeLine2h ? dangerRed : glucoseRed)
             }
+            if let p = picked {
+                RuleMark(x: .value("时间", p.date))
+                    .foregroundStyle(Color.secondary.opacity(0.5))
+                    .lineStyle(StrokeStyle(lineWidth: 1))
+                PointMark(x: .value("时间", p.date), y: .value("血糖", p.mmol))
+                    .symbolSize(50)
+                    .foregroundStyle(.white)
+                    .annotation(position: .top, spacing: 3,
+                                overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
+                        VStack(spacing: 0) {
+                            Text(String(format: "%.1f", p.mmol))
+                                .font(.system(size: 11, weight: .bold, design: .rounded).monospacedDigit())
+                            Text(pointLabel(p))
+                                .font(.system(size: 8))
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(RoundedRectangle(cornerRadius: 5).fill(Color(white: 0.25)))
+                    }
+            }
         }
         .chartYScale(domain: lo...hi)
         .chartXAxis(.hidden)
+        // 每个点上放一个透明按钮：点一下显示这个点的数值和时间
+        .chartOverlay { proxy in
+            GeometryReader { geo in
+                if let plot = proxy.plotFrame {
+                    let rect = geo[plot]
+                    let w = max(14, rect.width / CGFloat(max(list.count, 1)))
+                    ForEach(Array(list.enumerated()), id: \.offset) { _, p in
+                        if let x = proxy.position(forX: p.date) {
+                            Button(intent: SelectGlucosePointIntent(time: p.date.timeIntervalSince1970)) {
+                                Color.clear.contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .frame(width: w, height: rect.height)
+                            .position(x: rect.minX + x, y: rect.midY)
+                        }
+                    }
+                }
+            }
+        }
         .chartYAxis {
             AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) { v in
                 AxisGridLine().foregroundStyle(Color.secondary.opacity(0.15))
@@ -308,6 +365,13 @@ struct GlucoseWidgetView: View {
                 }
             }
         }
+    }
+
+    private func pointLabel(_ p: GlucosePoint) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "M/d HH:mm"
+        let meal = (p.tag ?? "").replacingOccurrences(of: "2小时", with: "")
+        return f.string(from: p.date) + (meal.isEmpty ? "" : " " + meal)
     }
 
     private func whenText(_ d: Date) -> String {
