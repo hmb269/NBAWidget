@@ -21,7 +21,7 @@ struct Theme {
     static let weight = Theme(top: Color(red: 0.80, green: 0.55, blue: 1.0), bottom: Color(red: 0.55, green: 0.32, blue: 0.95))
     static let hrv = Theme(top: Color(red: 1.0, green: 0.45, blue: 0.55), bottom: Color(red: 0.95, green: 0.22, blue: 0.42))
     static let steps = Theme(top: Color(red: 1.0, green: 0.72, blue: 0.25), bottom: Color(red: 1.0, green: 0.45, blue: 0.18))
-    static let sun = Theme(top: Color(red: 1.0, green: 0.72, blue: 0.25), bottom: Color(red: 1.0, green: 0.45, blue: 0.18)) // 和今日步数同色
+    static let sun = Theme(top: Color(red: 1.0, green: 0.86, blue: 0.30), bottom: Color(red: 1.0, green: 0.55, blue: 0.15))
 }
 
 enum HealthColor {
@@ -213,9 +213,9 @@ struct SmallHealthView: View {
             row(.hrv, .hrv, entry.hrvValue, unit: entry.hrv.value == nil ? "" : "毫秒",
                 trend: entry.hrvDelta, threshold: 0.5, color: entry.hrvColor)
             Spacer(minLength: 0)
-            row(.steps, .steps, entry.stepsValue, unit: entry.stepsValue == "--" ? "" : "步")
+            row(.steps, .steps, entry.stepsValue, unit: entry.stepsValue == "--" ? "" : "步", color: Theme.steps.text)
             Spacer(minLength: 0)
-            row(.sun, .sun, sunText)
+            row(.sun, .sun, sunText, color: Theme.sun.text)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -240,14 +240,14 @@ struct MediumHealthView: View {
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                SleepRing(sleep: entry.sleep.value, prevAsleep: entry.prevSleep.value?.asleep, size: 52, photo: entry.icons[.sleep])
-                    .padding(.bottom, 6)
+                SleepRing(sleep: entry.sleep.value, size: 62, photo: entry.icons[.sleep])
+                    .padding(.bottom, 2)
                 HStack(spacing: 4) {
-                    CaptionText("睡眠时间", theme: .sleep, size: 13)
+                    CaptionText("睡眠时间", theme: .sleep, size: 13).fixedSize()
                     SleepDeltaText(entry: entry)
                 }
                 ValueText(entry.sleepValue, size: 18)
-                FootText(entry.sleepFoot)
+                StageLegend()
             }
             .frame(width: 104, alignment: .leading)
 
@@ -263,11 +263,11 @@ struct MediumHealthView: View {
                     if let d = entry.hrvDelta { TrendView(delta: d, threshold: 0.5, compact: true) }
                 }
                 gridRow(.steps, .steps, "今日步数") {
-                    ValueText(entry.stepsValue, size: 15, shrink: false)
+                    ValueText(entry.stepsValue, size: 15, color: Theme.steps.text, shrink: false)
                     if entry.stepsValue != "--" { UnitText("步", theme: .steps) }
                 }
                 gridRow(.sun, .sun, "日出日落") {
-                    ValueText(sunText, size: 15, shrink: false)
+                    ValueText(sunText, size: 15, color: Theme.sun.text, shrink: false)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -316,7 +316,7 @@ struct LargeHealthView: View {
     // 睡眠
     private var sleepCard: some View {
         HStack(alignment: .center, spacing: 12) {
-            SleepRing(sleep: entry.sleep.value, prevAsleep: entry.prevSleep.value?.asleep, size: 56, photo: entry.icons[.sleep])
+            SleepRing(sleep: entry.sleep.value, size: 72, photo: entry.icons[.sleep])
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 5) {
                     IconBadge(slot: .sleep, theme: .sleep, size: 18)
@@ -400,7 +400,7 @@ struct LargeHealthView: View {
     private var stepsCard: some View {
         tile(.steps, .steps, "今日步数") {
             HStack(alignment: .firstTextBaseline, spacing: 2) {
-                ValueText(entry.stepsValue, size: 20)
+                ValueText(entry.stepsValue, size: 20, color: Theme.steps.text)
                 if entry.stepsValue != "--" { UnitText("步", theme: .steps) }
             }
             FootText(entry.stepsFoot)
@@ -422,6 +422,7 @@ struct LargeHealthView: View {
                 .foregroundStyle(Theme.sun.gradient)
             Text(value)
                 .font(.system(size: 16, weight: .bold, design: .rounded).monospacedDigit())
+                .foregroundStyle(Theme.sun.text)
         }
     }
 
@@ -755,46 +756,57 @@ struct TrendView: View {
     }
 }
 
-/// 睡眠圆环：深睡 / 核心 / 快速眼动三段，中间是小时数。
-/// 和前一晚比：多睡的那部分画成绿色；少睡就把缺的那段画成红色。
+/// 深睡 / 核心 / 快速眼动 的颜色说明（一行）
+struct StageLegend: View {
+    var body: some View {
+        HStack(spacing: 6) {
+            dot("深睡", HealthColor.deep)
+            dot("核心", HealthColor.core)
+            dot("眼动", HealthColor.rem)
+        }
+        .fixedSize()
+    }
+    private func dot(_ t: String, _ c: Color) -> some View {
+        HStack(spacing: 2) {
+            Circle().fill(c).frame(width: 6, height: 6)
+            Text(t).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// 睡眠圆环：按深睡 / 核心 / 快速眼动的时长比例分成三段，每段上写着时长。
+/// 中间：换了照片就只显示照片；没换就显示小时数。
 struct SleepRing: View {
     let sleep: HealthService.SleepData?
-    var prevAsleep: TimeInterval? = nil
     var size: CGFloat = 58
-    var photo: UIImage? = nil   // 「睡眠」换了照片就放在圆环中间
+    var photo: UIImage? = nil
 
-    /// (起点, 终点, 颜色)，0~1 表示一整圈
-    private var arcs: [(Double, Double, Color)] {
-        guard let s = sleep, s.asleep > 0 else { return [] }
-        var stages: [(Double, Color)] = []
+    /// (起点, 终点, 颜色, 时长)，0~1 表示一整圈
+    private var arcs: [(Double, Double, Color, TimeInterval)] {
+        guard let s = sleep else { return [] }
+        var stages: [(TimeInterval, Color)] = []
         if s.deep > 0 { stages.append((s.deep, HealthColor.deep)) }
         if s.core > 0 { stages.append((s.core, HealthColor.core)) }
         if s.rem > 0 { stages.append((s.rem, HealthColor.rem)) }
         if s.other > 0 { stages.append((s.other, HealthColor.other)) }
-        let stageTotal = stages.reduce(0) { $0 + $1.0 }
-        guard stageTotal > 0 else { return [] }
-
-        let today = s.asleep
-        let prev = (prevAsleep ?? 0) > 0 ? prevAsleep! : today
-        let full = max(today, prev)
-        let base = min(today, prev) / full
-
-        var out: [(Double, Double, Color)] = []
+        let total = stages.reduce(0) { $0 + $1.0 }
+        guard total > 0 else { return [] }
+        var out: [(Double, Double, Color, TimeInterval)] = []
         var pos = 0.0
         for st in stages {
-            let len = st.0 / stageTotal * base
-            out.append((pos, pos + len, st.1))
+            let len = st.0 / total
+            out.append((pos, pos + len, st.1, st.0))
             pos += len
         }
-        if today > prev + 60 { out.append((base, 1, HealthColor.more)) }
-        else if prev > today + 60 { out.append((base, 1, HealthColor.less)) }
         return out
     }
 
     var body: some View {
         let list = arcs
-        let gap = list.count > 1 ? 0.03 : 0
-        let lw = size * 0.155
+        let gap = list.count > 1 ? 0.025 : 0
+        let lw = size * 0.2
+        let fontSize = lw * 0.62
+        let r = size / 2
         ZStack {
             Circle().stroke(Color.secondary.opacity(0.2), lineWidth: lw)
             ForEach(Array(list.enumerated()), id: \.offset) { _, a in
@@ -803,18 +815,32 @@ struct SleepRing: View {
                     .stroke(a.2, style: StrokeStyle(lineWidth: lw, lineCap: .round))
                     .rotationEffect(.degrees(-90))
             }
+            // 每段中间写上时长，沿着圆环方向，下半圈翻过来保持正着读
+            ForEach(Array(list.enumerated()), id: \.offset) { _, a in
+                let arcLength = (a.1 - a.0) * Double.pi * size
+                if arcLength > Double(fontSize) * 2.6 {
+                    let theta = (a.0 + a.1) / 2 * 2 * Double.pi - Double.pi / 2
+                    let bottom = sin(theta) > 0.05
+                    Text(HealthFormat.clock(a.3))
+                        .font(.system(size: fontSize, weight: .heavy, design: .rounded).monospacedDigit())
+                        .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.35), radius: 0.6)
+                        .fixedSize()
+                        .rotationEffect(.radians(bottom ? theta - Double.pi / 2 : theta + Double.pi / 2))
+                        .offset(x: r * cos(theta), y: r * sin(theta))
+                }
+            }
             if let photo {
                 Image(uiImage: photo)
                     .resizable()
                     .scaledToFill()
-                    .frame(width: size - lw * 1.4, height: size - lw * 1.4)
+                    .frame(width: size - lw * 1.3, height: size - lw * 1.3)
                     .clipShape(Circle())
             } else if let s = sleep {
-                // 没换照片才显示小时数；换了照片就只显示照片
                 Text(String(format: "%.1f", s.asleep / 3600))
-                    .font(.system(size: size * 0.33, weight: .bold, design: .rounded).monospacedDigit())
+                    .font(.system(size: size * 0.26, weight: .bold, design: .rounded).monospacedDigit())
             } else {
-                Image(systemName: IconSlot.sleep.symbol).font(.system(size: size * 0.33)).foregroundStyle(Theme.sleep.text)
+                Image(systemName: IconSlot.sleep.symbol).font(.system(size: size * 0.26)).foregroundStyle(Theme.sleep.text)
             }
         }
         .frame(width: size, height: size)
