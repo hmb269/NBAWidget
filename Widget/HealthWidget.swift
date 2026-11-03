@@ -205,7 +205,7 @@ struct SmallHealthView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            row(.sleep, .sleep, entry.sleepValue, trend: entry.sleepDelta.map { $0 / 60 }, threshold: 1)
+            row(.sleep, .sleep, entry.sleepValue, plainIcon: true, trend: entry.sleepDelta.map { $0 / 60 }, threshold: 1)
             Spacer(minLength: 0)
             row(.weight, .weight, entry.weightValue, unit: entry.weight.value == nil ? "" : "公斤",
                 trend: entry.weightTrend, threshold: 0.005, color: entry.weightColor)
@@ -220,10 +220,10 @@ struct SmallHealthView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func row(_ slot: IconSlot, _ theme: Theme, _ value: String, unit: String = "",
+    private func row(_ slot: IconSlot, _ theme: Theme, _ value: String, plainIcon: Bool = false, unit: String = "",
                      trend: Double? = nil, threshold: Double = 0, color: Color? = nil) -> some View {
         HStack(spacing: 6) {
-            IconBadge(slot: slot, theme: theme, size: 22, custom: entry.icons[slot])
+            IconBadge(slot: slot, theme: theme, size: 22, custom: plainIcon ? nil : entry.icons[slot])
             ValueText(value, size: 15, color: color)
             if !unit.isEmpty { UnitText(unit, theme: theme, color: color) }
             if let trend { TrendView(delta: trend, threshold: threshold, compact: true) }
@@ -240,7 +240,7 @@ struct MediumHealthView: View {
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                SleepRing(sleep: entry.sleep.value, prevAsleep: entry.prevSleep.value?.asleep, size: 52)
+                SleepRing(sleep: entry.sleep.value, prevAsleep: entry.prevSleep.value?.asleep, size: 52, photo: entry.icons[.sleep])
                     .padding(.bottom, 6)
                 HStack(spacing: 4) {
                     CaptionText("睡眠时间", theme: .sleep, size: 13)
@@ -316,10 +316,10 @@ struct LargeHealthView: View {
     // 睡眠
     private var sleepCard: some View {
         HStack(alignment: .center, spacing: 12) {
-            SleepRing(sleep: entry.sleep.value, prevAsleep: entry.prevSleep.value?.asleep, size: 56)
+            SleepRing(sleep: entry.sleep.value, prevAsleep: entry.prevSleep.value?.asleep, size: 56, photo: entry.icons[.sleep])
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 5) {
-                    IconBadge(slot: .sleep, theme: .sleep, size: 18, custom: entry.icons[.sleep])
+                    IconBadge(slot: .sleep, theme: .sleep, size: 18)
                     CaptionText("睡眠时间", theme: .sleep, size: 13)
                         .fixedSize()
                     SleepDeltaText(entry: entry)
@@ -537,10 +537,11 @@ struct WeightChart: View {
 
     var body: some View {
         let cal = Calendar.current
-        let today = cal.startOfDay(for: Date())
-        let start = cal.date(byAdding: .day, value: -(days - 1), to: today)!
-        let end = cal.date(byAdding: .day, value: 1, to: today)!
         let pts = points
+        // 横轴只覆盖有记录的那几天，记录不满 7 / 30 天时也铺满整个宽度
+        let start = cal.startOfDay(for: pts.first?.date ?? Date())
+        let end = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: pts.last?.date ?? Date()))!
+        let span = max(1, cal.dateComponents([.day], from: start, to: end).day ?? 1)
         let lo = (pts.map(\.kg).min() ?? 0) - 0.3
         let hi = (pts.map(\.kg).max() ?? 1) + 0.3
         let picked: HealthService.WeightPoint? = WeightSelection.day.flatMap { sel in
@@ -561,7 +562,7 @@ struct WeightChart: View {
                         .interpolationMethod(.catmullRom)
                         .lineStyle(StrokeStyle(lineWidth: 2.2, lineCap: .round))
                         .foregroundStyle(Theme.weight.gradient)
-                    if days == 7 {
+                    if span <= 10 { // 天数少时把每天的点画出来
                         PointMark(x: .value("日期", mid(p.date)), y: .value("体重", p.kg))
                             .symbolSize(20)
                             .foregroundStyle(Theme.weight.top)
@@ -613,7 +614,7 @@ struct WeightChart: View {
                     if let plot = proxy.plotFrame {
                         let rect = geo[plot]
                         HStack(spacing: 0) {
-                            ForEach(0..<days, id: \.self) { i in
+                            ForEach(0..<span, id: \.self) { i in
                                 Button(intent: SelectWeightDayIntent(day: cal.date(byAdding: .day, value: i, to: start)!)) {
                                     Color.clear.contentShape(Rectangle())
                                 }
@@ -760,6 +761,7 @@ struct SleepRing: View {
     let sleep: HealthService.SleepData?
     var prevAsleep: TimeInterval? = nil
     var size: CGFloat = 58
+    var photo: UIImage? = nil   // 「睡眠」换了照片就放在圆环中间
 
     /// (起点, 终点, 颜色)，0~1 表示一整圈
     private var arcs: [(Double, Double, Color)] {
@@ -801,10 +803,20 @@ struct SleepRing: View {
                     .stroke(a.2, style: StrokeStyle(lineWidth: lw, lineCap: .round))
                     .rotationEffect(.degrees(-90))
             }
+            if let photo {
+                Image(uiImage: photo)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: size - lw * 1.4, height: size - lw * 1.4)
+                    .clipShape(Circle())
+                    .overlay(Circle().fill(Color.black.opacity(0.32)))
+            }
             if let s = sleep {
                 Text(String(format: "%.1f", s.asleep / 3600))
                     .font(.system(size: size * 0.33, weight: .bold, design: .rounded).monospacedDigit())
-            } else {
+                    .foregroundStyle(photo == nil ? Color.primary : Color.white)
+                    .shadow(color: .black.opacity(photo == nil ? 0 : 0.7), radius: 2)
+            } else if photo == nil {
                 Image(systemName: IconSlot.sleep.symbol).font(.system(size: size * 0.33)).foregroundStyle(Theme.sleep.text)
             }
         }

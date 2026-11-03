@@ -103,10 +103,15 @@ enum HealthService {
         // 总时长和健康 App 一样：所有来源的睡眠时段合并（重叠只算一次），
         // 再扣掉主来源（通常是手表）标记为清醒的时段
         let asleepIntervals = samples
-            .filter { HKCategoryValueSleepAnalysis.allAsleepValues.contains(HKCategoryValueSleepAnalysis(rawValue: $0.value)!) }
+            .filter {
+                HKCategoryValueSleepAnalysis.allAsleepValues.contains(HKCategoryValueSleepAnalysis(rawValue: $0.value)!)
+                || (HKCategoryValueSleepAnalysis(rawValue: $0.value) == .awake && $0.endDate.timeIntervalSince($0.startDate) < shortAwakeLimit)
+            }
             .map { ($0.startDate, $0.endDate) }
+        // 和健康 App 一致：很短的清醒（不到 5 分钟）算作睡着，不扣
         let awakeIntervals = best
             .filter { HKCategoryValueSleepAnalysis(rawValue: $0.value) == .awake }
+            .filter { $0.endDate.timeIntervalSince($0.startDate) >= shortAwakeLimit }
             .map { ($0.startDate, $0.endDate) }
         let merged = subtract(merge(asleepIntervals), merge(awakeIntervals))
         d.asleep = merged.reduce(0) { $0 + $1.1.timeIntervalSince($1.0) }
@@ -194,6 +199,9 @@ enum HealthService {
         }
         return lines
     }
+
+    /// 短于这个时长的清醒算作睡着（对照健康 App 得出的，介于 1.5～9 分钟之间，先取 5 分钟）
+    static let shortAwakeLimit: TimeInterval = 5 * 60
 
     /// 合并重叠的时段
     private static func merge(_ list: [(Date, Date)]) -> [(Date, Date)] {
@@ -419,7 +427,7 @@ enum SunTimes {
 
 enum HealthFormat {
     static func duration(_ t: TimeInterval) -> String {
-        let m = Int(t / 60)
+        let m = Int((t / 60).rounded())
         return "\(m / 60)小时\(m % 60)分"
     }
 
