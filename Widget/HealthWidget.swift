@@ -268,8 +268,15 @@ struct MediumHealthView: View {
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                SleepRing(sleep: entry.sleep.value, size: 60, photo: entry.icons[.sleep])
-                    .padding(.bottom, 2)
+                // 圆环右边放「清醒」，底部对齐
+                HStack(alignment: .bottom, spacing: 4) {
+                    SleepRing(sleep: entry.sleep.value, size: 60, photo: entry.icons[.sleep])
+                    if let s = entry.sleep.value {
+                        stageColumn("清醒", s.awake, HealthColor.awake, entry.awakeColor)
+                            .padding(.bottom, 4)
+                    }
+                }
+                .padding(.bottom, 2)
                 // 比前一晚少睡：红色 + 向下箭头；多睡：绿色 + 向上箭头
                 HStack(alignment: .firstTextBaseline, spacing: 3) {
                     ValueText(entry.sleepValue, size: 17, color: sleepColor)
@@ -283,12 +290,11 @@ struct MediumHealthView: View {
                         stageColumn("深睡", s.deep, HealthColor.deep, entry.deepColor)
                         stageColumn("核心", s.core, HealthColor.core, entry.coreColor)
                         stageColumn("眼动", s.rem, HealthColor.rem, entry.remColor)
-                        stageColumn("清醒", s.awake, HealthColor.awake, entry.awakeColor)
                     }
                     .padding(.top, 2)
                 }
             }
-            .frame(width: 128, alignment: .leading)
+            .frame(width: 104, alignment: .leading)
 
             Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 12) {
                 gridRow(.weight, .weight, "体重", color: entry.weightColor) {
