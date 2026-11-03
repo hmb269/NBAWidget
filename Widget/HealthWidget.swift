@@ -28,6 +28,7 @@ enum HealthColor {
     static let deep = Color(red: 0.30, green: 0.36, blue: 0.95)
     static let core = Color(red: 0.25, green: 0.60, blue: 1.0)
     static let rem = Color(red: 0.42, green: 0.86, blue: 1.0)
+    static let awake = Color(red: 1.0, green: 0.52, blue: 0.42)   // 和健康 App 的清醒一样是橘红
     static let other = Color(red: 0.36, green: 0.62, blue: 0.95)
     static let more = Color(red: 0.25, green: 0.88, blue: 0.45)   // 上升 / 变多：绿色
     static let less = Color(red: 1.0, green: 0.30, blue: 0.30)    // 下降 / 变少：红色
@@ -100,6 +101,9 @@ struct HealthEntry: TimelineEntry {
         return nil
     }
     /// 快速眼动：看占总睡眠的比例，≥20% 绿色，15%~20% 正常，<15% 红色
+    /// 清醒：越少越好，比前晚少 1 分钟以上绿色，多 1 分钟以上红色
+    var awakeColor: Color? { HealthEntry.compare(prevSleep.value?.awake, sleep.value?.awake) }
+
     var remColor: Color? {
         guard let s = sleep.value, s.asleep > 0 else { return nil }
         let r = s.rem / s.asleep
@@ -279,11 +283,12 @@ struct MediumHealthView: View {
                         stageColumn("深睡", s.deep, HealthColor.deep, entry.deepColor)
                         stageColumn("核心", s.core, HealthColor.core, entry.coreColor)
                         stageColumn("眼动", s.rem, HealthColor.rem, entry.remColor)
+                        stageColumn("清醒", s.awake, HealthColor.awake, entry.awakeColor)
                     }
                     .padding(.top, 2)
                 }
             }
-            .frame(width: 104, alignment: .leading)
+            .frame(width: 128, alignment: .leading)
 
             Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 12) {
                 gridRow(.weight, .weight, "体重", color: entry.weightColor) {
@@ -385,6 +390,7 @@ struct LargeHealthView: View {
                     stage("深睡", s.deep, HealthColor.deep, entry.deepColor)
                     stage("核心", s.core, HealthColor.core, entry.coreColor)
                     stage("快速眼动", s.rem, HealthColor.rem, entry.remColor)
+                    stage("清醒", s.awake, HealthColor.awake, entry.awakeColor)
                 }
             }
         }
