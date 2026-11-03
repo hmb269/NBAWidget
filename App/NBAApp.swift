@@ -17,7 +17,7 @@ struct ContentView: View {
     @State private var games: [Game] = []
     @State private var loading = false
     @State private var errorText: String?
-    @State private var steps: HealthService.StepResult?
+    @State private var health = HealthSnapshot()
     @State private var healthMessage: String?
     private let favorites = myTeams
 
@@ -29,13 +29,19 @@ struct ContentView: View {
         NavigationStack {
             List {
                 Section(header: Text("健康")) {
-                    HStack {
-                        Label("今日步数", systemImage: "figure.walk")
-                        Spacer()
-                        Text(steps?.steps.map { $0.formatted() } ?? "--")
-                            .font(.title3.weight(.semibold).monospacedDigit())
-                    }
-                    if let note = healthMessage ?? steps?.note {
+                    HealthRow(icon: "bed.double.fill", title: "睡眠时间", value: health.sleep.map { HealthFormat.duration($0.asleep) })
+                    HealthRow(icon: "scalemass.fill", title: "体重", value: health.weight.map { w in
+                        var t = HealthFormat.kg(w.kg) + " 公斤"
+                        if let p = w.previousKg {
+                            let d = w.kg - p
+                            t += abs(d) < 0.05 ? "  持平" : (d > 0 ? "  ↑" : "  ↓") + String(format: "%.1f", abs(d))
+                        }
+                        return t
+                    })
+                    HealthRow(icon: "waveform.path.ecg", title: "心率变异性", value: health.hrv.map { "\(Int($0.ms.rounded())) 毫秒" })
+                    HealthRow(icon: "figure.walk", title: "今日步数", value: health.steps.map { $0.formatted() })
+                    HealthRow(icon: "sun.horizon.fill", title: "日出 / 日落", value: SunTimes.times().map { HealthFormat.time($0.sunrise) + " / " + HealthFormat.time($0.sunset) })
+                    if let note = healthMessage {
                         Text(note).font(.footnote).foregroundStyle(.orange)
                     }
                     Button("授权 / 重新读取健康数据") {
@@ -68,7 +74,7 @@ struct ContentView: View {
                 }
 
                 Section(header: Text("小组件")) {
-                    Text("长按桌面空白处 → 编辑 → 添加小组件 → 搜索「阿波」，左右滑动可以选「今日 NBA」「明日 NBA」「今日步数」。\n点一下小组件：多页时翻页，只有一页时刷新。\n湖人、76人的比赛排在最上面，队名显示为红色。")
+                    Text("长按桌面空白处 → 编辑 → 添加小组件 → 搜索「阿波」，左右滑动可以选 NBA 赛程，以及睡眠时间、体重、心率变异性、今日步数、日出日落。\n点一下小组件：多页时翻页，只有一页时刷新。\n湖人、76人的比赛排在最上面，队名显示为红色。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -86,11 +92,15 @@ struct ContentView: View {
     }
 
     private func loadSteps() async {
-        steps = await HealthService.loadSteps()
-        if healthMessage == nil, steps?.steps == 0 {
-            healthMessage = "显示 0 步：可能今天还没走，或者没给读取权限（设置 → 健康 → 数据访问与设备 → 阿波）"
-        }
-        WidgetCenter.shared.reloadTimelines(ofKind: "HealthSteps")
+        var h = HealthSnapshot()
+        var errors: [String] = []
+        do { h.sleep = try await HealthService.lastNightSleep() } catch { errors.append("睡眠：" + HealthService.describe(error)) }
+        do { h.weight = try await HealthService.latestWeight() } catch { errors.append("体重：" + HealthService.describe(error)) }
+        do { h.hrv = try await HealthService.recentHRV(sleep: h.sleep) } catch { errors.append("HRV：" + HealthService.describe(error)) }
+        do { h.steps = try await HealthService.todaySteps() } catch { errors.append("步数：" + HealthService.describe(error)) }
+        health = h
+        if healthMessage == nil, !errors.isEmpty { healthMessage = errors.joined(separator: "\n") }
+        WidgetCenter.shared.reloadAllTimelines()
     }
 
     private func load() async {
@@ -204,6 +214,29 @@ struct AppGameRow: View {
         case "pre": return "客 @ 主"
         case "in": return game.liveText
         default: return game.isPostponed ? "" : "已结束"
+        }
+    }
+}
+
+struct HealthSnapshot {
+    var sleep: HealthService.SleepData?
+    var weight: HealthService.WeightData?
+    var hrv: HealthService.HRVData?
+    var steps: Int?
+}
+
+struct HealthRow: View {
+    let icon: String
+    let title: String
+    let value: String?
+
+    var body: some View {
+        HStack {
+            Label(title, systemImage: icon)
+            Spacer()
+            Text(value ?? "暂无数据")
+                .font(.body.weight(.semibold).monospacedDigit())
+                .foregroundStyle(value == nil ? .secondary : .primary)
         }
     }
 }

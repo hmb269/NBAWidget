@@ -23,7 +23,7 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
-        NSHealthShareUsageDescription: 读取今日步数等健康数据，显示在 App 和小组件里
+        NSHealthShareUsageDescription: 读取睡眠、体重、心率变异性和步数，显示在 App 和小组件里
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
     settings:
       base:
@@ -45,7 +45,7 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
-        NSHealthShareUsageDescription: 读取今日步数等健康数据，显示在 App 和小组件里
+        NSHealthShareUsageDescription: 读取睡眠、体重、心率变异性和步数，显示在 App 和小组件里
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.hmb269.nbawidget.widget
