@@ -250,12 +250,13 @@ struct MediumHealthView: View {
                     }
                 }
                 if let s = entry.sleep.value {
-                    VStack(alignment: .leading, spacing: 1) {
-                        stageRow("深睡", s.deep, HealthColor.deep)
-                        stageRow("核心", s.core, HealthColor.core)
-                        stageRow("眼动", s.rem, HealthColor.rem)
+                    // 三列两行：上面一行名称，下面一行时长
+                    HStack(alignment: .top, spacing: 0) {
+                        stageColumn("深睡", s.deep, HealthColor.deep)
+                        stageColumn("核心", s.core, HealthColor.core)
+                        stageColumn("眼动", s.rem, HealthColor.rem)
                     }
-                    .padding(.top, 1)
+                    .padding(.top, 2)
                 }
             }
             .frame(width: 104, alignment: .leading)
@@ -288,14 +289,16 @@ struct MediumHealthView: View {
         return d > 0 ? HealthColor.more : HealthColor.less
     }
 
-    private func stageRow(_ name: String, _ t: TimeInterval, _ color: Color) -> some View {
-        HStack(spacing: 4) {
-            Circle().fill(color).frame(width: 6, height: 6)
-            Text(name).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
-            Spacer(minLength: 2)
+    private func stageColumn(_ name: String, _ t: TimeInterval, _ color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 3) {
+                Circle().fill(color).frame(width: 6, height: 6)
+                Text(name).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+            }
             Text(HealthFormat.clock(t))
-                .font(.system(size: 11, weight: .semibold, design: .rounded).monospacedDigit())
+                .font(.system(size: 12, weight: .semibold, design: .rounded).monospacedDigit())
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func gridRow<V: View>(_ slot: IconSlot, _ theme: Theme, _ title: String, color: Color? = nil,
