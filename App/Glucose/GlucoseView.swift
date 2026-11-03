@@ -80,18 +80,31 @@ enum GlucoseTags {
     static let options = ["空腹", "早餐后", "午餐前", "午餐后", "晚餐前", "晚餐后", "睡前", "随机"]
     private static let key = "glucoseTags"
     static var all: [String: String] { (UserDefaults.standard.dictionary(forKey: key) as? [String: String]) ?? [:] }
-    /// 血糖仪只记了「餐后 / 餐前」时，按测量时间自动换成具体餐次
+    /// 三餐时间（从当天 0 点起的分钟数），在血糖页里可以改
+    static var breakfast: Int { minutes("mealBreakfast", 7 * 60 + 30) }
+    static var lunch: Int { minutes("mealLunch", 12 * 60) }
+    static var dinner: Int { minutes("mealDinner", 18 * 60 + 30) }
+    private static func minutes(_ k: String, _ def: Int) -> Int {
+        UserDefaults.standard.object(forKey: k) == nil ? def : UserDefaults.standard.integer(forKey: k)
+    }
+
+    /// 血糖仪只记了「餐后 / 餐前」时，按测量时间换成具体餐次；餐后再算出是饭后几小时
     static func auto(_ r: GlucoseRecord) -> String? {
-        let h = Calendar.current.component(.hour, from: r.date)
+        let c = Calendar.current.dateComponents([.hour, .minute], from: r.date)
+        let m = (c.hour ?? 0) * 60 + (c.minute ?? 0)
         switch r.meterMeal {
         case "餐后":
-            if (4..<12).contains(h) { return "早餐后" }
-            if (12..<17).contains(h) { return "午餐后" }
-            return "晚餐后"
+            let (name, meal): (String, Int)
+            if m >= breakfast - 60 && m < lunch { (name, meal) = ("早餐后", breakfast) }
+            else if m >= lunch && m < dinner { (name, meal) = ("午餐后", lunch) }
+            else if m >= dinner { (name, meal) = ("晚餐后", dinner) }
+            else { (name, meal) = ("晚餐后", dinner - 24 * 60) }   // 过了半夜算前一天晚餐
+            let hours = Int((Double(m - meal) / 60).rounded())
+            return (1...4).contains(hours) ? "\(name)\(hours)小时" : name
         case "餐前":
-            if (4..<10).contains(h) { return "空腹" }
-            if (10..<15).contains(h) { return "午餐前" }
-            if (15..<21).contains(h) { return "晚餐前" }
+            if m < 10 * 60 && m >= 4 * 60 { return "空腹" }
+            if m >= 10 * 60 && m < 15 * 60 { return "午餐前" }
+            if m >= 15 * 60 && m < 21 * 60 { return "晚餐前" }
             return "睡前"
         default:
             return r.meterMeal
@@ -112,6 +125,7 @@ struct GlucoseView: View {
     @State private var records: [GlucoseRecord] = []
     @State private var tags: [String: String] = GlucoseTags.all
     @State private var message: String?
+    @State private var mealTick = 0   // 改了三餐时间后刷新标签
 
     var body: some View {
         List {
@@ -133,6 +147,16 @@ struct GlucoseView: View {
                 }
             } footer: {
                 Text("第一次连接：先把血糖仪关机，再长按「OK」键，直到屏幕上蓝牙图标闪烁，然后点上面的按钮。手机弹出配对框时，输入血糖仪背面的 6 位 PIN 码。\n以后同步：按一下血糖仪开机键让它亮屏，再点同步。\n读到的记录会保存到健康 App，重复同步不会重复。")
+            }
+
+            Section {
+                mealPicker("早餐", key: "mealBreakfast", minutes: GlucoseTags.breakfast)
+                mealPicker("午餐", key: "mealLunch", minutes: GlucoseTags.lunch)
+                mealPicker("晚餐", key: "mealDinner", minutes: GlucoseTags.dinner)
+            } header: {
+                Text("三餐时间")
+            } footer: {
+                Text("血糖仪记成「餐后」的，按这里的时间算出是饭后几小时，例如「午餐后2小时」。")
             }
 
             if records.isEmpty {
@@ -177,7 +201,16 @@ struct GlucoseView: View {
             Spacer()
             Menu {
                 ForEach(GlucoseTags.options, id: \.self) { t in
-                    Button(t) { setTag(t, for: r) }
+                    if t.hasSuffix("餐后") {
+                        Menu(t) {
+                            ForEach(1...4, id: \.self) { h in
+                                Button("\(t)\(h)小时") { setTag("\(t)\(h)小时", for: r) }
+                            }
+                            Button("不指定时间") { setTag(t, for: r) }
+                        }
+                    } else {
+                        Button(t) { setTag(t, for: r) }
+                    }
                 }
                 if tags[r.id] != nil {
                     Divider()
@@ -185,12 +218,26 @@ struct GlucoseView: View {
                 }
             } label: {
                 Text(tags[r.id] ?? GlucoseTags.auto(r) ?? "标记餐点")
+                    .id(mealTick)
                     .font(.subheadline.weight(.medium))
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
                     .background(Capsule().fill(Color.accentColor.opacity(0.12)))
             }
         }
+    }
+
+    private func mealPicker(_ title: String, key: String, minutes: Int) -> some View {
+        let base = Calendar.current.startOfDay(for: Date())
+        return DatePicker(title, selection: Binding(
+            get: { base.addingTimeInterval(TimeInterval(minutes * 60)) },
+            set: { d in
+                let c = Calendar.current.dateComponents([.hour, .minute], from: d)
+                UserDefaults.standard.set((c.hour ?? 0) * 60 + (c.minute ?? 0), forKey: key)
+                mealTick += 1
+            }
+        ), displayedComponents: .hourAndMinute)
+        .id("\(key)-\(mealTick)")
     }
 
     private func setTag(_ t: String?, for r: GlucoseRecord) {
