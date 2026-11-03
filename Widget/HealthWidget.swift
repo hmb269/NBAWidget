@@ -215,8 +215,8 @@ struct HealthWidgetView: View {
     var body: some View {
         Group {
             switch family {
-            case .systemSmall: SmallHealthView(entry: entry)
-            case .systemMedium: MediumHealthView(entry: entry)
+            case .systemSmall: SmallHealthView(entry: entry).tapToRefresh()
+            case .systemMedium: MediumHealthView(entry: entry).tapToRefresh()
             default: LargeHealthView(entry: entry)
             }
         }
@@ -363,7 +363,7 @@ struct LargeHealthView: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            sleepCard
+            sleepCard.tapToRefresh()
             weightCard
                 .frame(maxHeight: .infinity)
             HStack(spacing: 6) {
@@ -372,6 +372,7 @@ struct LargeHealthView: View {
                 sunCard
             }
             .fixedSize(horizontal: false, vertical: true)
+            .tapToRefresh()
         }
     }
 
@@ -420,16 +421,19 @@ struct LargeHealthView: View {
         let pts = entry.weightPoints(days: days)
         return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .center, spacing: 8) {
-                IconBadge(slot: .weight, theme: .weight, size: 30, custom: entry.icons[.weight])
-                VStack(alignment: .leading, spacing: 0) {
-                    CaptionText("体重", theme: .weight, size: 13, color: entry.weightColor)
-                    HStack(alignment: .firstTextBaseline, spacing: 4) {
-                        ValueText(entry.weightValue, size: 22, color: entry.weightColor, shrink: false)
-                        if entry.weight.value != nil { UnitText("公斤", theme: .weight, color: entry.weightColor) }
-                        if let t = entry.weightTrend { TrendView(delta: t, threshold: 0.005, compact: false) }
+                HStack(alignment: .center, spacing: 8) {
+                    IconBadge(slot: .weight, theme: .weight, size: 30, custom: entry.icons[.weight])
+                    VStack(alignment: .leading, spacing: 0) {
+                        CaptionText("体重", theme: .weight, size: 13, color: entry.weightColor)
+                        HStack(alignment: .firstTextBaseline, spacing: 4) {
+                            ValueText(entry.weightValue, size: 22, color: entry.weightColor, shrink: false)
+                            if entry.weight.value != nil { UnitText("公斤", theme: .weight, color: entry.weightColor) }
+                            if let t = entry.weightTrend { TrendView(delta: t, threshold: 0.005, compact: false) }
+                        }
                     }
+                    Spacer(minLength: 4)
                 }
-                Spacer(minLength: 4)
+                .tapToRefresh()
                 VStack(alignment: .trailing, spacing: 3) {
                     RangeChip(days: days)
                     if pts.count > 1, let f = pts.first, let l = pts.last {
@@ -513,6 +517,26 @@ extension View {
             .padding(.horizontal, padding / 2)
             .padding(.vertical, padding / 3)
             .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+// MARK: - 点一下刷新（不打开 App）
+
+struct RefreshHealthIntent: AppIntent {
+    static var title: LocalizedStringResource = "刷新健康数据"
+    static var isDiscoverable: Bool = false
+    init() {}
+    // 什么都不用做：按钮点完后系统会重新跑一次时间线，读到最新数据
+    func perform() async throws -> some IntentResult { .result() }
+}
+
+extension View {
+    /// 把这一块变成「点一下刷新」的按钮
+    func tapToRefresh() -> some View {
+        Button(intent: RefreshHealthIntent()) {
+            self.contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
