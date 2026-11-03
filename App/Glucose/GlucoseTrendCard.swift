@@ -36,6 +36,9 @@ enum GlucoseKind: String, CaseIterable, Identifiable {
     }
 }
 
+/// 趋势图上的一个点：时间、数值、餐点、备注、照片小图
+typealias GPoint = (Date, Double, String, String?, UIImage?)
+
 /// 只看某一餐
 enum MealFilter: String, CaseIterable, Identifiable {
     case all = "全部"
@@ -60,21 +63,21 @@ enum MealFilter: String, CaseIterable, Identifiable {
 /// 血糖页最上面的趋势卡片：选空腹 / 餐后1h / 餐后2h 和时间范围，按住曲线看每个点
 struct GlucoseTrendCard: View {
     /// (时间, 数值, 标签)
-    let points: [(Date, Double, String)]
+    let points: [GPoint]
 
     @State private var kind: GlucoseKind = .after2
     @State private var days = 30
     @State private var meal: MealFilter = .all
     @State private var selected: Date?
 
-    private var series: [(Date, Double, String)] {
+    private var series: [GPoint] {
         let start = Calendar.current.date(byAdding: .day, value: -days, to: Date())!
         return points.filter {
             $0.0 >= start && GlucoseKind.of($0.2) == kind && (kind == .fasting || meal.matches($0.2))
         }.sorted { $0.0 < $1.0 }
     }
 
-    private var picked: (Date, Double, String)? {
+    private var picked: GPoint? {
         guard let s = selected else { return nil }
         return series.min { abs($0.0.timeIntervalSince(s)) < abs($1.0.timeIntervalSince(s)) }
     }
@@ -147,7 +150,7 @@ struct GlucoseTrendCard: View {
         .onChange(of: meal) { _, _ in selected = nil }
     }
 
-    private func chart(_ data: [(Date, Double, String)]) -> some View {
+    private func chart(_ data: [GPoint]) -> some View {
         let line = kind.safeLine
         let lo = max(0, min(data.map(\.1).min() ?? 4, line) - 1)
         let hi = max(data.map(\.1).max() ?? 8, line) + 1
@@ -182,12 +185,22 @@ struct GlucoseTrendCard: View {
                     .foregroundStyle(.white)
                     .annotation(position: .top, spacing: 6,
                                 overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
-                        VStack(spacing: 1) {
-                            Text(String(format: "%.1f mmol/L", p.1))
-                                .font(.system(size: 13, weight: .bold, design: .rounded).monospacedDigit())
-                            Text(label(p.0) + " · " + p.2)
-                                .font(.system(size: 10))
-                                .foregroundStyle(.secondary)
+                        HStack(spacing: 6) {
+                            if let img = p.4 {
+                                Image(uiImage: img).resizable().scaledToFill()
+                                    .frame(width: 34, height: 34)
+                                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            }
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(String(format: "%.1f mmol/L", p.1))
+                                    .font(.system(size: 13, weight: .bold, design: .rounded).monospacedDigit())
+                                Text(label(p.0) + " · " + p.2)
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary)
+                                if let n = p.3, !n.isEmpty {
+                                    Text(n).font(.system(size: 10, weight: .medium)).lineLimit(1)
+                                }
+                            }
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 5)

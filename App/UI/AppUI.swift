@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import WidgetKit
 
 // MARK: - 玻璃风格公共部件
@@ -145,6 +146,7 @@ enum AppColor {
 
 struct RootView: View {
     @State private var tab = 0
+    @Environment(\.scenePhase) private var scenePhase
 
     private let tabs: [(String, String)] = [
         ("健康", "heart.fill"), ("血糖", "drop.fill"), ("NBA", "basketball.fill"), ("设置", "gearshape.fill")
@@ -164,6 +166,9 @@ struct RootView: View {
         .safeAreaInset(edge: .bottom) { tabBar }
         .tint(Color(red: 0.40, green: 0.88, blue: 0.88))
         .preferredColorScheme(.dark)
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background, AutoBackup.isSet { AutoBackup.run() }
+        }
     }
 
     private var tabBar: some View {
@@ -611,8 +616,18 @@ struct SettingsView: View {
     @State private var sleepDebug: [String] = []
     @State private var iconTick = 0
 
+    // 备份
+    @State private var exporting = false
+    @State private var exportDoc: BackupDocument?
+    @State private var importing = false
+    @State private var pickFolder = false
+    @State private var backupMessage: String?
+    @State private var backupTick = 0
+
     var body: some View {
-        PageScroll(title: "设置", subtitle: "图标 · 小组件 · 排查") {
+        PageScroll(title: "设置", subtitle: "备份 · 图标 · 小组件") {
+            backupCard
+
             CardSection(footer: iconStatus) {
                 CardTitle("自定义图标")
                 ForEach(Array(IconSlot.allCases.enumerated()), id: \.element.id) { i, slot in
@@ -647,8 +662,86 @@ struct SettingsView: View {
                 }
             }
         }
+        .fileExporter(isPresented: $exporting, document: exportDoc, contentType: .json,
+                      defaultFilename: GlucoseBackup.fileName) { result in
+            switch result {
+            case .success: backupMessage = "已导出备份文件"
+            case .failure(let e): backupMessage = "导出失败：\(e.localizedDescription)"
+            }
+        }
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { result in
+            switch result {
+            case .success(let url):
+                let ok = url.startAccessingSecurityScopedResource()
+                defer { if ok { url.stopAccessingSecurityScopedResource() } }
+                do {
+                    let data = try Data(contentsOf: url)
+                    backupMessage = try GlucoseBackup.restore(data)
+                } catch {
+                    backupMessage = "导入失败：\(error.localizedDescription)"
+                }
+            case .failure(let e):
+                backupMessage = "导入失败：\(e.localizedDescription)"
+            }
+        }
+        .background {
+            // 选自动备份文件夹（一个页面只能挂一个 fileImporter，放在背景里的另一个视图上）
+            Color.clear
+                .fileImporter(isPresented: $pickFolder, allowedContentTypes: [.folder]) { result in
+                    if case .success(let url) = result {
+                        do {
+                            try AutoBackup.setFolder(url)
+                            backupMessage = AutoBackup.run()
+                        } catch {
+                            backupMessage = "设置失败：\(error.localizedDescription)"
+                        }
+                        backupTick += 1
+                    }
+                }
+        }
     }
 
+    private var backupCard: some View {
+        let _ = backupTick
+        return CardSection(footer: AutoBackup.statusText) {
+            CardTitle("数据备份")
+            RowDivider()
+            Button {
+                pickFolder = true
+            } label: {
+                Label(AutoBackup.isSet ? "自动备份到：\(AutoBackup.folderName ?? "需重新选择")" : "设置自动备份文件夹",
+                      systemImage: "folder.badge.gearshape")
+                    .padding(.vertical, 10)
+            }
+            if AutoBackup.isSet {
+                RowDivider()
+                Button {
+                    backupMessage = AutoBackup.run()
+                    backupTick += 1
+                } label: {
+                    Label("立即备份", systemImage: "arrow.triangle.2.circlepath").padding(.vertical, 10)
+                }
+            }
+            RowDivider()
+            Button {
+                exportDoc = GlucoseBackup.make().map(BackupDocument.init(data:))
+                exporting = exportDoc != nil
+                if exportDoc == nil { backupMessage = "生成备份失败" }
+            } label: {
+                Label("导出备份文件", systemImage: "square.and.arrow.up").padding(.vertical, 10)
+            }
+            RowDivider()
+            Button {
+                importing = true
+            } label: {
+                Label("导入备份文件", systemImage: "square.and.arrow.down").padding(.vertical, 10)
+            }
+            if let backupMessage {
+                RowDivider()
+                Text(backupMessage).font(.footnote).foregroundStyle(.green).padding(.vertical, 8)
+            }
+        }
+    }
     private var iconStatus: String {
         let _ = iconTick
         var t = "点「换照片」从相册选一张，会自动裁成圆形。照片会放进系统相簿「阿波小组件·xx」，小组件从那里读。第一次会请求相册权限，请选「允许完全访问」。"

@@ -16,6 +16,8 @@ struct GlucoseRecord: Identifiable, Codable, Equatable {
     var meterMeal: String?  // 血糖仪自带的餐点标记（或健康里存的标签）
     var source: String
     var mine: Bool          // 是不是阿波自己写进健康的（只有这种能改、能删）
+    var note: String? = nil           // 备注，比如「饭后散步」
+    var photos: [GlucosePhoto]? = nil // 照片（相册编号 + 小图）
 }
 
 /// 本地存储：Application Support/glucose.json
@@ -33,6 +35,7 @@ enum GlucoseLocal {
 
     static func save(_ list: [GlucoseRecord]) {
         if let d = try? JSONEncoder().encode(list) { try? d.write(to: url, options: .atomic) }
+        AutoBackup.schedule()
     }
 
     /// 合并：已有的记录保留，新的加进来；同一条（id 相同）以新的数值为准，但标签、归属不动
@@ -42,6 +45,8 @@ enum GlucoseLocal {
         for r in incoming {
             if var old = byId[r.id] {
                 if old.meterMeal == nil { old.meterMeal = r.meterMeal }
+                if old.note == nil { old.note = r.note }
+                if (old.photos ?? []).isEmpty, let p = r.photos, !p.isEmpty { old.photos = p }
                 old.mine = old.mine || r.mine
                 byId[r.id] = old
             } else {
@@ -65,6 +70,7 @@ enum GlucosePeople {
         let n = name.trimmingCharacters(in: .whitespaces)
         guard !n.isEmpty, n != me, !names.contains(n) else { return }
         UserDefaults.standard.set(names + [n], forKey: namesKey)
+        AutoBackup.schedule()
     }
 
     static var owners: [String: String] { (UserDefaults.standard.dictionary(forKey: ownerKey) as? [String: String]) ?? [:] }
@@ -73,6 +79,7 @@ enum GlucosePeople {
         var d = owners
         d[id] = person == me ? nil : person
         UserDefaults.standard.set(d, forKey: ownerKey)
+        AutoBackup.schedule()
     }
 }
 
@@ -84,6 +91,8 @@ enum GlucoseStore {
     private static let mealKey = "餐点"
     private static let oldMealKey = "阿波餐点"   // 早期版本用的字段名，读取时兼容
     private static let personKey = "测量人"
+    private static let noteKey = "备注"
+    private static let photoKey = "照片编号"
 
     static func requestAccess() async throws {
         try await HealthService.store.requestAuthorization(toShare: [type], read: [type])
@@ -120,6 +129,9 @@ enum GlucoseStore {
                 HKMetadataKeyWasUserEntered: false
             ]
             if person != GlucosePeople.me { meta[personKey] = person }
+            if let n = r.note, !n.isEmpty { meta[noteKey] = n }
+            let ids = (r.photos ?? []).compactMap(\.assetID)
+            if !ids.isEmpty { meta[photoKey] = ids.joined(separator: "|") }
             if let tag = label(r) {
                 meta[mealKey] = tag
                 if tag.contains("后") {
@@ -170,9 +182,16 @@ enum GlucoseStore {
                 meal = raw.intValue == HKBloodGlucoseMealTime.preprandial.rawValue ? "餐前" : "餐后"
             }
             let mine = s.sourceRevision.source.bundleIdentifier == Bundle.main.bundleIdentifier
+            // 照片只记了相册编号；小图文件名用编号算出来（重装后没有小图，就直接显示相册原图）
+            let photos = (meta[photoKey] as? String).map { str in
+                str.split(separator: "|").map { id in
+                    GlucosePhoto(id: "h-" + String(id).replacingOccurrences(of: "/", with: "_"), assetID: String(id))
+                }
+            }
             return GlucoseRecord(id: (meta[HKMetadataKeySyncIdentifier] as? String) ?? s.uuid.uuidString,
                                  date: s.startDate, mmol: s.quantity.doubleValue(for: unit),
-                                 meterMeal: meal, source: s.sourceRevision.source.name, mine: mine)
+                                 meterMeal: meal, source: s.sourceRevision.source.name, mine: mine,
+                                 note: meta[noteKey] as? String, photos: photos)
         }
     }
 }
@@ -216,6 +235,7 @@ enum GlucoseTags {
         var d = all
         d[id] = tag
         UserDefaults.standard.set(d, forKey: key)
+        AutoBackup.schedule()
     }
 }
 
@@ -242,10 +262,14 @@ struct GlucoseView: View {
     @State private var filter: String = "全部"
     @State private var pickedDay: Date?
     @State private var showCalendar = false
+    @State private var editing: GlucoseRecord?
+    @State private var missingIDs: Set<String> = []
 
     var body: some View {
         PageScroll(title: "血糖", subtitle: "\(records.count) 条记录 · 罗氏智航") {
-            GlucoseTrendCard(points: shown.map { ($0.date, $0.mmol, label($0) ?? "") })
+            GlucoseTrendCard(points: shown.map {
+                ($0.date, $0.mmol, label($0) ?? "", $0.note, $0.photos?.first.flatMap(GlucoseMedia.thumb))
+            })
 
             CardSection(footer: "第一次连接：先把血糖仪关机，再长按「OK」键，直到屏幕上蓝牙图标闪烁，然后点「从罗氏智航同步」。弹出配对框时输入血糖仪背面的 6 位 PIN 码。同步下来的记录先存在 App 里，标好是谁测的、什么餐点后，点「写入健康」选择写入谁的记录。") {
                 HStack {
@@ -311,6 +335,16 @@ struct GlucoseView: View {
                 .pickerStyle(.segmented)
             }
 
+            if !missingIDs.isEmpty {
+                CardSection {
+                    Label("有 \(missingIDs.count) 张饮食照片在相册里找不到了，可能被误删。30 天内可以在「照片 → 相簿 → 最近删除」里恢复，恢复后会自动重新显示。记录里仍保留了小图（带 ⚠︎ 的就是）。",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                        .padding(.vertical, 10)
+                }
+            }
+
             // 记录列表上方：按日期查找
             HStack(spacing: 10) {
                 Text(pickedDay.map { "\(dayTitle($0))的记录" } ?? "全部记录")
@@ -349,6 +383,22 @@ struct GlucoseView: View {
             }
         }
         .refreshable { await readFromHealth() }
+        .sheet(item: $editing) { r in
+            GlucoseRecordSheet(record: r, tag: label(r), owner: owners[r.id] ?? GlucosePeople.me,
+                               missing: missingIDs) { note, photos in
+                updateMedia(r.id, note: note, photos: photos)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .glucoseDataChanged)) { _ in
+            records = GlucoseLocal.load()
+            tags = GlucoseTags.all
+            owners = GlucosePeople.owners
+            people = GlucosePeople.names
+            breakfast = GlucoseTags.breakfast
+            lunch = GlucoseTags.lunch
+            dinner = GlucoseTags.dinner
+            refreshMissing()
+        }
         .sheet(isPresented: $showCalendar) {
             GlucoseCalendarSheet(
                 days: Set(shown.map { Calendar.current.startOfDay(for: $0.date) }),
@@ -394,6 +444,7 @@ struct GlucoseView: View {
             try? await GlucoseStore.requestAccess()
             // 第一次用新版：把健康里已有的血糖导进来
             if records.isEmpty { await readFromHealth() }
+            refreshMissing()
         }
     }
 
@@ -402,16 +453,51 @@ struct GlucoseView: View {
     private func row(_ r: GlucoseRecord) -> some View {
         let owner = owners[r.id] ?? GlucosePeople.me
         let isMe = owner == GlucosePeople.me
-        return HStack(alignment: .firstTextBaseline) {
-            Text(timeText(r.date))
-                .font(.subheadline.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .frame(width: 48, alignment: .leading)
-            Text(String(format: "%.1f", r.mmol))
-                .font(.system(size: 24, weight: .bold, design: .rounded).monospacedDigit())
-            Text("mmol/L").font(.caption).foregroundStyle(.secondary)
-            Spacer()
+        let photos = r.photos ?? []
+        return HStack(alignment: .center) {
+            Button {
+                editing = r
+            } label: {
+                HStack(alignment: .center, spacing: 8) {
+                    Text(timeText(r.date))
+                        .font(.subheadline.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 48, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(alignment: .firstTextBaseline, spacing: 3) {
+                            Text(String(format: "%.1f", r.mmol))
+                                .font(.system(size: 24, weight: .bold, design: .rounded).monospacedDigit())
+                            Text("mmol/L").font(.caption).foregroundStyle(.secondary)
+                        }
+                        if let n = r.note, !n.isEmpty {
+                            Text(n).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                    }
+                    if let p = photos.first {
+                        GlucosePhotoView(photo: p, missing: p.assetID.map(missingIDs.contains) ?? false, side: 120)
+                            .frame(width: 36, height: 36)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .overlay(alignment: .bottomTrailing) {
+                                if photos.count > 1 {
+                                    Text("\(photos.count)")
+                                        .font(.system(size: 9, weight: .bold))
+                                        .padding(.horizontal, 3)
+                                        .background(Capsule().fill(.black.opacity(0.6)))
+                                        .offset(x: 3, y: 3)
+                                }
+                            }
+                    } else if r.note == nil {
+                        Image(systemName: "camera")
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.25))
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            Spacer(minLength: 6)
             Menu {
+                Button("照片和备注…", systemImage: "camera") { editing = r }
                 Section("谁测的") {
                     ownerButton(GlucosePeople.me, r, current: owner)
                     ForEach(people, id: \.self) { ownerButton($0, r, current: owner) }
@@ -471,6 +557,26 @@ struct GlucoseView: View {
     }
 
     private func label(_ r: GlucoseRecord) -> String? { tags[r.id] ?? GlucoseTags.auto(r) }
+
+    /// 保存照片和备注；如果这条已经在健康里，顺便更新健康里的备注
+    private func updateMedia(_ id: String, note: String?, photos: [GlucosePhoto]) {
+        guard let i = records.firstIndex(where: { $0.id == id }) else { return }
+        records[i].note = note
+        records[i].photos = photos.isEmpty ? nil : photos
+        GlucoseLocal.save(records)
+        refreshMissing()
+        let r = records[i]
+        if r.mine {
+            let person = owners[r.id] ?? GlucosePeople.me
+            Task { _ = try? await GlucoseStore.write(keep: [r], remove: [], person: person, label: label) }
+        }
+    }
+
+    /// 检查哪些照片在相册里找不到了
+    private func refreshMissing() {
+        let ids = records.flatMap { $0.photos ?? [] }.compactMap(\.assetID)
+        missingIDs = GlucoseMedia.missing(ids)
+    }
 
     private func writeToHealth(person: String) async {
         working = true
