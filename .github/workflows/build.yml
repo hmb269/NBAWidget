@@ -44,7 +44,7 @@ jobs:
           codesign --force --sign - --entitlements Widget/NBAWidgetExtension.entitlements \
             Payload/NBAWidget.app/PlugIns/NBAWidgetExtension.appex
           codesign --force --sign - --entitlements App/NBAWidget.entitlements Payload/NBAWidget.app
-          zip -qry NBAWidget.ipa Payload
+          zip -qry Abo.ipa Payload
           {
             echo '包内文件（排查用）：'
             echo '```'
@@ -61,5 +61,5 @@ jobs:
         with:
           tag_name: build-${{ github.run_number }}
           name: 阿波 build ${{ github.run_number }}
-          files: NBAWidget.ipa
+          files: Abo.ipa
           body_path: notes.md

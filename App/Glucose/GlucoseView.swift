@@ -1,23 +1,89 @@
 import SwiftUI
 import HealthKit
 
-// MARK: - 健康 App 里的血糖
+// 血糖记录的流程：
+// 1. 从罗氏智航同步 → 先存在 App 里（不直接写健康）
+// 2. 每条可以标「谁测的」和餐点（如「午餐后2小时」）
+// 3. 写入健康 → 选一个人，只把这个人的记录写进健康；之前写进健康的其他人的记录会被移出
+// 4. 从健康读取 → 把健康里已有的血糖（包括别的 App 写的）合并进来
 
-struct GlucoseRecord: Identifiable {
-    let id: String          // 同步标识（血糖仪导入的）或样本 UUID
+// MARK: - 一条血糖记录（存在 App 里）
+
+struct GlucoseRecord: Identifiable, Codable, Equatable {
+    let id: String          // 血糖仪导入的用「accuchek-序列号-序号-时间」，健康读进来的用样本 UUID
     let date: Date
     let mmol: Double
-    let meterMeal: String?  // 血糖仪自带的餐点标记（或上次同步进健康的标签）
-    let source: String
-    var syncVersion: Int = 1
-    var isMine: Bool = false  // 是不是阿波自己写进健康的（只有这种能改）
+    var meterMeal: String?  // 血糖仪自带的餐点标记（或健康里存的标签）
+    var source: String
+    var mine: Bool          // 是不是阿波自己写进健康的（只有这种能改、能删）
 }
+
+/// 本地存储：Application Support/glucose.json
+enum GlucoseLocal {
+    private static var url: URL {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("glucose.json")
+    }
+
+    static func load() -> [GlucoseRecord] {
+        guard let d = try? Data(contentsOf: url) else { return [] }
+        return (try? JSONDecoder().decode([GlucoseRecord].self, from: d)) ?? []
+    }
+
+    static func save(_ list: [GlucoseRecord]) {
+        if let d = try? JSONEncoder().encode(list) { try? d.write(to: url, options: .atomic) }
+    }
+
+    /// 合并：已有的记录保留，新的加进来；同一条（id 相同）以新的数值为准，但标签、归属不动
+    static func merge(_ incoming: [GlucoseRecord], into list: [GlucoseRecord]) -> ([GlucoseRecord], Int) {
+        var byId = Dictionary(uniqueKeysWithValues: list.map { ($0.id, $0) })
+        var added = 0
+        for r in incoming {
+            if var old = byId[r.id] {
+                if old.meterMeal == nil { old.meterMeal = r.meterMeal }
+                old.mine = old.mine || r.mine
+                byId[r.id] = old
+            } else {
+                byId[r.id] = r
+                added += 1
+            }
+        }
+        return (byId.values.sorted { $0.date > $1.date }, added)
+    }
+}
+
+// MARK: - 测量人
+
+enum GlucosePeople {
+    static let me = "我"
+    private static let namesKey = "glucosePeople"
+    private static let ownerKey = "glucoseOwner"
+
+    static var names: [String] { UserDefaults.standard.stringArray(forKey: namesKey) ?? [] }
+    static func add(_ name: String) {
+        let n = name.trimmingCharacters(in: .whitespaces)
+        guard !n.isEmpty, n != me, !names.contains(n) else { return }
+        UserDefaults.standard.set(names + [n], forKey: namesKey)
+    }
+
+    static var owners: [String: String] { (UserDefaults.standard.dictionary(forKey: ownerKey) as? [String: String]) ?? [:] }
+    static func owner(of id: String) -> String { owners[id] ?? me }
+    static func set(_ person: String, for id: String) {
+        var d = owners
+        d[id] = person == me ? nil : person
+        UserDefaults.standard.set(d, forKey: ownerKey)
+    }
+}
+
+// MARK: - 健康 App
 
 enum GlucoseStore {
     static let type = HKQuantityType(.bloodGlucose)
     static let unit = HKUnit.moleUnit(with: .milli, molarMass: HKUnitMolarMassBloodGlucose).unitDivided(by: .liter())
     private static let mealKey = "餐点"
     private static let oldMealKey = "阿波餐点"   // 早期版本用的字段名，读取时兼容
+    private static let personKey = "测量人"
 
     static func requestAccess() async throws {
         try await HealthService.store.requestAuthorization(toShare: [type], read: [type])
@@ -34,82 +100,60 @@ enum GlucoseStore {
         }
     }
 
-    /// 写进健康 App。每条带「同步标识」（血糖仪序列号 + 序号 + 时间），重复同步不会出现重复记录
-    static func save(_ readings: [MeterReading], serial: String) async throws {
-        let samples = readings.map { r -> HKQuantitySample in
-            var meta: [String: Any] = [
-                HKMetadataKeySyncIdentifier: "accuchek-\(serial)-\(r.seq)-\(Int(r.date.timeIntervalSince1970))",
-                HKMetadataKeySyncVersion: 1,
-                HKMetadataKeyWasUserEntered: false
-            ]
-            switch r.meal {
-            case 1, 3: meta[HKMetadataKeyBloodGlucoseMealTime] = HKBloodGlucoseMealTime.preprandial.rawValue
-            case 2: meta[HKMetadataKeyBloodGlucoseMealTime] = HKBloodGlucoseMealTime.postprandial.rawValue
-            default: break
-            }
-            if let name = mealName(r.meal) { meta[mealKey] = name }
-            return HKQuantitySample(type: type, quantity: HKQuantity(unit: unit, doubleValue: r.mmol),
-                                    start: r.date, end: r.date, metadata: meta)
+    /// 血糖仪读到的记录 → App 里的记录
+    static func records(from readings: [MeterReading], serial: String) -> [GlucoseRecord] {
+        readings.map {
+            GlucoseRecord(id: "accuchek-\(serial)-\($0.seq)-\(Int($0.date.timeIntervalSince1970))",
+                          date: $0.date, mmol: $0.mmol, meterMeal: mealName($0.meal), source: "罗氏智航", mine: true)
         }
-        guard !samples.isEmpty else { return }
-        try await HealthService.store.save(samples)
     }
 
-    /// 把 App 里的餐点标签写进健康：同一个同步标识、版本号加 1 再存一次，健康会用新的替换旧的。
-    /// 别的 App（比如 mySugr）写的记录改不了，跳过。返回（更新条数，跳过条数）
-    static func pushTags(_ records: [GlucoseRecord], tag: (GlucoseRecord) -> String?) async throws -> (Int, Int) {
-        var samples: [HKQuantitySample] = []
-        var skipped = 0
-        for r in records {
-            guard let t = tag(r), t != r.meterMeal else { continue }   // 没标签或者和健康里一样，不用动
-            guard r.isMine else { skipped += 1; continue }
-            var meta: [String: Any] = [
-                HKMetadataKeySyncIdentifier: r.id,
-                HKMetadataKeySyncVersion: r.syncVersion + 1,
-                HKMetadataKeyWasUserEntered: false,
-                mealKey: t
-            ]
-            if t.contains("后") {
-                meta[HKMetadataKeyBloodGlucoseMealTime] = HKBloodGlucoseMealTime.postprandial.rawValue
-            } else if t.contains("前") || t == "空腹" {
-                meta[HKMetadataKeyBloodGlucoseMealTime] = HKBloodGlucoseMealTime.preprandial.rawValue
-            }
-            samples.append(HKQuantitySample(type: type, quantity: HKQuantity(unit: unit, doubleValue: r.mmol),
-                                            start: r.date, end: r.date, metadata: meta))
-        }
-        if !samples.isEmpty { try await HealthService.store.save(samples) }
-        return (samples.count, skipped)
-    }
-
-    /// 把 App 里的餐点标签写回健康：只改「阿波」导入的记录（同步标识以 accuchek- 开头）。
-    /// 用同一个同步标识、更高的版本号重新保存，健康会用新的替换旧的，不会重复。
-    /// 返回（写入条数，跳过条数）
-    static func writeTags(_ records: [GlucoseRecord], label: (GlucoseRecord) -> String?) async throws -> (Int, Int) {
+    /// 写入健康：把 keep 里的记录写进去（带餐点标签），把 remove 里阿波写过的记录从健康删掉。
+    /// 用同一个同步标识、更高的版本号保存，健康会替换旧的，不会重复。返回（写入数，删除数）
+    static func write(keep: [GlucoseRecord], remove: [GlucoseRecord], person: String,
+                      label: (GlucoseRecord) -> String?) async throws -> (Int, Int) {
         let version = Int(Date().timeIntervalSince1970)
-        var samples: [HKQuantitySample] = []
-        var skipped = 0
-        for r in records {
-            guard r.id.hasPrefix("accuchek-") else { skipped += 1; continue }
-            guard let tag = label(r) else { continue }
+        let samples = keep.map { r -> HKQuantitySample in
             var meta: [String: Any] = [
                 HKMetadataKeySyncIdentifier: r.id,
                 HKMetadataKeySyncVersion: version,
-                HKMetadataKeyWasUserEntered: false,
-                mealKey: tag
+                HKMetadataKeyWasUserEntered: false
             ]
-            if tag.contains("后") {
-                meta[HKMetadataKeyBloodGlucoseMealTime] = HKBloodGlucoseMealTime.postprandial.rawValue
-            } else if tag.contains("前") && tag != "睡前" || tag == "空腹" {
-                meta[HKMetadataKeyBloodGlucoseMealTime] = HKBloodGlucoseMealTime.preprandial.rawValue
+            if person != GlucosePeople.me { meta[personKey] = person }
+            if let tag = label(r) {
+                meta[mealKey] = tag
+                if tag.contains("后") {
+                    meta[HKMetadataKeyBloodGlucoseMealTime] = HKBloodGlucoseMealTime.postprandial.rawValue
+                } else if tag == "空腹" || (tag.contains("前") && tag != "睡前") {
+                    meta[HKMetadataKeyBloodGlucoseMealTime] = HKBloodGlucoseMealTime.preprandial.rawValue
+                }
             }
-            samples.append(HKQuantitySample(type: type, quantity: HKQuantity(unit: unit, doubleValue: r.mmol),
-                                            start: r.date, end: r.date, metadata: meta))
+            return HKQuantitySample(type: type, quantity: HKQuantity(unit: unit, doubleValue: r.mmol),
+                                    start: r.date, end: r.date, metadata: meta)
         }
         if !samples.isEmpty { try await HealthService.store.save(samples) }
-        return (samples.count, skipped)
+
+        var removed = 0
+        let ids = remove.map(\.id)
+        if !ids.isEmpty {
+            let predicate = HKQuery.predicateForObjects(withMetadataKey: HKMetadataKeySyncIdentifier, allowedValues: ids)
+            let found: [HKSample] = try await withCheckedThrowingContinuation { cont in
+                let q = HKSampleQuery(sampleType: type, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, r, e in
+                    if let e { cont.resume(throwing: e) } else { cont.resume(returning: r ?? []) }
+                }
+                HealthService.store.execute(q)
+            }
+            let ours = found.filter { $0.sourceRevision.source.bundleIdentifier == Bundle.main.bundleIdentifier }
+            if !ours.isEmpty {
+                try await HealthService.store.delete(ours)
+                removed = ours.count
+            }
+        }
+        return (samples.count, removed)
     }
 
-    static func load(days: Int = 180) async throws -> [GlucoseRecord] {
+    /// 读健康里的血糖
+    static func load(days: Int = 365) async throws -> [GlucoseRecord] {
         let start = Calendar.current.date(byAdding: .day, value: -days, to: Date())!
         let predicate = HKQuery.predicateForSamples(withStart: start, end: Date(), options: [])
         let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
@@ -126,17 +170,15 @@ enum GlucoseStore {
                 meal = raw.intValue == HKBloodGlucoseMealTime.preprandial.rawValue ? "餐前" : "餐后"
             }
             let mine = s.sourceRevision.source.bundleIdentifier == Bundle.main.bundleIdentifier
-                && meta[HKMetadataKeySyncIdentifier] != nil
             return GlucoseRecord(id: (meta[HKMetadataKeySyncIdentifier] as? String) ?? s.uuid.uuidString,
                                  date: s.startDate, mmol: s.quantity.doubleValue(for: unit),
-                                 meterMeal: meal, source: s.sourceRevision.source.name,
-                                 syncVersion: (meta[HKMetadataKeySyncVersion] as? NSNumber)?.intValue ?? 1,
-                                 isMine: mine)
+                                 meterMeal: meal, source: s.sourceRevision.source.name, mine: mine)
         }
     }
 }
 
-/// 自己改的餐点标签（存在 App 里，按记录的标识对应）
+// MARK: - 餐点标签
+
 enum GlucoseTags {
     static let options = ["空腹", "早餐后", "午餐前", "午餐后", "晚餐前", "晚餐后", "睡前", "随机"]
     private static let key = "glucoseTags"
@@ -149,19 +191,17 @@ enum GlucoseTags {
         UserDefaults.standard.object(forKey: k) == nil ? def : UserDefaults.standard.integer(forKey: k)
     }
 
-    /// 血糖仪只记了「餐后 / 餐前」时，按测量时间换成具体餐次；餐后再算出是饭后几小时
+    /// 血糖仪只记了「餐后 / 餐前」时，按测量时间换成具体餐次；餐后默认 2 小时
     static func auto(_ r: GlucoseRecord) -> String? {
         let c = Calendar.current.dateComponents([.hour, .minute], from: r.date)
         let m = (c.hour ?? 0) * 60 + (c.minute ?? 0)
         switch r.meterMeal {
         case "餐后":
-            let (name, meal): (String, Int)
-            if m >= breakfast - 60 && m < lunch { (name, meal) = ("早餐后", breakfast) }
-            else if m >= lunch && m < dinner { (name, meal) = ("午餐后", lunch) }
-            else if m >= dinner { (name, meal) = ("晚餐后", dinner) }
-            else { (name, meal) = ("晚餐后", dinner - 24 * 60) }   // 过了半夜算前一天晚餐
-            _ = meal
-            return name + "2小时"   // 大部分是餐后 2 小时测的，默认就按 2 小时；不是的话手动改
+            let name: String
+            if m >= breakfast - 60 && m < lunch { name = "早餐后" }
+            else if m >= lunch && m < dinner { name = "午餐后" }
+            else { name = "晚餐后" }
+            return name + "2小时"
         case "餐前":
             if m < 10 * 60 && m >= 4 * 60 { return "空腹" }
             if m >= 10 * 60 && m < 15 * 60 { return "午餐前" }
@@ -183,12 +223,23 @@ enum GlucoseTags {
 
 struct GlucoseView: View {
     @StateObject private var sync = AccuChekSync()
-    @State private var records: [GlucoseRecord] = []
+    @State private var records: [GlucoseRecord] = GlucoseLocal.load()
     @State private var tags: [String: String] = GlucoseTags.all
+    @State private var owners: [String: String] = GlucosePeople.owners
+    @State private var people: [String] = GlucosePeople.names
     @State private var message: String?
     @State private var working = false
-    @State private var mealTick = 0   // 改了三餐时间后刷新标签
-    @State private var pushing = false
+
+    // 三餐时间：用自己的状态，滚动时不会刷新整页（之前每滚一下弹窗就被关掉）
+    @State private var breakfast = GlucoseTags.breakfast
+    @State private var lunch = GlucoseTags.lunch
+    @State private var dinner = GlucoseTags.dinner
+
+    @State private var showAddPerson = false
+    @State private var newPerson = ""
+    @State private var pendingOwnerId: String?
+    @State private var showWriteChoice = false
+    @State private var filter: String = "全部"
 
     var body: some View {
         List {
@@ -204,33 +255,19 @@ struct GlucoseView: View {
                     }
                 }
                 .disabled(sync.busy)
-                Button {
-                    Task { await pushToHealth() }
-                } label: {
-                    HStack {
-                        Image(systemName: "heart.text.square")
-                        Text(pushing ? "正在同步…" : "从软件同步至健康")
-                        Spacer()
-                        if pushing { ProgressView() }
-                    }
-                }
-                .disabled(pushing || records.isEmpty)
                 Text(sync.status).font(.footnote).foregroundStyle(.secondary)
                 HStack(spacing: 12) {
                     Button {
-                        Task { await writeToHealth() }
+                        showWriteChoice = true
                     } label: {
                         Label("写入健康", systemImage: "square.and.arrow.up")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
-                    .disabled(working)
+                    .disabled(working || records.isEmpty)
 
                     Button {
-                        Task {
-                            await reload()
-                            message = "已从健康读取 \(records.count) 条记录"
-                        }
+                        Task { await readFromHealth() }
                     } label: {
                         Label("从健康读取", systemImage: "square.and.arrow.down")
                             .frame(maxWidth: .infinity)
@@ -242,20 +279,31 @@ struct GlucoseView: View {
                     Text(message).font(.footnote).foregroundStyle(.green)
                 }
             } footer: {
-                Text("第一次连接：先把血糖仪关机，再长按「OK」键，直到屏幕上蓝牙图标闪烁，然后点上面的按钮。手机弹出配对框时，输入血糖仪背面的 6 位 PIN 码。\n以后同步：按一下血糖仪开机键让它亮屏，再点同步。\n读到的记录会保存到健康 App，重复同步不会重复。")
+                Text("第一次连接：先把血糖仪关机，再长按「OK」键，直到屏幕上蓝牙图标闪烁，然后点「从罗氏智航同步」。弹出配对框时输入血糖仪背面的 6 位 PIN 码。\n同步下来的记录先存在 App 里，标好是谁测的、什么餐点后，点「写入健康」选择写入谁的记录。")
             }
 
             Section {
-                mealPicker("早餐", key: "mealBreakfast", minutes: GlucoseTags.breakfast)
-                mealPicker("午餐", key: "mealLunch", minutes: GlucoseTags.lunch)
-                mealPicker("晚餐", key: "mealDinner", minutes: GlucoseTags.dinner)
+                mealPicker("早餐", key: "mealBreakfast", value: $breakfast)
+                mealPicker("午餐", key: "mealLunch", value: $lunch)
+                mealPicker("晚餐", key: "mealDinner", value: $dinner)
             } header: {
                 Text("三餐时间")
             } footer: {
-                Text("血糖仪记成「餐后」的，按这里的时间判断是哪一餐，默认标成「餐后2小时」，例如「午餐后2小时」。不是 2 小时的点标签手动改。")
+                Text("血糖仪记成「餐后」的，按这里的时间判断是哪一餐，默认标成「餐后2小时」。不是 2 小时的点标签手动改。")
             }
 
-            if records.isEmpty {
+            if !people.isEmpty {
+                Section {
+                    Picker("显示", selection: $filter) {
+                        Text("全部").tag("全部")
+                        Text(GlucosePeople.me).tag(GlucosePeople.me)
+                        ForEach(people, id: \.self) { Text($0).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                }
+            }
+
+            if shown.isEmpty {
                 Section { Text("还没有血糖记录").foregroundStyle(.secondary) }
             }
 
@@ -266,27 +314,50 @@ struct GlucoseView: View {
             }
         }
         .navigationTitle("血糖")
-        .refreshable { await reload() }
+        .refreshable { await readFromHealth() }
+        .confirmationDialog("写入谁的血糖到健康？", isPresented: $showWriteChoice, titleVisibility: .visible) {
+            Button(GlucosePeople.me) { Task { await writeToHealth(person: GlucosePeople.me) } }
+            ForEach(people, id: \.self) { p in
+                Button(p) { Task { await writeToHealth(person: p) } }
+            }
+        } message: {
+            Text("只把这个人的记录写进健康（带餐点标签）；之前写进健康的其他人的记录会被移出健康，仍保留在 App 里。")
+        }
+        .alert("添加测量人", isPresented: $showAddPerson) {
+            TextField("名字，比如：老婆、爸爸", text: $newPerson)
+            Button("添加") {
+                GlucosePeople.add(newPerson)
+                people = GlucosePeople.names
+                if let id = pendingOwnerId, people.contains(newPerson.trimmingCharacters(in: .whitespaces)) {
+                    setOwner(newPerson.trimmingCharacters(in: .whitespaces), for: id)
+                }
+                newPerson = ""
+                pendingOwnerId = nil
+            }
+            Button("取消", role: .cancel) { newPerson = ""; pendingOwnerId = nil }
+        }
         .task {
             sync.onFinished = { readings, serial in
                 Task { @MainActor in
-                    do {
-                        try await GlucoseStore.requestAccess()
-                        try await GlucoseStore.save(readings, serial: serial)
-                        message = "已保存 \(readings.count) 条到健康 App"
-                    } catch {
-                        message = "保存失败：\(error.localizedDescription)"
-                    }
-                    await reload()
+                    let incoming = GlucoseStore.records(from: readings, serial: serial)
+                    let (list, added) = GlucoseLocal.merge(incoming, into: records)
+                    records = list
+                    GlucoseLocal.save(list)
+                    message = "读到 \(readings.count) 条，新增 \(added) 条。标好测量人和餐点后，点「写入健康」"
                 }
             }
             try? await GlucoseStore.requestAccess()
-            await reload()
+            // 第一次用新版：把健康里已有的血糖导进来
+            if records.isEmpty { await readFromHealth() }
         }
     }
 
+    // MARK: 一行
+
     private func row(_ r: GlucoseRecord) -> some View {
-        HStack(alignment: .firstTextBaseline) {
+        let owner = owners[r.id] ?? GlucosePeople.me
+        let isMe = owner == GlucosePeople.me
+        return HStack(alignment: .firstTextBaseline) {
             Text(timeText(r.date))
                 .font(.subheadline.monospacedDigit())
                 .foregroundStyle(.secondary)
@@ -296,59 +367,57 @@ struct GlucoseView: View {
             Text("mmol/L").font(.caption).foregroundStyle(.secondary)
             Spacer()
             Menu {
-                ForEach(GlucoseTags.options, id: \.self) { t in
-                    if t.hasSuffix("餐后") {
-                        Menu(t) {
-                            ForEach(1...4, id: \.self) { h in
-                                Button("\(t)\(h)小时") { setTag("\(t)\(h)小时", for: r) }
+                Section("谁测的") {
+                    ownerButton(GlucosePeople.me, r, current: owner)
+                    ForEach(people, id: \.self) { ownerButton($0, r, current: owner) }
+                    Button {
+                        pendingOwnerId = r.id
+                        showAddPerson = true
+                    } label: { Label("添加测量人…", systemImage: "person.badge.plus") }
+                }
+                Section("餐点") {
+                    ForEach(GlucoseTags.options, id: \.self) { t in
+                        if t.hasSuffix("餐后") {
+                            Menu(t) {
+                                ForEach(1...4, id: \.self) { h in
+                                    Button("\(t)\(h)小时") { setTag("\(t)\(h)小时", for: r) }
+                                }
+                                Button("不指定时间") { setTag(t, for: r) }
                             }
-                            Button("不指定时间") { setTag(t, for: r) }
+                        } else {
+                            Button(t) { setTag(t, for: r) }
                         }
-                    } else {
-                        Button(t) { setTag(t, for: r) }
+                    }
+                    if tags[r.id] != nil {
+                        Button("恢复血糖仪的标记", role: .destructive) { setTag(nil, for: r) }
                     }
                 }
-                if tags[r.id] != nil {
-                    Divider()
-                    Button("恢复血糖仪的标记", role: .destructive) { setTag(nil, for: r) }
-                }
             } label: {
-                Text(tags[r.id] ?? GlucoseTags.auto(r) ?? "标记餐点")
-                    .id(mealTick)
+                let tag = tags[r.id] ?? GlucoseTags.auto(r) ?? "标记餐点"
+                Text(isMe ? tag : "\(owner) · \(tag)")
                     .font(.subheadline.weight(.medium))
+                    .foregroundStyle(isMe ? Color.accentColor : Color.orange)
+                    .lineLimit(1)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
-                    .background(Capsule().fill(Color.accentColor.opacity(0.12)))
+                    .background(Capsule().fill((isMe ? Color.accentColor : Color.orange).opacity(0.12)))
             }
         }
     }
 
-    private func writeToHealth() async {
-        working = true
-        defer { working = false }
-        do {
-            try await GlucoseStore.requestAccess()
-            let (n, skipped) = try await GlucoseStore.writeTags(records) { r in tags[r.id] ?? GlucoseTags.auto(r) }
-            var t = "已把 \(n) 条记录的餐点写入健康"
-            if skipped > 0 { t += "；\(skipped) 条是其他 App（如 mySugr）写的，无法修改，已跳过" }
-            message = t
-            await reload()
-        } catch {
-            message = "写入失败：\(error.localizedDescription)"
+    private func ownerButton(_ p: String, _ r: GlucoseRecord, current: String) -> some View {
+        Button {
+            setOwner(p, for: r.id)
+        } label: {
+            if p == current { Label(p, systemImage: "checkmark") } else { Text(p) }
         }
     }
 
-    private func mealPicker(_ title: String, key: String, minutes: Int) -> some View {
-        let base = Calendar.current.startOfDay(for: Date())
-        return DatePicker(title, selection: Binding(
-            get: { base.addingTimeInterval(TimeInterval(minutes * 60)) },
-            set: { d in
-                let c = Calendar.current.dateComponents([.hour, .minute], from: d)
-                UserDefaults.standard.set((c.hour ?? 0) * 60 + (c.minute ?? 0), forKey: key)
-                mealTick += 1
-            }
-        ), displayedComponents: .hourAndMinute)
-        .id("\(key)-\(mealTick)")
+    // MARK: 操作
+
+    private func setOwner(_ p: String, for id: String) {
+        GlucosePeople.set(p, for: id)
+        owners = GlucosePeople.owners
     }
 
     private func setTag(_ t: String?, for r: GlucoseRecord) {
@@ -356,9 +425,75 @@ struct GlucoseView: View {
         tags = GlucoseTags.all
     }
 
+    private func label(_ r: GlucoseRecord) -> String? { tags[r.id] ?? GlucoseTags.auto(r) }
+
+    private func writeToHealth(person: String) async {
+        working = true
+        defer { working = false }
+        do {
+            try await GlucoseStore.requestAccess()
+            let ownerOf = { (r: GlucoseRecord) in owners[r.id] ?? GlucosePeople.me }
+            // 写入：这个人的、阿波能管的记录（别的 App 写的已经在健康里了，不重复写）
+            let keep = records.filter { ownerOf($0) == person && ($0.mine || $0.id.hasPrefix("accuchek-")) }
+            // 移出：其他人的、阿波写过的记录
+            let remove = records.filter { ownerOf($0) != person && $0.mine }
+            let (n, removed) = try await GlucoseStore.write(keep: keep, remove: remove, person: person, label: label)
+            // 写完以后这些记录都算阿波写的
+            let keepIds = Set(keep.map(\.id)), removeIds = Set(remove.map(\.id))
+            records = records.map { r in
+                var r = r
+                if keepIds.contains(r.id) { r.mine = true }
+                if removeIds.contains(r.id) { r.mine = false }
+                return r
+            }
+            GlucoseLocal.save(records)
+            var t = "已把\(person == GlucosePeople.me ? "你" : person)的 \(n) 条记录写入健康"
+            if removed > 0 { t += "，并从健康移出其他人的 \(removed) 条" }
+            let others = records.filter { ownerOf($0) != person && !$0.mine && !$0.id.hasPrefix("accuchek-") }.count
+            if others > 0 { t += "。另有 \(others) 条是别的 App（如 mySugr）写的，健康不允许阿波删除，需要在健康 App 里手动删" }
+            message = t
+        } catch {
+            message = "写入失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func readFromHealth() async {
+        working = true
+        defer { working = false }
+        do {
+            let fromHealth = try await GlucoseStore.load()
+            let (list, added) = GlucoseLocal.merge(fromHealth, into: records)
+            records = list
+            GlucoseLocal.save(list)
+            message = "已从健康读取 \(fromHealth.count) 条，新增 \(added) 条"
+        } catch {
+            message = "读取健康数据失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func mealPicker(_ title: String, key: String, value: Binding<Int>) -> some View {
+        let base = Calendar.current.startOfDay(for: Date())
+        return DatePicker(title, selection: Binding(
+            get: { base.addingTimeInterval(TimeInterval(value.wrappedValue * 60)) },
+            set: { d in
+                let c = Calendar.current.dateComponents([.hour, .minute], from: d)
+                let m = (c.hour ?? 0) * 60 + (c.minute ?? 0)
+                value.wrappedValue = m
+                UserDefaults.standard.set(m, forKey: key)
+            }
+        ), displayedComponents: .hourAndMinute)
+    }
+
+    // MARK: 列表
+
+    private var shown: [GlucoseRecord] {
+        guard filter != "全部" else { return records }
+        return records.filter { (owners[$0.id] ?? GlucosePeople.me) == filter }
+    }
+
     private var groupedDays: [(Date, [GlucoseRecord])] {
         let cal = Calendar.current
-        let groups = Dictionary(grouping: records) { cal.startOfDay(for: $0.date) }
+        let groups = Dictionary(grouping: shown) { cal.startOfDay(for: $0.date) }
         return groups.keys.sorted(by: >).map { ($0, groups[$0]!.sorted { $0.date > $1.date }) }
     }
 
@@ -376,26 +511,5 @@ struct GlucoseView: View {
         let f = DateFormatter()
         f.dateFormat = "HH:mm"
         return f.string(from: d)
-    }
-
-    private func pushToHealth() async {
-        pushing = true
-        defer { pushing = false }
-        do {
-            try await GlucoseStore.requestAccess()
-            let current = GlucoseTags.all
-            let (done, skipped) = try await GlucoseStore.pushTags(records) { current[$0.id] ?? GlucoseTags.auto($0) }
-            var t = done > 0 ? "已把 \(done) 条记录的餐点标签写进健康" : "健康里的标签已经是最新的"
-            if skipped > 0 { t += "；\(skipped) 条是别的 App（如 mySugr）写的，健康不允许修改，已跳过" }
-            message = t
-        } catch {
-            message = "同步至健康失败：\(error.localizedDescription)"
-        }
-        await reload()
-    }
-
-    private func reload() async {
-        do { records = try await GlucoseStore.load() }
-        catch { message = "读取健康数据失败：\(error.localizedDescription)" }
     }
 }
