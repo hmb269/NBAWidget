@@ -466,10 +466,10 @@ enum GlucoseBackup {
     }
 
     /// 打包：所有血糖记录（含别人的）、标签、测量人、三餐时间、小图
-    static func make() -> Data? {
+    static func make(includeThumbs: Bool = true) -> Data? {
         let records = GlucoseLocal.load()
         var thumbs: [String: Data] = [:]
-        for p in records.flatMap({ $0.photos ?? [] }) {
+        for p in records.flatMap({ $0.photos ?? [] }) where includeThumbs {
             if let d = try? Data(contentsOf: GlucoseMedia.thumbURL(p.id)) { thumbs[p.id] = d }
         }
         let d = UserDefaults.standard
@@ -540,50 +540,70 @@ struct BackupDocument: FileDocument {
     }
 }
 
-/// 自动备份：在「文件」App 里选一个文件夹，数据一有变化就写一份「阿波备份.json」进去，
-/// 旧的那份改名为「阿波备份-上一版.json」
+/// 自动备份（增量）：可以设两个文件夹——iCloud 云盘一个、「我的 iPhone」一个。
+/// 每个文件夹里：
+///   阿波备份.json         所有记录、标签、测量人、三餐时间（几百 KB，每次重写）
+///   阿波备份-上一版.json   上一次的那份
+///   阿波照片/xxx.jpg      照片小图，备份过的不再重复写
 enum AutoBackup {
-    private static let bookmarkKey = "autoBackupBookmark"
-    private static let lastKey = "autoBackupLast"
+    enum Target: String, CaseIterable {
+        case cloud, local
+        var title: String { self == .cloud ? "iCloud 备份" : "本机备份" }
+        var hint: String { self == .cloud ? "选「iCloud 云盘」里的文件夹" : "选「我的 iPhone」里的文件夹" }
+        fileprivate var bookmarkKey: String { self == .cloud ? "autoBackupBookmark" : "autoBackupBookmarkLocal" }
+        fileprivate var lastKey: String { self == .cloud ? "autoBackupLast" : "autoBackupLastLocal" }
+    }
+
+    static let recordsName = "阿波备份.json"
+    static let prevName = "阿波备份-上一版.json"
+    static let photosDir = "阿波照片"
     private static var work: DispatchWorkItem?
 
-    static var isSet: Bool { UserDefaults.standard.data(forKey: bookmarkKey) != nil }
-    static var folderName: String? { resolve()?.lastPathComponent }
-    static var lastRun: Date? { UserDefaults.standard.object(forKey: lastKey) as? Date }
+    static var isSet: Bool { Target.allCases.contains(where: isSet) }
+    static func isSet(_ t: Target) -> Bool { UserDefaults.standard.data(forKey: t.bookmarkKey) != nil }
+    static func folderName(_ t: Target) -> String? { resolve(t)?.lastPathComponent }
+    static func lastRun(_ t: Target) -> Date? { UserDefaults.standard.object(forKey: t.lastKey) as? Date }
 
-    static func setFolder(_ url: URL) throws {
+    static func setFolder(_ url: URL, for t: Target) throws {
         let ok = url.startAccessingSecurityScopedResource()
         defer { if ok { url.stopAccessingSecurityScopedResource() } }
         let data = try url.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil)
-        UserDefaults.standard.set(data, forKey: bookmarkKey)
+        UserDefaults.standard.set(data, forKey: t.bookmarkKey)
     }
 
-    static func clear() {
-        UserDefaults.standard.removeObject(forKey: bookmarkKey)
-        UserDefaults.standard.removeObject(forKey: lastKey)
+    static func clear(_ t: Target) {
+        UserDefaults.standard.removeObject(forKey: t.bookmarkKey)
+        UserDefaults.standard.removeObject(forKey: t.lastKey)
     }
 
-    private static func resolve() -> URL? {
-        guard let d = UserDefaults.standard.data(forKey: bookmarkKey) else { return nil }
+    private static func resolve(_ t: Target) -> URL? {
+        guard let d = UserDefaults.standard.data(forKey: t.bookmarkKey) else { return nil }
         var stale = false
         guard let u = try? URL(resolvingBookmarkData: d, options: [], relativeTo: nil, bookmarkDataIsStale: &stale) else { return nil }
         if stale, let nd = try? u.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil) {
-            UserDefaults.standard.set(nd, forKey: bookmarkKey)
+            UserDefaults.standard.set(nd, forKey: t.bookmarkKey)
         }
         return u
     }
 
-    /// 立即备份，返回结果说明
+    /// 备份到所有设置过的文件夹，返回结果说明
     @discardableResult
     static func run() -> String {
-        guard let folder = resolve() else { return "还没有设置自动备份文件夹" }
-        guard let data = GlucoseBackup.make() else { return "生成备份失败" }
+        let targets = Target.allCases.filter(isSet)
+        guard !targets.isEmpty else { return "还没有设置备份文件夹" }
+        guard let data = GlucoseBackup.make(includeThumbs: false) else { return "生成备份失败" }
+        return targets.map { t in "\(t.title)：" + run(t, data: data) }.joined(separator: "\n")
+    }
+
+    private static func run(_ t: Target, data: Data) -> String {
+        guard let folder = resolve(t) else { return "文件夹失效，请重新选择" }
         let ok = folder.startAccessingSecurityScopedResource()
         defer { if ok { folder.stopAccessingSecurityScopedResource() } }
-
-        let latest = folder.appendingPathComponent("阿波备份.json")
-        let prev = folder.appendingPathComponent("阿波备份-上一版.json")
         let fm = FileManager.default
+
+        // 1. 记录文件：旧的先改成「上一版」
+        let latest = folder.appendingPathComponent(recordsName)
+        let prev = folder.appendingPathComponent(prevName)
         var writeError: String?
         var coordError: NSError?
         NSFileCoordinator().coordinate(writingItemAt: latest, options: .forReplacing, error: &coordError) { u in
@@ -597,9 +617,63 @@ enum AutoBackup {
                 writeError = error.localizedDescription
             }
         }
-        if let e = coordError?.localizedDescription ?? writeError { return "自动备份失败：\(e)" }
-        UserDefaults.standard.set(Date(), forKey: lastKey)
-        return "已备份到「\(folder.lastPathComponent)」"
+        if let e = coordError?.localizedDescription ?? writeError { return "失败：\(e)" }
+
+        // 2. 照片小图：只写还没备份过的
+        let dir = folder.appendingPathComponent(photosDir, isDirectory: true)
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        let existing = Set((try? fm.contentsOfDirectory(atPath: dir.path)) ?? [])
+        var copied = 0
+        for p in GlucoseLocal.load().flatMap({ $0.photos ?? [] }) {
+            let name = p.id + ".jpg"
+            // iCloud 里还没下载的文件名是「.xxx.jpg.icloud」，也算已经备份过
+            guard !existing.contains(name), !existing.contains("." + name + ".icloud") else { continue }
+            let src = GlucoseMedia.thumbURL(p.id)
+            guard fm.fileExists(atPath: src.path) else { continue }
+            if (try? fm.copyItem(at: src, to: dir.appendingPathComponent(name))) != nil { copied += 1 }
+        }
+
+        UserDefaults.standard.set(Date(), forKey: t.lastKey)
+        return "已备份到「\(folder.lastPathComponent)」" + (copied > 0 ? "，新增 \(copied) 张照片" : "")
+    }
+
+    /// 从备份文件夹恢复：记录 + 照片小图
+    static func restore(from folder: URL) throws -> String {
+        let ok = folder.startAccessingSecurityScopedResource()
+        defer { if ok { folder.stopAccessingSecurityScopedResource() } }
+        let fm = FileManager.default
+
+        // 读记录（用文件协调，iCloud 里没下载的会先下载）
+        let json = folder.appendingPathComponent(recordsName)
+        var data: Data?
+        var readError: NSError?
+        NSFileCoordinator().coordinate(readingItemAt: json, options: [], error: &readError) { u in
+            data = try? Data(contentsOf: u)
+        }
+        guard let data else {
+            throw NSError(domain: "阿波", code: 1, userInfo: [NSLocalizedDescriptionKey:
+                "这个文件夹里没有「\(recordsName)」，请选设置备份时用的那个文件夹"])
+        }
+
+        // 照片小图
+        let dir = folder.appendingPathComponent(photosDir, isDirectory: true)
+        var restored = 0
+        for name in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] {
+            var real = name
+            if real.hasPrefix("."), real.hasSuffix(".icloud") {
+                real = String(real.dropFirst().dropLast(".icloud".count))
+            }
+            guard real.hasSuffix(".jpg") else { continue }
+            let id = String(real.dropLast(4))
+            let dest = GlucoseMedia.thumbURL(id)
+            guard !fm.fileExists(atPath: dest.path) else { continue }
+            NSFileCoordinator().coordinate(readingItemAt: dir.appendingPathComponent(real), options: [], error: nil) { u in
+                if (try? fm.copyItem(at: u, to: dest)) != nil { restored += 1 }
+            }
+        }
+
+        let result = try GlucoseBackup.restore(data)
+        return result + (restored > 0 ? "，从文件夹恢复 \(restored) 张照片" : "")
     }
 
     /// 数据有变化时调用：3 秒内多次变化只备份一次
@@ -611,16 +685,14 @@ enum AutoBackup {
         DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: w)
     }
 
-    static var statusText: String {
-        guard isSet else {
-            return "建议设置自动备份文件夹（选「iCloud 云盘」里的文件夹）。之后数据一有变化就自动备份，删 App、掉签、换手机都能用「导入备份文件」恢复。照片原图在系统相册里，备份里带的是小图。"
-        }
-        var t = "自动备份到「\(folderName ?? "已失效，请重新选择")」"
-        if let d = lastRun {
+    static func statusText(_ t: Target) -> String {
+        guard isSet(t) else { return "未设置（\(t.hint)）" }
+        var s = "「\(folderName(t) ?? "失效，请重新选择")」"
+        if let d = lastRun(t) {
             let f = DateFormatter()
             f.dateFormat = "M月d日 HH:mm"
-            t += "，上次备份：" + f.string(from: d)
+            s += " · 上次 " + f.string(from: d)
         }
-        return t + "。恢复时在「导入备份文件」里选「阿波备份.json」。"
+        return s
     }
 }

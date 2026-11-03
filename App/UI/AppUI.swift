@@ -621,6 +621,8 @@ struct SettingsView: View {
     @State private var exportDoc: BackupDocument?
     @State private var importing = false
     @State private var pickFolder = false
+    @State private var folderPurpose: FolderPurpose = .cloud
+    enum FolderPurpose { case cloud, local, restore }
     @State private var backupMessage: String?
     @State private var backupTick = 0
 
@@ -690,10 +692,18 @@ struct SettingsView: View {
                 .fileImporter(isPresented: $pickFolder, allowedContentTypes: [.folder]) { result in
                     if case .success(let url) = result {
                         do {
-                            try AutoBackup.setFolder(url)
-                            backupMessage = AutoBackup.run()
+                            switch folderPurpose {
+                            case .cloud:
+                                try AutoBackup.setFolder(url, for: .cloud)
+                                backupMessage = AutoBackup.run()
+                            case .local:
+                                try AutoBackup.setFolder(url, for: .local)
+                                backupMessage = AutoBackup.run()
+                            case .restore:
+                                backupMessage = try AutoBackup.restore(from: url)
+                            }
                         } catch {
-                            backupMessage = "设置失败：\(error.localizedDescription)"
+                            backupMessage = "失败：\(error.localizedDescription)"
                         }
                         backupTick += 1
                     }
@@ -703,15 +713,29 @@ struct SettingsView: View {
 
     private var backupCard: some View {
         let _ = backupTick
-        return CardSection(footer: AutoBackup.statusText) {
+        return CardSection(footer: "两个位置都设上最稳：iCloud 防手机丢了坏了，本机防没网或 iCloud 满了。数据一有变化、App 退到后台都会自动备份；照片只备份新增的。删 App、掉签、换手机后，用「从备份文件夹恢复」选同一个文件夹即可。") {
             CardTitle("数据备份")
-            RowDivider()
-            Button {
-                pickFolder = true
-            } label: {
-                Label(AutoBackup.isSet ? "自动备份到：\(AutoBackup.folderName ?? "需重新选择")" : "设置自动备份文件夹",
-                      systemImage: "folder.badge.gearshape")
-                    .padding(.vertical, 10)
+            ForEach(AutoBackup.Target.allCases, id: \.self) { t in
+                RowDivider()
+                Button {
+                    folderPurpose = t == .cloud ? .cloud : .local
+                    pickFolder = true
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: t == .cloud ? "icloud.fill" : "iphone")
+                            .frame(width: 22)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(t.title).font(.body.weight(.semibold))
+                            Text(AutoBackup.statusText(t)).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                        }
+                        Spacer()
+                        Image(systemName: AutoBackup.isSet(t) ? "checkmark.circle.fill" : "chevron.right")
+                            .foregroundStyle(AutoBackup.isSet(t) ? Color.green : Color.secondary)
+                    }
+                    .padding(.vertical, 8)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
             if AutoBackup.isSet {
                 RowDivider()
@@ -724,17 +748,24 @@ struct SettingsView: View {
             }
             RowDivider()
             Button {
+                folderPurpose = .restore
+                pickFolder = true
+            } label: {
+                Label("从备份文件夹恢复", systemImage: "arrow.uturn.backward.circle").padding(.vertical, 10)
+            }
+            RowDivider()
+            Button {
                 exportDoc = GlucoseBackup.make().map(BackupDocument.init(data:))
                 exporting = exportDoc != nil
                 if exportDoc == nil { backupMessage = "生成备份失败" }
             } label: {
-                Label("导出备份文件", systemImage: "square.and.arrow.up").padding(.vertical, 10)
+                Label("导出单个备份文件（含照片，可发微信）", systemImage: "square.and.arrow.up").padding(.vertical, 10)
             }
             RowDivider()
             Button {
                 importing = true
             } label: {
-                Label("导入备份文件", systemImage: "square.and.arrow.down").padding(.vertical, 10)
+                Label("导入单个备份文件", systemImage: "square.and.arrow.down").padding(.vertical, 10)
             }
             if let backupMessage {
                 RowDivider()
@@ -742,6 +773,7 @@ struct SettingsView: View {
             }
         }
     }
+
     private var iconStatus: String {
         let _ = iconTick
         var t = "点「换照片」从相册选一张，会自动裁成圆形。照片会放进系统相簿「阿波小组件·xx」，小组件从那里读。第一次会请求相册权限，请选「允许完全访问」。"
