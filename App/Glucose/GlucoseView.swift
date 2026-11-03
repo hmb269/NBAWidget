@@ -80,6 +80,24 @@ enum GlucoseTags {
     static let options = ["空腹", "早餐后", "午餐前", "午餐后", "晚餐前", "晚餐后", "睡前", "随机"]
     private static let key = "glucoseTags"
     static var all: [String: String] { (UserDefaults.standard.dictionary(forKey: key) as? [String: String]) ?? [:] }
+    /// 血糖仪只记了「餐后 / 餐前」时，按测量时间自动换成具体餐次
+    static func auto(_ r: GlucoseRecord) -> String? {
+        let h = Calendar.current.component(.hour, from: r.date)
+        switch r.meterMeal {
+        case "餐后":
+            if (4..<12).contains(h) { return "早餐后" }
+            if (12..<17).contains(h) { return "午餐后" }
+            return "晚餐后"
+        case "餐前":
+            if (4..<10).contains(h) { return "空腹" }
+            if (10..<15).contains(h) { return "午餐前" }
+            if (15..<21).contains(h) { return "晚餐前" }
+            return "睡前"
+        default:
+            return r.meterMeal
+        }
+    }
+
     static func set(_ tag: String?, for id: String) {
         var d = all
         d[id] = tag
@@ -166,7 +184,7 @@ struct GlucoseView: View {
                     Button("恢复血糖仪的标记", role: .destructive) { setTag(nil, for: r) }
                 }
             } label: {
-                Text(tags[r.id] ?? r.meterMeal ?? "标记餐点")
+                Text(tags[r.id] ?? GlucoseTags.auto(r) ?? "标记餐点")
                     .font(.subheadline.weight(.medium))
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
