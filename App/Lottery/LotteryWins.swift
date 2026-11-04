@@ -25,7 +25,7 @@ struct LotteryWin: Codable, Identifiable, Hashable {
     var savedAt = Date()
     var photo: Data?           // 彩票照片小图（拍照对奖时才有）
 
-    var money: Double { hits.compactMap { $0.each.map { e in e * Double($0.count) } }.reduce(0, +) }
+    var money: Double { hits.compactMap { h in h.each.map { $0 * Double(h.count) } }.reduce(0, +) }
     var floating: Bool { hits.contains { $0.each == nil } }
 
     var deadline: Date? {
