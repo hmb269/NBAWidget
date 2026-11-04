@@ -101,7 +101,9 @@ struct LotteryBet: Identifiable, Hashable {
         var out: [Int] = []
         for m in re.matches(in: s, range: NSRange(s.startIndex..., in: s)) {
             guard let r = Range(m.range, in: s) else { continue }
-            let t = Array(s[r])
+            var t = Array(s[r])
+            // 奇数位：多半是前面的注序号「①」被认成「1」粘在号码上（「103」→ 03），去掉第一位
+            if t.count >= 3 && t.count % 2 == 1 { t.removeFirst() }
             guard t.count >= 2, t.count % 2 == 0, t.count <= 20 else { continue }
             for i in stride(from: 0, to: t.count, by: 2) {
                 if let v = Int(String(t[i...i + 1])) { out.append(v) }
