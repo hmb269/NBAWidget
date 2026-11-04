@@ -527,8 +527,12 @@ struct RefreshHealthIntent: AppIntent {
     static var title: LocalizedStringResource = "刷新健康数据"
     static var isDiscoverable: Bool = false
     init() {}
-    // 什么都不用做：按钮点完后系统会重新跑一次时间线，读到最新数据
-    func perform() async throws -> some IntentResult { .result() }
+    // 点空白处：取消图上选中的点，恢复正常显示；按钮点完后系统会重新跑一次时间线，读到最新数据
+    func perform() async throws -> some IntentResult {
+        GlucosePrefs.clearSelection()
+        WeightSelection.clear()
+        return .result()
+    }
 }
 
 /// 铺在小组件最底层的刷新按钮：点到空白处（留白、坐标轴等）也只刷新，不打开 App

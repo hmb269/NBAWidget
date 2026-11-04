@@ -150,6 +150,8 @@ struct GlucoseTrendCard: View {
             }
         }
         .padding(18)
+        .contentShape(Rectangle())
+        .onTapGesture { withAnimation(.easeOut(duration: 0.15)) { selected = nil } }
         .glassCard(26)
         .onChange(of: kind) { _, _ in selected = nil }
         .onChange(of: days) { _, _ in selected = nil }
@@ -254,7 +256,7 @@ struct GlucoseTrendCard: View {
             }
         }
         .chartYScale(domain: lo...hi)
-        .tapToSelect($selected)
+        .tapToSelect($selected, dates: data.map(\.0))
         .chartYAxis {
             AxisMarks(position: .trailing, values: .automatic(desiredCount: 4)) { v in
                 AxisGridLine().foregroundStyle(.white.opacity(0.08))

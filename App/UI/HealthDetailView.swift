@@ -72,6 +72,8 @@ struct HealthDetailView: View {
                     if kind == .sleep && !nights.isEmpty { sleepLegend }
                 }
                 .padding(18)
+                .contentShape(Rectangle())
+                .onTapGesture { withAnimation(.easeOut(duration: 0.15)) { selected = nil } }
                 .glassCard(26)
 
                 stats
@@ -123,7 +125,7 @@ struct HealthDetailView: View {
                         }
                 }
             }
-            .tapToSelect($selected)
+            .tapToSelect($selected, dates: nights.map(\.0), byDay: true)
             .chartYAxis { axisY }
             .chartXAxis { axisX }
         case .steps:
@@ -141,7 +143,7 @@ struct HealthDetailView: View {
                         }
                 }
             }
-            .tapToSelect($selected)
+            .tapToSelect($selected, dates: values.map(\.date), byDay: true)
             .chartYAxis { axisY }
             .chartXAxis { axisX }
         default:
@@ -172,7 +174,7 @@ struct HealthDetailView: View {
                 }
             }
             .chartYScale(domain: (lo - pad)...(hi + pad))
-            .tapToSelect($selected)
+            .tapToSelect($selected, dates: values.map(\.date), byDay: true)
             .chartYAxis { axisY }
             .chartXAxis { axisX }
         }
@@ -315,15 +317,31 @@ struct HealthDetailView: View {
 
 extension View {
     /// 在图表上点一下，选中最近的那个日期（和左右翻页不冲突）
-    func tapToSelect(_ selected: Binding<Date?>) -> some View {
+    /// 点曲线上的点 → 选中；点离点较远的空白处、或再点一次同一个点 → 取消选中
+    func tapToSelect(_ selected: Binding<Date?>, dates: [Date], byDay: Bool = false) -> some View {
         self.chartOverlay { proxy in
             GeometryReader { geo in
                 Rectangle().fill(.clear).contentShape(Rectangle())
                     .onTapGesture { location in
                         guard let plot = proxy.plotFrame else { return }
-                        let x = location.x - geo[plot].origin.x
-                        if let d: Date = proxy.value(atX: x) {
-                            withAnimation(.easeOut(duration: 0.15)) { selected.wrappedValue = d }
+                        let origin = geo[plot].origin
+                        let x = location.x - origin.x
+                        // 找横向最近的点（按天的柱子以当天中午为中心）
+                        var best: (Date, CGFloat)?
+                        for d in dates {
+                            let center = byDay ? d.addingTimeInterval(12 * 3600) : d
+                            guard let px = proxy.position(forX: center) else { continue }
+                            let dist = abs(px - x)
+                            if best == nil || dist < best!.1 { best = (d, dist) }
+                        }
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            if let best, best.1 <= 24,
+                               location.x >= origin.x - 4, location.x <= origin.x + geo[plot].size.width + 4,
+                               selected.wrappedValue.map({ abs($0.timeIntervalSince(best.0)) > 1 }) ?? true {
+                                selected.wrappedValue = best.0
+                            } else {
+                                selected.wrappedValue = nil
+                            }
                         }
                     }
             }

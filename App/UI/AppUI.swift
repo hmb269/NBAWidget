@@ -623,7 +623,9 @@ struct SettingsView: View {
     @State private var backupTick = 0
 
     var body: some View {
-        PageScroll(title: "设置", subtitle: "备份 · 图标 · 小组件") {
+        PageScroll(title: "设置", subtitle: "血糖仪 · 备份 · 图标 · 小组件") {
+            GlucoseSyncCard()
+            GlucoseMealTimesCard()
             backupCard
 
             CardSection(footer: iconStatus) {

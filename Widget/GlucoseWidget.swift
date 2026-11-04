@@ -408,7 +408,8 @@ struct GlucoseWidgetView: View {
             GeometryReader { geo in
                 if let plot = proxy.plotFrame {
                     let rect = geo[plot]
-                    let w = max(14, rect.width / CGFloat(max(list.count, 1)))
+                    // 每个点只占一小块，点之间的空白处点了就是刷新 + 取消选中
+                    let w = max(14, min(26, rect.width / CGFloat(max(list.count, 1))))
                     ForEach(Array(list.enumerated()), id: \.offset) { _, p in
                         if let x = proxy.position(forX: p.date) {
                             Button(intent: SelectGlucosePointIntent(time: p.date.timeIntervalSince1970)) {
