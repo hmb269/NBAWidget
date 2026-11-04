@@ -80,47 +80,61 @@ private struct FavoriteGameCard: View {
                     .glassButton()
                 }
             }
-            ForEach(bets) { b in
-                HStack(spacing: 8) {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        LotteryBalls(game: game, front: b.frontStrings(game), back: b.backStrings(game), size: 26)
-                    }
-                    if b.added {
-                        Text("追加")
-                            .font(.caption2.weight(.bold))
-                            .foregroundStyle(.orange)
-                            .padding(.horizontal, 6).padding(.vertical, 3)
-                            .background(Capsule().stroke(Color.orange.opacity(0.6), lineWidth: 1))
-                    }
-                    // 倍数：点开选
-                    Menu {
-                        Picker("倍数", selection: Binding(get: { b.multiple }, set: { onMultiple(b, $0) })) {
-                            ForEach([1, 2, 3, 4, 5, 6, 8, 10, 15, 20, 30, 50, 99], id: \.self) { Text("\($0) 倍").tag($0) }
+            ForEach(Array(bets.enumerated()), id: \.element.id) { i, b in
+                if i > 0 { RowDivider() }
+                // 第一行：号码（占满整行，不会被按钮挤）；第二行：追加、倍数、选几复式 + 对奖
+                VStack(alignment: .leading, spacing: 8) {
+                    LotteryBalls(game: game, front: b.frontStrings(game), back: b.backStrings(game),
+                                 size: game == .kl8 && b.front.count > 8 ? 24 : 28)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack(spacing: 8) {
+                        if let p = b.pick {
+                            tag("选\(["", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十"][min(p, 10)])复式", color: .secondary)
                         }
-                    } label: {
-                        Text("×\(b.multiple)")
-                            .font(.caption.weight(.bold).monospacedDigit())
+                        if b.added { tag("追加", color: .orange) }
+                        // 倍数：点开选
+                        Menu {
+                            Picker("倍数", selection: Binding(get: { b.multiple }, set: { onMultiple(b, $0) })) {
+                                ForEach([1, 2, 3, 4, 5, 6, 8, 10, 15, 20, 30, 50, 99], id: \.self) { Text("\($0) 倍").tag($0) }
+                            }
+                        } label: {
+                            HStack(spacing: 3) {
+                                Text("\(b.multiple) 倍").monospacedDigit()
+                                Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .bold))
+                            }
+                            .font(.caption.weight(.bold))
                             .foregroundStyle(b.multiple > 1 ? Color.orange : Color.secondary)
-                            .padding(.horizontal, 7).padding(.vertical, 4)
+                            .padding(.horizontal, 9).padding(.vertical, 5)
                             .background(Capsule().fill(Color.white.opacity(0.08)))
-                    }
-                    Button { onCheck([b]) } label: {
-                        Text("对奖").font(.caption.weight(.semibold))
-                    }
-                    .glassButton()
-                    Menu {
-                        if game == .dlt {
-                            Button(b.added ? "改成不追加" : "改成追加投注", systemImage: "plus.circle") { onToggleAdded(b) }
                         }
-                        Button("取消收藏", systemImage: "star.slash", role: .destructive) { onDelete(b) }
-                    } label: {
-                        Image(systemName: "ellipsis.circle").font(.title3).foregroundStyle(.secondary)
+                        Spacer(minLength: 0)
+                        Menu {
+                            if game == .dlt {
+                                Button(b.added ? "改成不追加" : "改成追加投注", systemImage: "plus.circle") { onToggleAdded(b) }
+                            }
+                            Button("取消收藏", systemImage: "star.slash", role: .destructive) { onDelete(b) }
+                        } label: {
+                            Image(systemName: "ellipsis.circle").font(.title3).foregroundStyle(.secondary)
+                        }
+                        Button { onCheck([b]) } label: {
+                            Label("对奖", systemImage: "checkmark.seal").font(.subheadline.weight(.semibold))
+                        }
+                        .glassButton()
                     }
                 }
+                .padding(.vertical, 4)
             }
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard(22)
+    }
+
+    private func tag(_ t: String, color: Color) -> some View {
+        Text(t)
+            .font(.caption.weight(.bold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(Capsule().stroke(color.opacity(0.6), lineWidth: 1))
     }
 }

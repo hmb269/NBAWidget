@@ -178,7 +178,9 @@ struct LotteryView: View {
         guard g.isDrawDay(now) else { return false }
         let t = g.drawDate(on: now)
         guard now >= t, now < t.addingTimeInterval(3 * 3600) else { return false }
-        return !(data[g]?.first?.isToday ?? false)
+        guard let d = data[g]?.first, d.isToday else { return true }
+        // 号码出来了但奖池、奖级还没公布：继续等
+        return g.hasPool && ((d.pool ?? 0) <= 0 || d.prizes.isEmpty)
     }
 
     private func load(_ only: [LotteryGame] = LotteryGame.allCases) async {
@@ -309,8 +311,8 @@ struct LotteryGameCard: View {
                     if game.hasPool {
                         VStack(alignment: .leading, spacing: 1) {
                             Text("奖池").font(.caption2).foregroundStyle(.secondary)
-                            Text(LotteryFormat.money(d.pool))
-                                .font(.system(size: 22, weight: .bold, design: .rounded).monospacedDigit())
+                            Text(d.pool.map { $0 > 0 } == true ? LotteryFormat.money(d.pool) : (d.isToday ? "开奖后公布" : "未公布"))
+                                .font(.system(size: d.pool.map { $0 > 0 } == true ? 22 : 15, weight: .bold, design: .rounded).monospacedDigit())
                                 .foregroundStyle(LinearGradient(colors: [Color(red: 1, green: 0.85, blue: 0.4), Color(red: 1, green: 0.6, blue: 0.25)],
                                                                 startPoint: .top, endPoint: .bottom))
                         }
@@ -352,13 +354,18 @@ struct LotteryDrawStatus: View {
             let now = ctx.date
             let next = game.nextDraw(after: now)
             let todayDraw = game.drawDate(on: now)
-            let waiting = game.isDrawDay(now) && now >= todayDraw && !draw.isToday && now < todayDraw.addingTimeInterval(3 * 3600)
+            let inWindow = game.isDrawDay(now) && now >= todayDraw && now < todayDraw.addingTimeInterval(3 * 3600)
+            let waiting = inWindow && !draw.isToday
+            let detailsPending = inWindow && draw.isToday && game.hasPool && ((draw.pool ?? 0) <= 0 || draw.prizes.isEmpty)
             HStack(spacing: 6) {
                 Text("\(draw.date) \(game.timeText) 开奖").font(.caption2).foregroundStyle(.tertiary)
                 Spacer()
                 if waiting {
                     ProgressView().controlSize(.mini)
                     Text("今晚已开奖，等官方公布…").font(.caption2.weight(.semibold)).foregroundStyle(.orange)
+                } else if detailsPending {
+                    ProgressView().controlSize(.mini)
+                    Text("号码已出，奖池奖金公布中…").font(.caption2.weight(.semibold)).foregroundStyle(.orange)
                 } else {
                     Text("下次 " + nextText(next, now: now)).font(.caption2.weight(.semibold))
                         .foregroundStyle(Calendar.current.isDate(next, inSameDayAs: now) ? Color.orange : Color.secondary)
@@ -402,7 +409,7 @@ struct LotteryHistoryView: View {
                     LotteryBalls(game: game, front: d.front, back: d.back, size: game == .kl8 ? 24 : 28)
                     if game.hasPool {
                         HStack {
-                            Text("奖池 " + LotteryFormat.money(d.pool)).font(.caption.weight(.semibold)).foregroundStyle(.orange)
+                            Text("奖池 " + ((d.pool ?? 0) > 0 ? LotteryFormat.money(d.pool) : "未公布")).font(.caption.weight(.semibold)).foregroundStyle(.orange)
                             Spacer()
                             if let s = d.sales { Text("销量 " + LotteryFormat.money(s)).font(.caption).foregroundStyle(.secondary) }
                         }
