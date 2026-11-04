@@ -37,25 +37,46 @@ enum WaterLog {
         d.set(ids, forKey: "waterHK")
     }
 
-    /// 点第 i 个杯子：空杯 → 喝到这一杯；已打勾 → 撤销到这一杯之前
+    // 撤销要点两次：先点最后一杯 → 变成「再点撤销」，8 秒内再点一次才真正撤销
+    static let undoWindow: TimeInterval = 8
+    static var undoArmedAt: Date? {
+        let t = d.double(forKey: "waterUndo")
+        return t > 0 ? Date(timeIntervalSince1970: t) : nil
+    }
+    static func undoArmed(at now: Date = Date()) -> Bool {
+        guard let a = undoArmedAt else { return false }
+        return now.timeIntervalSince(a) >= 0 && now.timeIntervalSince(a) < undoWindow
+    }
+    static func clearUndo() { d.removeObject(forKey: "waterUndo") }
+
+    /// 点第 i 个杯子：
+    /// - 空杯：只加一杯（不会一下子加好几杯）
+    /// - 最后一杯：第一次点进入「再点撤销」，8 秒内再点才撤销
+    /// - 前面已打勾的杯子：不动
     static func tap(_ i: Int) async {
         var t = times
         var ids = healthIDs
         if i < t.count {
-            let removed = Array(ids.dropFirst(i))
-            t = Array(t.prefix(i))
-            ids = Array(ids.prefix(i))
-            save(t, ids)
-            await deleteFromHealth(removed)
-        } else {
-            let now = Date()
-            var added: [String] = []
-            while t.count <= i && t.count < goal {
-                t.append(now)
-                let id = await writeToHealth(now)
-                added.append(id ?? "")
+            guard i == t.count - 1 else { clearUndo(); return }
+            if undoArmed() {
+                clearUndo()
+                let removed = ids.count == t.count ? [ids.removeLast()] : []
+                t.removeLast()
+                if ids.count > t.count { ids = Array(ids.prefix(t.count)) }
+                save(t, ids)
+                await deleteFromHealth(removed)
+            } else {
+                d.set(Date().timeIntervalSince1970, forKey: "waterUndo")
             }
-            ids = Array(ids.prefix(t.count - added.count)) + added
+        } else {
+            clearUndo()
+            guard t.count < goal else { return }
+            let now = Date()
+            let id = await writeToHealth(now)
+            ids = Array(ids.prefix(t.count))
+            while ids.count < t.count { ids.append("") }
+            t.append(now)
+            ids.append(id ?? "")
             save(t, ids)
         }
     }
@@ -105,17 +126,22 @@ struct WaterProvider: TimelineProvider {
     }
     func getTimeline(in context: Context, completion: @escaping (Timeline<WaterEntry>) -> Void) {
         let midnight = Calendar.current.startOfDay(for: Date().addingTimeInterval(86400)).addingTimeInterval(5)
-        completion(Timeline(entries: [WaterEntry(date: Date())], policy: .after(midnight)))
+        var entries = [WaterEntry(date: Date())]
+        // 「再点撤销」8 秒后自动恢复成打勾的样子
+        if let a = WaterLog.undoArmedAt, WaterLog.undoArmed() {
+            entries.append(WaterEntry(date: a.addingTimeInterval(WaterLog.undoWindow)))
+        }
+        completion(Timeline(entries: entries, policy: .after(midnight)))
     }
 }
 
 struct WaterWidget: Widget {
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: "Water", provider: WaterProvider()) { _ in
-            WaterWidgetView()
+        StaticConfiguration(kind: "Water", provider: WaterProvider()) { entry in
+            WaterWidgetView(now: entry.date)
         }
         .configurationDisplayName("喝水")
-        .description("每天 4 杯，每杯 350 ml。喝一杯点一下杯子打勾，点已打勾的杯子可以撤销。")
+        .description("每天 4 杯，每杯 350 ml。喝一杯点一下杯子打勾；撤销要连点两次最后一杯。")
         .supportedFamilies([.systemSmall, .systemMedium])
         .contentMarginsDisabled()
     }
@@ -125,7 +151,9 @@ struct WaterWidget: Widget {
 
 struct WaterWidgetView: View {
     @Environment(\.widgetFamily) var family
+    var now = Date()
     private let times = WaterLog.times
+    private var undo: Bool { WaterLog.undoArmed(at: now) }
     private var count: Int { times.count }
     private var ml: Int { Int(Double(count) * WaterLog.cupML) }
     private var done: Bool { count >= WaterLog.enough }
@@ -142,6 +170,7 @@ struct WaterWidgetView: View {
     }
 
     private var statusText: String {
+        if undo { return "再点一次撤销第\(count)杯" }
         switch count {
         case 0: return "今天还没喝水"
         case WaterLog.goal...: return "今天喝满了 🎉"
@@ -159,7 +188,7 @@ struct WaterWidgetView: View {
             Spacer(minLength: 0)
             Text("\(count)/\(WaterLog.goal)")
                 .font(.system(size: 13, weight: .semibold, design: .rounded).monospacedDigit())
-                .foregroundStyle(done ? waterGreen : .secondary)
+                .foregroundStyle(undo ? Color.orange : (done ? waterGreen : .secondary))
         }
     }
 
@@ -181,7 +210,7 @@ struct WaterWidgetView: View {
             amount
             Text(statusText)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(done ? waterGreen : .secondary)
+                .foregroundStyle(undo ? Color.orange : (done ? waterGreen : .secondary))
                 .lineLimit(1)
             Spacer(minLength: 8)
             HStack(spacing: 6) {
@@ -202,7 +231,7 @@ struct WaterWidgetView: View {
                 Spacer(minLength: 0)
                 Text(statusText)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(done ? waterGreen : .secondary)
+                    .foregroundStyle(undo ? Color.orange : (done ? waterGreen : .secondary))
                     .lineLimit(1)
                     .frame(width: 104, alignment: .center)
             }
@@ -247,12 +276,13 @@ struct WaterWidgetView: View {
         let f = DateFormatter(); f.dateFormat = "HH:mm"
         return Button(intent: DrinkWaterIntent(index: i)) {
             VStack(spacing: 4) {
-                CupView(filled: filled, isNext: i == count)
+                let arming = undo && i == count - 1
+                CupView(filled: filled, isNext: i == count && !undo, arming: arming)
                     .frame(height: height)
                 if showTime {
-                    Text(filled ? f.string(from: times[i]) : "第\(i + 1)杯")
+                    Text(arming ? "再点撤销" : filled ? f.string(from: times[i]) : "第\(i + 1)杯")
                         .font(.system(size: 10, weight: .medium).monospacedDigit())
-                        .foregroundStyle(filled ? Color.primary.opacity(0.8) : Color.secondary.opacity(0.7))
+                        .foregroundStyle(arming ? Color.orange : filled ? Color.primary.opacity(0.8) : Color.secondary.opacity(0.7))
                         .lineLimit(1)
                 }
             }
@@ -267,6 +297,7 @@ struct WaterWidgetView: View {
 struct CupView: View {
     let filled: Bool
     let isNext: Bool
+    var arming = false   // 等待第二次点击撤销
 
     var body: some View {
         ZStack {
@@ -276,7 +307,8 @@ struct CupView: View {
                 WaveShape()
                     .fill(LinearGradient(colors: [waterCyan.opacity(0.95), waterBlue], startPoint: .top, endPoint: .bottom))
                     .clipShape(CupShape())
-                Image(systemName: "checkmark")
+                    .opacity(arming ? 0.35 : 1)
+                Image(systemName: arming ? "arrow.uturn.backward" : "checkmark")
                     .font(.system(size: 13, weight: .heavy))
                     .foregroundStyle(.white)
                     .shadow(color: .black.opacity(0.25), radius: 2)
@@ -287,7 +319,7 @@ struct CupView: View {
                     .foregroundStyle(waterBlue.opacity(0.9))
             }
             CupShape()
-                .stroke(filled ? waterCyan.opacity(0.9) : (isNext ? waterBlue.opacity(0.7) : Color.white.opacity(0.22)),
+                .stroke(arming ? Color.orange : filled ? waterCyan.opacity(0.9) : (isNext ? waterBlue.opacity(0.7) : Color.white.opacity(0.22)),
                         style: StrokeStyle(lineWidth: 1.6, dash: filled || isNext ? [] : [3, 3]))
         }
         .aspectRatio(0.72, contentMode: .fit)

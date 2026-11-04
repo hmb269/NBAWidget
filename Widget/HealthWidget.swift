@@ -531,6 +531,7 @@ struct RefreshHealthIntent: AppIntent {
     func perform() async throws -> some IntentResult {
         GlucosePrefs.clearSelection()
         WeightSelection.clear()
+        WaterLog.clearUndo()
         return .result()
     }
 }
