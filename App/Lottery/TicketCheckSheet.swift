@@ -97,7 +97,7 @@ struct TicketCheckSheet: View {
             }
             .onAppear {
                 if image != nil && scan.bets.isEmpty { editing = true }
-                if image != nil, !scan.issue.isEmpty, !scan.bets.isEmpty { Task { await check() } }
+                if image != nil, !scan.issue.isEmpty, !scan.bets.isEmpty { /* 期号校正后在 loadIssues 里对奖 */ }
                 else if image != nil {
                     message = scan.bets.isEmpty ? "没认出号码，拍正一点、光线亮一点再试，或者在下面点选号码。" : "没认出期号，填一下再点对奖。"
                 }
@@ -243,14 +243,41 @@ struct TicketCheckSheet: View {
             .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.06)))
     }
 
+    /// 拍照认出的期号可能少一位（「2026288」认成「202628」）：
+    /// 先按票上印的开奖日期找那一期；找不到再按「数字顺序都对得上」找最接近的期号
+    @discardableResult
+    private func correctIssue() -> String? {
+        guard image != nil, !issueList.isEmpty else { return nil }
+        let ocr = scan.issue
+        var fixed: String?
+        if !scan.drawDate.isEmpty, let d = issueList.first(where: { $0.date.hasPrefix(scan.drawDate) }) {
+            fixed = d.issue
+        } else if !ocr.isEmpty, !issueList.contains(where: { $0.issue == ocr }) {
+            let isSub = { (a: String, b: String) -> Bool in   // a 是不是 b 的子序列
+                var it = b.makeIterator()
+                return a.allSatisfy { c in while let x = it.next() { if x == c { return true } }; return false }
+            }
+            fixed = issueOptions.first { $0.count != ocr.count && isSub(ocr, $0) }
+        }
+        guard let f = fixed, f != ocr else { return nil }
+        // 多期票：结束期按同样的偏移一起改
+        if !scan.issueTo.isEmpty, let a = Int(ocr), let b = Int(scan.issueTo), let nf = Int(f), a.description.count == f.count {
+            scan.issueTo = String(nf + (b - a))
+        }
+        scan.issue = f
+        return f
+    }
+
     private func loadIssues() async {
         let game = g
         var list = LotteryAPI.cached(game)
         if list.count < 100, let fresh = try? await LotteryAPI.history(game, count: 100) { list = fresh }
         guard game == g else { return }
         issueList = list.sorted { (LotteryAPI.issueNumber($0.issue) ?? 0) > (LotteryAPI.issueNumber($1.issue) ?? 0) }
+        let fixed = correctIssue()
         if scan.issue.isEmpty, let latest = issueList.first { scan.issue = latest.issue }
         if readOnly && !scan.bets.isEmpty { await check() }
+        if let fixed, message == nil { message = "期号已按票上的开奖日期校正为第\(fixed)期" }
         favs = LotteryFavorites.load(game)
     }
 
@@ -343,19 +370,19 @@ struct TicketCheckSheet: View {
     private func toggleFav(_ b: LotteryBet) {
         withAnimation {
             if isFav(b) { favs.removeAll { $0.front == b.front && $0.back == b.back } }
-            else { favs.append(LotteryBet(front: b.front, back: b.back, multiple: max(1, b.multiple * scan.multiple))) }
+            else { favs.append(LotteryBet(front: b.front, back: b.back, multiple: max(1, b.multiple * scan.multiple), pick: b.pick)) }
         }
         LotteryFavorites.save(favs, for: g)
     }
 
     /// 点收藏里的「对奖」：只用这一注
     private func checkOne(_ b: LotteryBet) async {
-        scan.bets = [LotteryBet(front: b.front, back: b.back, multiple: b.multiple)]
+        scan.bets = [LotteryBet(front: b.front, back: b.back, multiple: b.multiple, pick: b.pick)]
         await check()
     }
 
     private func checkFavorites() async {
-        scan.bets = favs.map { LotteryBet(front: $0.front, back: $0.back, multiple: $0.multiple) }
+        scan.bets = favs.map { LotteryBet(front: $0.front, back: $0.back, multiple: $0.multiple, pick: $0.pick) }
         await check()
     }
 
@@ -643,7 +670,7 @@ struct TicketCheckSheet: View {
                 ForEach(Array(p.results.enumerated()), id: \.element.id) { i, r in
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
-                            Text("第\(i + 1)注" + (g == .kl8 ? "（选\(r.bet.front.count)）" : "") + (r.combos > 1 ? "（复式 \(r.combos) 注）" : ""))
+                            Text("第\(i + 1)注" + (g == .kl8 ? "（选\(r.bet.pick ?? r.bet.front.count)\(r.bet.pick != nil ? "复式" : "")）" : "") + (r.combos > 1 ? "（复式 \(r.combos) 注）" : ""))
                                 .font(.caption.weight(.semibold))
                             Spacer()
                             Text(hitSummary(r)).font(.caption).foregroundStyle(.secondary)
@@ -724,16 +751,16 @@ struct TicketCheckSheet: View {
 
 /// 收藏的号码：每种玩法分开存
 enum LotteryFavorites {
-    private struct Item: Codable { var front: [Int]; var back: [Int]; var multiple: Int? }
+    private struct Item: Codable { var front: [Int]; var back: [Int]; var multiple: Int?; var pick: Int? }
 
     static func load(_ g: LotteryGame) -> [LotteryBet] {
         guard let data = UserDefaults.standard.data(forKey: "lotteryFavs_" + g.rawValue),
               let items = try? JSONDecoder().decode([Item].self, from: data) else { return [] }
-        return items.map { LotteryBet(front: $0.front, back: $0.back, multiple: $0.multiple ?? 1) }
+        return items.map { LotteryBet(front: $0.front, back: $0.back, multiple: $0.multiple ?? 1, pick: $0.pick) }
     }
 
     static func save(_ list: [LotteryBet], for g: LotteryGame) {
-        let items = list.map { Item(front: $0.front, back: $0.back, multiple: $0.multiple) }
+        let items = list.map { Item(front: $0.front, back: $0.back, multiple: $0.multiple, pick: $0.pick) }
         if let data = try? JSONEncoder().encode(items) { UserDefaults.standard.set(data, forKey: "lotteryFavs_" + g.rawValue) }
         AutoBackup.schedule()   // 收藏也进备份
         NotificationCenter.default.post(name: .lotteryFavsChanged, object: nil)
@@ -744,7 +771,7 @@ enum LotteryFavorites {
         var out: [String: [[[Int]]]] = [:]
         for g in LotteryGame.checkableGames {
             let list = load(g)
-            if !list.isEmpty { out[g.rawValue] = list.map { [$0.front, $0.back, [$0.multiple]] } }
+            if !list.isEmpty { out[g.rawValue] = list.map { [$0.front, $0.back, [$0.multiple]] + ($0.pick.map { [[$0]] } ?? []) } }
         }
         return out
     }
@@ -756,7 +783,7 @@ enum LotteryFavorites {
             guard let g = LotteryGame(rawValue: key) else { continue }
             var list = load(g)
             for b in bets where b.count >= 2 && !list.contains(where: { $0.front == b[0] && $0.back == b[1] }) {
-                list.append(LotteryBet(front: b[0], back: b[1], multiple: b.count > 2 ? (b[2].first ?? 1) : 1)); added += 1
+                list.append(LotteryBet(front: b[0], back: b[1], multiple: b.count > 2 ? (b[2].first ?? 1) : 1, pick: b.count > 3 ? b[3].first : nil)); added += 1
             }
             save(list, for: g)
         }

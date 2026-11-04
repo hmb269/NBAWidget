@@ -9,6 +9,7 @@ struct LotteryBet: Identifiable, Hashable {
     var front: [Int]
     var back: [Int]
     var multiple = 1      // 这注的倍数（收藏时一起存）
+    var pick: Int? = nil  // 快乐8 复式：选几（号码个数比它多就是复式）
 
     func text(_ g: LotteryGame) -> String {
         switch g {
@@ -49,14 +50,19 @@ struct LotteryBet: Identifiable, Hashable {
         var s = clean(line)
         if strict, junk.contains(where: { s.contains($0) }) { return nil }
         // 去掉倍数「[10倍]」「(5倍)」「x3」，免得 10 被当成号码
-        s = s.replacingOccurrences(of: "[\\[\\(（【]?\\s*\\d+\\s*倍\\s*[\\]\\)）】]?", with: " ", options: .regularExpression)
+        s = s.replacingOccurrences(of: "[\\[\\(（【「『]?\\s*\\d+\\s*倍\\s*[\\]\\)）】」』]?", with: " ", options: .regularExpression)
         s = s.replacingOccurrences(of: "[xX×]\\s*\\d+\\s*$", with: " ", options: .regularExpression)
         switch game {
         case .kl8:
             let nums = Array(Set(numbers(s))).sorted()
-            guard (1...10).contains(nums.count), nums.allSatisfy({ (1...80).contains($0) }) else { return nil }
-            if let k = kl8Pick, nums.count != k { return nil }
-            if strict && kl8Pick == nil && nums.count < 2 { return nil }
+            guard nums.allSatisfy({ (1...80).contains($0) }) else { return nil }
+            if let k = kl8Pick {
+                // 选几就要几个号码；多了是复式（最多 20 个）
+                guard nums.count >= k, nums.count <= 20 else { return nil }
+                return LotteryBet(front: nums, back: [], pick: nums.count > k ? k : nil)
+            }
+            guard (1...10).contains(nums.count) else { return nil }
+            if strict && nums.count < 2 { return nil }
             return LotteryBet(front: nums, back: [])
         case .qxc:
             return parseQXC(s)
@@ -130,6 +136,7 @@ struct TicketScan {
     var added = false        // 大乐透追加
     var multiple = 1         // 倍数
     var rawText = ""
+    var drawDate = ""        // 票上印的开奖日期「2026-10-29」，用来校正认错的期号
 }
 
 enum TicketReader {
@@ -209,7 +216,32 @@ enum TicketReader {
             }
         }
         let single = all.contains("单式")
-        t.bets = ls.compactMap { LotteryBet.parse($0, game: t.game, kl8Pick: pick, strict: true, single: single) }
+        // 开奖日期：「开奖日期:2026/10/29」「2026年09月28日开奖」
+        for p in ["开奖日期\\s*[:：]?\\s*(\\d{4})\\s*[/\\-.年]\\s*(\\d{1,2})\\s*[/\\-.月]\\s*(\\d{1,2})",
+                  "(\\d{4})\\s*年\\s*(\\d{1,2})\\s*月\\s*(\\d{1,2})\\s*日\\s*开奖"] {
+            if let m = try! NSRegularExpression(pattern: p).firstMatch(in: all, range: NSRange(all.startIndex..., in: all)),
+               let y = Range(m.range(at: 1), in: all), let mo = Range(m.range(at: 2), in: all), let d = Range(m.range(at: 3), in: all),
+               let mm = Int(all[mo]), let dd = Int(all[d]) {
+                t.drawDate = String(all[y]) + String(format: "-%02d-%02d", mm, dd)
+                break
+            }
+        }
+
+        // 快乐8 复式的号码常常一行写不下：「01+07+…+30+」接着下一行「42+64+77」，先把它们拼成一行
+        var rows = ls
+        if t.game == .kl8 {
+            var merged: [String] = []
+            for l in ls {
+                let trimmed = l.trimmingCharacters(in: .whitespaces)
+                if let last = merged.last, last.trimmingCharacters(in: .whitespaces).hasSuffix("+") || trimmed.hasPrefix("+") {
+                    merged[merged.count - 1] = last + " " + trimmed
+                } else {
+                    merged.append(trimmed)
+                }
+            }
+            rows = merged
+        }
+        t.bets = rows.compactMap { LotteryBet.parse($0, game: t.game, kl8Pick: pick, strict: true, single: single) }
         return t
     }
 }
@@ -346,14 +378,20 @@ enum PrizeCalc {
     private static func checkKL8(_ bet: LotteryBet, draw: LotteryDraw, multiple: Int) -> BetResult {
         let drawn = Set(draw.front.compactMap { Int($0) })
         let idx = Set(bet.front.indices.filter { drawn.contains(bet.front[$0]) })
-        let n = bet.front.count, k = idx.count
+        let M = bet.front.count, h = idx.count
+        let N = min(bet.pick ?? M, 10)
+        // 复式：从 M 个号码里任选 N 个组成一注，中 k 个的注数 = C(h,k) × C(M-h, N-k)
         var hits: [PrizeHit] = []
-        if n == 10 && k == 10 {
-            hits = [PrizeHit(name: "选十中十", count: multiple, each: nil)]
-        } else if let v = kl8Table[n]?[k] {
-            hits = [PrizeHit(name: "选\(cnNum[n])中\(k == 0 ? "零" : cnNum[k])", count: multiple, each: v)]
+        for k in stride(from: N, through: 0, by: -1) {
+            let n = comb(h, k) * comb(M - h, N - k)
+            guard n > 0 else { continue }
+            if N == 10 && k == 10 {
+                hits.append(PrizeHit(name: "选十中十", count: n * multiple, each: nil))
+            } else if let v = kl8Table[N]?[k] {
+                hits.append(PrizeHit(name: "选\(cnNum[N])中\(k == 0 ? "零" : cnNum[k])", count: n * multiple, each: v))
+            }
         }
-        return BetResult(bet: bet, frontHitIdx: idx, backHitIdx: [], frontHits: k, backHits: 0, hits: hits, combos: 1)
+        return BetResult(bet: bet, frontHitIdx: idx, backHitIdx: [], frontHits: h, backHits: 0, hits: hits, combos: comb(M, N))
     }
 
     // MARK: 七星彩（前区 6 位对位比较 + 后区 1 位）
