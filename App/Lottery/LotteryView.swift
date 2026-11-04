@@ -350,7 +350,7 @@ struct LotteryGameCard: View {
                 HStack(alignment: .bottom) {
                     if game.hasPool {
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(fromPrev ? "奖池（上期，本期公布中）" : "奖池").font(.caption2).foregroundStyle(.secondary)
+                            Text("第\(info.issue)期奖池" + (fromPrev ? " · 本期公布中" : "")).font(.caption2).foregroundStyle(fromPrev ? Color.orange : Color.secondary)
                             Text(info.pool != nil ? LotteryFormat.money(info.pool) : "公布中")
                                 .font(.system(size: info.pool != nil ? 22 : 15, weight: .bold, design: .rounded).monospacedDigit())
                                 .foregroundStyle(gold)
@@ -360,7 +360,7 @@ struct LotteryGameCard: View {
                     Spacer()
                     if let p = info.prizes.first, game != .kl8 {
                         VStack(alignment: .trailing, spacing: 1) {
-                            Text((fromPrev ? "上期" : "") + "\(p.name) \(p.count.isEmpty ? "—" : p.count) 注").font(.caption2).foregroundStyle(.secondary)
+                            Text((fromPrev ? "第\(info.issue)期" : "") + "\(p.name) \(p.count.isEmpty ? "—" : p.count) 注").font(.caption2).foregroundStyle(.secondary)
                             Text(LotteryFormat.yuan(p.amount)).font(.subheadline.weight(.semibold).monospacedDigit())
                                 .opacity(fromPrev ? 0.6 : 1)
                         }
