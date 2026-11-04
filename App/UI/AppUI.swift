@@ -626,6 +626,7 @@ struct SettingsView: View {
         PageScroll(title: "设置", subtitle: "血糖仪 · 备份 · 图标 · 小组件") {
             GlucoseSyncCard()
             GlucoseMealTimesCard()
+            WaterSettingsCard()
             backupCard
 
             CardSection(footer: iconStatus) {

@@ -3,17 +3,14 @@ import SwiftUI
 import HealthKit
 import AppIntents
 
-// 喝水小组件：每天 4 杯 × 350 ml，喝一杯点一下杯子打勾；3 杯达标，4 杯喝满。
+// 喝水小组件：默认每天 4 杯 × 350 ml，喝一杯点一下杯子打勾；少一杯算达标，全部喝完算喝满。
+// 杯子形状、每杯毫升、每天杯数在 App「设置」里改（通过相簿名传给小组件，见 WaterSettings）。
 // 记录存在小组件自己这里（每天零点自动清空），同时尽量写进「健康 → 饮水」。
 
-private let waterBlue = Color(red: 0.30, green: 0.68, blue: 1.0)
-private let waterCyan = Color(red: 0.35, green: 0.90, blue: 0.95)
-private let waterGreen = Color(red: 0.30, green: 0.85, blue: 0.55)
-
 enum WaterLog {
-    static let cupML = 350.0
-    static let goal = 4      // 一天 4 杯
-    static let enough = 3    // 3 杯算达标
+    static var cupML: Double { Double(WaterSettings.current.ml) }
+    static var goal: Int { WaterSettings.current.cups }
+    static var enough: Int { WaterSettings.current.enough }
     private static let d = UserDefaults.standard
 
     private static var todayKey: String {
@@ -31,7 +28,21 @@ enum WaterLog {
         d.string(forKey: "waterDay") == todayKey ? (d.stringArray(forKey: "waterHK") ?? []) : []
     }
 
+    /// 今天每一杯的毫升数（中途改了杯子大小，之前喝的按当时的算）
+    static var mls: [Double] {
+        let t = times.count
+        var m = d.string(forKey: "waterDay") == todayKey ? (d.array(forKey: "waterML") as? [Double] ?? []) : []
+        if m.count > t { m = Array(m.prefix(t)) }
+        while m.count < t { m.append(cupML) }
+        return m
+    }
+    static var totalML: Int { Int(mls.reduce(0, +)) }
+
     private static func save(_ t: [Date], _ ids: [String]) {
+        var m = mls
+        if m.count > t.count { m = Array(m.prefix(t.count)) }
+        while m.count < t.count { m.append(cupML) }
+        d.set(m, forKey: "waterML")
         d.set(todayKey, forKey: "waterDay")
         d.set(t.map(\.timeIntervalSince1970), forKey: "waterTimes")
         d.set(ids, forKey: "waterHK")
@@ -125,6 +136,7 @@ struct WaterProvider: TimelineProvider {
         completion(WaterEntry(date: Date()))
     }
     func getTimeline(in context: Context, completion: @escaping (Timeline<WaterEntry>) -> Void) {
+        WaterSettings.refreshFromAlbum()
         let midnight = Calendar.current.startOfDay(for: Date().addingTimeInterval(86400)).addingTimeInterval(5)
         var entries = [WaterEntry(date: Date())]
         // 「再点撤销」8 秒后自动恢复成打勾的样子
@@ -141,7 +153,7 @@ struct WaterWidget: Widget {
             WaterWidgetView(now: entry.date)
         }
         .configurationDisplayName("喝水")
-        .description("每天 4 杯，每杯 350 ml。喝一杯点一下杯子打勾；撤销要连点两次最后一杯。")
+        .description("喝一杯点一下杯子打勾；撤销要连点两次最后一杯。杯子形状和容量在 App 设置里改。")
         .supportedFamilies([.systemSmall, .systemMedium])
         .contentMarginsDisabled()
     }
@@ -155,7 +167,8 @@ struct WaterWidgetView: View {
     private let times = WaterLog.times
     private var undo: Bool { WaterLog.undoArmed(at: now) }
     private var count: Int { times.count }
-    private var ml: Int { Int(Double(count) * WaterLog.cupML) }
+    private var ml: Int { WaterLog.totalML }
+    private let style = WaterSettings.current
     private var done: Bool { count >= WaterLog.enough }
 
     var body: some View {
@@ -212,10 +225,25 @@ struct WaterWidgetView: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(undo ? Color.orange : (done ? waterGreen : .secondary))
                 .lineLimit(1)
-            Spacer(minLength: 8)
-            HStack(spacing: 6) {
-                ForEach(0..<WaterLog.goal, id: \.self) { i in
-                    cupButton(i, height: 44, showTime: false)
+            Spacer(minLength: 6)
+            if WaterLog.goal <= 4 {
+                HStack(spacing: 6) {
+                    ForEach(0..<WaterLog.goal, id: \.self) { i in
+                        cupButton(i, height: 44, showTime: false)
+                    }
+                }
+            } else {
+                // 5、6 杯：分两行
+                let perRow = (WaterLog.goal + 1) / 2
+                VStack(spacing: 4) {
+                    ForEach(0..<2, id: \.self) { row in
+                        HStack(spacing: 6) {
+                            ForEach(row * perRow..<min(WaterLog.goal, (row + 1) * perRow), id: \.self) { i in
+                                cupButton(i, height: 27, showTime: false)
+                            }
+                            if row == 1 && WaterLog.goal % 2 == 1 { Color.clear.frame(maxWidth: .infinity) }
+                        }
+                    }
                 }
             }
         }
@@ -236,7 +264,7 @@ struct WaterWidgetView: View {
                     .frame(width: 104, alignment: .center)
             }
             .frame(width: 104)
-            HStack(spacing: 10) {
+            HStack(spacing: WaterLog.goal > 4 ? 5 : 10) {
                 ForEach(0..<WaterLog.goal, id: \.self) { i in
                     cupButton(i, height: 86, showTime: true)
                 }
@@ -249,9 +277,10 @@ struct WaterWidgetView: View {
         let p = min(Double(count) / Double(WaterLog.goal), 1)
         return ZStack {
             Circle().stroke(waterBlue.opacity(0.15), lineWidth: 9)
-            // 达标线（3 杯）的小刻度
+            // 达标线的小刻度
             Circle()
-                .trim(from: 0.745, to: 0.755)
+                .trim(from: Double(WaterLog.enough) / Double(WaterLog.goal) - 0.005,
+                      to: Double(WaterLog.enough) / Double(WaterLog.goal) + 0.005)
                 .stroke(Color.white.opacity(0.5), style: StrokeStyle(lineWidth: 9))
                 .rotationEffect(.degrees(-90))
             Circle()
@@ -277,11 +306,11 @@ struct WaterWidgetView: View {
         return Button(intent: DrinkWaterIntent(index: i)) {
             VStack(spacing: 4) {
                 let arming = undo && i == count - 1
-                CupView(filled: filled, isNext: i == count && !undo, arming: arming,
+                CupView(kind: style.kind, filled: filled, isNext: i == count && !undo, arming: arming,
                         time: filled ? f.string(from: times[i]) : nil, big: showTime)
                     .frame(height: height)
                 if showTime {
-                    Text(arming ? "再点撤销" : "第\(i + 1)杯")
+                    Text(arming ? "再点撤销" : WaterLog.goal > 4 ? "\(i + 1)" : "第\(i + 1)杯")
                         .font(.system(size: 10, weight: .medium).monospacedDigit())
                         .foregroundStyle(arming ? Color.orange : filled ? Color.primary.opacity(0.8) : Color.secondary.opacity(0.7))
                         .lineLimit(1)
@@ -294,85 +323,3 @@ struct WaterWidgetView: View {
     }
 }
 
-/// 一个玻璃杯：上宽下窄，喝了就装满水、带水波和勾
-struct CupView: View {
-    let filled: Bool
-    let isNext: Bool
-    var arming = false   // 等待第二次点击撤销
-    var time: String? = nil  // 喝这杯的时间，写在杯子里
-    var big = false
-
-    var body: some View {
-        ZStack {
-            CupShape()
-                .fill(Color.white.opacity(filled ? 0.04 : 0.06))
-            if filled {
-                WaveShape()
-                    .fill(LinearGradient(colors: [waterCyan.opacity(0.95), waterBlue], startPoint: .top, endPoint: .bottom))
-                    .clipShape(CupShape())
-                    .opacity(arming ? 0.35 : 1)
-                VStack(spacing: big ? 3 : 1) {
-                    Image(systemName: arming ? "arrow.uturn.backward" : "checkmark")
-                        .font(.system(size: big ? 13 : 10, weight: .heavy))
-                    if let time {
-                        Text(time)
-                            .font(.system(size: big ? 13 : 9, weight: .bold, design: .rounded).monospacedDigit())
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.6)
-                    }
-                }
-                .foregroundStyle(.white)
-                .shadow(color: .black.opacity(0.3), radius: 2)
-                .padding(.horizontal, 3)
-                .offset(y: big ? 6 : 4)
-            } else if isNext {
-                Image(systemName: "plus")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(waterBlue.opacity(0.9))
-            }
-            CupShape()
-                .stroke(arming ? Color.orange : filled ? waterCyan.opacity(0.9) : (isNext ? waterBlue.opacity(0.7) : Color.white.opacity(0.22)),
-                        style: StrokeStyle(lineWidth: 1.6, dash: filled || isNext ? [] : [3, 3]))
-        }
-        .aspectRatio(0.72, contentMode: .fit)
-    }
-}
-
-/// 杯子外形：上宽下窄的梯形，底部圆角
-struct CupShape: Shape {
-    func path(in r: CGRect) -> Path {
-        let inset = r.width * 0.13
-        let radius = r.width * 0.12
-        var p = Path()
-        p.move(to: CGPoint(x: r.minX, y: r.minY))
-        p.addLine(to: CGPoint(x: r.maxX, y: r.minY))
-        p.addLine(to: CGPoint(x: r.maxX - inset, y: r.maxY - radius))
-        p.addQuadCurve(to: CGPoint(x: r.maxX - inset - radius, y: r.maxY),
-                       control: CGPoint(x: r.maxX - inset, y: r.maxY))
-        p.addLine(to: CGPoint(x: r.minX + inset + radius, y: r.maxY))
-        p.addQuadCurve(to: CGPoint(x: r.minX + inset, y: r.maxY - radius),
-                       control: CGPoint(x: r.minX + inset, y: r.maxY))
-        p.closeSubpath()
-        return p
-    }
-}
-
-/// 水面：从杯底到约 82% 高度，顶上一道水波
-struct WaveShape: Shape {
-    func path(in r: CGRect) -> Path {
-        let top = r.minY + r.height * 0.18
-        let amp = r.height * 0.035
-        var p = Path()
-        p.move(to: CGPoint(x: r.minX, y: top))
-        let steps = 24
-        for s in 0...steps {
-            let x = r.minX + r.width * CGFloat(s) / CGFloat(steps)
-            let y = top + sin(CGFloat(s) / CGFloat(steps) * .pi * 2) * amp
-            p.addLine(to: CGPoint(x: x, y: y))
-        }
-        p.addLine(to: CGPoint(x: r.maxX, y: r.maxY))
-        p.addLine(to: CGPoint(x: r.minX, y: r.maxY))
-        p.closeSubpath()
-        return p
-    }
-}
