@@ -16,6 +16,7 @@ struct LotteryView: View {
     @State private var scanning = false
     @State private var scan: TicketScan?
     @State private var scanImage: UIImage?
+    @State private var favCheck: TicketScan?
 
     @State private var order: [String] = UserDefaults.standard.stringArray(forKey: "lotteryOrder") ?? LotteryGame.allCases.map(\.rawValue)
     @State private var dragging: LotteryGame?
@@ -45,10 +46,12 @@ struct LotteryView: View {
             .pickerStyle(.segmented)
 
             if segment == 2 {
-                LotteryFavoritesPane(data: data) { g in
+                LotteryFavoritesPane(onAdd: { g in
                     scanImage = nil
                     scan = TicketScan(game: g)
-                }
+                }, onCheck: { g, bets in
+                    favCheck = TicketScan(game: g, bets: bets.map { LotteryBet(front: $0.front, back: $0.back) })
+                })
             } else {
 
             ForEach(games) { g in
@@ -105,6 +108,12 @@ struct LotteryView: View {
         .sheet(isPresented: Binding(get: { scan != nil }, set: { if !$0 { scan = nil } })) {
             if let s = scan {
                 TicketCheckSheet(scan: s, image: scanImage)
+                    .presentationBackground(.ultraThinMaterial)
+            }
+        }
+        .sheet(isPresented: Binding(get: { favCheck != nil }, set: { if !$0 { favCheck = nil } })) {
+            if let s = favCheck {
+                TicketCheckSheet(scan: s, image: nil, favMode: true)
                     .presentationBackground(.ultraThinMaterial)
             }
         }

@@ -5,6 +5,8 @@ import SwiftUI
 struct TicketCheckSheet: View {
     @State var scan: TicketScan
     let image: UIImage?
+    /// 从收藏点进来：号码已定，只选期号对奖（不显示选号面板）
+    var favMode = false
     @Environment(\.dismiss) private var dismiss
 
     // 选号面板
@@ -45,9 +47,13 @@ struct TicketCheckSheet: View {
                     }
 
                     settingsCard
-                    pickerCard
-                    betsCard
-                    favsCard
+                    if favMode {
+                        favBetsCard
+                    } else {
+                        pickerCard
+                        betsCard
+                        favsCard
+                    }
 
                     Button {
                         Task { await check() }
@@ -99,6 +105,10 @@ struct TicketCheckSheet: View {
                 }
             }
             .task { await loadIssues() }
+            .onChange(of: scan.issue) { _, _ in
+                // 收藏对奖：滚轮一停就自动对
+                if favMode && !issueList.isEmpty { Task { await check() } }
+            }
         }
     }
 
@@ -106,11 +116,20 @@ struct TicketCheckSheet: View {
 
     private var settingsCard: some View {
         CardSection {
-            Picker("玩法", selection: $scan.game) {
-                ForEach(LotteryGame.checkableGames) { Text($0.shortName).tag($0) }
+            if favMode {
+                HStack {
+                    Text(g.name).font(.headline)
+                    Spacer()
+                    Text("选期号就自动对奖").font(.caption).foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 10)
+            } else {
+                Picker("玩法", selection: $scan.game) {
+                    ForEach(LotteryGame.checkableGames) { Text($0.shortName).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .padding(.vertical, 10)
             }
-            .pickerStyle(.segmented)
-            .padding(.vertical, 10)
             RowDivider()
             // 期号：滚轮选（默认最近开奖的一期），多期票再填结束期号
             HStack(alignment: .center, spacing: 8) {
@@ -185,7 +204,25 @@ struct TicketCheckSheet: View {
         guard game == g else { return }
         issueList = list.sorted { (LotteryAPI.issueNumber($0.issue) ?? 0) > (LotteryAPI.issueNumber($1.issue) ?? 0) }
         if scan.issue.isEmpty, let latest = issueList.first { scan.issue = latest.issue }
+        if favMode { await check() }
         favs = LotteryFavorites.load(game)
+    }
+
+    // MARK: 收藏对奖时：只读显示要对的号码
+
+    private var favBetsCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("要对的号码（\(scan.bets.count) 注）", systemImage: "star.fill")
+                .font(.subheadline.weight(.semibold)).foregroundStyle(.yellow)
+            ForEach(scan.bets) { b in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LotteryBalls(game: g, front: b.frontStrings(g), back: b.backStrings(g), size: 26)
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassCard(22)
     }
 
     // MARK: 收藏的号码
