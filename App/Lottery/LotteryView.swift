@@ -50,7 +50,7 @@ struct LotteryView: View {
                     scanImage = nil
                     scan = TicketScan(game: g)
                 }, onCheck: { g, bets in
-                    favCheck = TicketScan(game: g, bets: bets.map { LotteryBet(front: $0.front, back: $0.back, multiple: $0.multiple, pick: $0.pick) })
+                    favCheck = TicketScan(game: g, bets: bets.map { LotteryBet(front: $0.front, back: $0.back, multiple: $0.multiple, pick: $0.pick, added: $0.added) })
                 })
             } else {
 

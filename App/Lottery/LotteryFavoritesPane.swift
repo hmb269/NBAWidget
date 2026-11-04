@@ -28,6 +28,9 @@ struct LotteryFavoritesPane: View {
                 }, onMultiple: { bet, m in
                     if let i = favs[g]?.firstIndex(where: { $0.id == bet.id }) { favs[g]?[i].multiple = m }
                     LotteryFavorites.save(favs[g] ?? [], for: g)
+                }, onToggleAdded: { bet in
+                    if let i = favs[g]?.firstIndex(where: { $0.id == bet.id }) { favs[g]?[i].added.toggle() }
+                    LotteryFavorites.save(favs[g] ?? [], for: g)
                 })
             }
 
@@ -62,6 +65,7 @@ private struct FavoriteGameCard: View {
     let onCheck: ([LotteryBet]) -> Void
     let onDelete: (LotteryBet) -> Void
     let onMultiple: (LotteryBet, Int) -> Void
+    let onToggleAdded: (LotteryBet) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -81,6 +85,13 @@ private struct FavoriteGameCard: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         LotteryBalls(game: game, front: b.frontStrings(game), back: b.backStrings(game), size: 26)
                     }
+                    if b.added {
+                        Text("追加")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.orange)
+                            .padding(.horizontal, 6).padding(.vertical, 3)
+                            .background(Capsule().stroke(Color.orange.opacity(0.6), lineWidth: 1))
+                    }
                     // 倍数：点开选
                     Menu {
                         Picker("倍数", selection: Binding(get: { b.multiple }, set: { onMultiple(b, $0) })) {
@@ -98,6 +109,9 @@ private struct FavoriteGameCard: View {
                     }
                     .glassButton()
                     Menu {
+                        if game == .dlt {
+                            Button(b.added ? "改成不追加" : "改成追加投注", systemImage: "plus.circle") { onToggleAdded(b) }
+                        }
                         Button("取消收藏", systemImage: "star.slash", role: .destructive) { onDelete(b) }
                     } label: {
                         Image(systemName: "ellipsis.circle").font(.title3).foregroundStyle(.secondary)

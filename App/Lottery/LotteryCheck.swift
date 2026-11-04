@@ -10,6 +10,7 @@ struct LotteryBet: Identifiable, Hashable {
     var back: [Int]
     var multiple = 1      // 这注的倍数（收藏时一起存）
     var pick: Int? = nil  // 快乐8 复式：选几（号码个数比它多就是复式）
+    var added = false     // 大乐透追加投注
 
     func text(_ g: LotteryGame) -> String {
         switch g {
@@ -321,9 +322,18 @@ enum PrizeCalc {
         let fixed: [String: Double] = game == .ssq
             ? ["三等奖": 3000, "四等奖": 200, "五等奖": 10, "六等奖": 5, "福运奖": 5]
             : ["三等奖": 5000, "四等奖": 300, "五等奖": 150, "六等奖": 15, "七等奖": 5]
-        let hits = order.compactMap { name -> PrizeHit? in
+        var hits = order.compactMap { name -> PrizeHit? in
             guard let c = counts[name] else { return nil }
             return PrizeHit(name: name, count: c * multiple, each: amount(name, draw: draw, fixed: fixed))
+        }
+        // 大乐透追加：一、二等奖另得追加奖金（公告里有就用公告的，没有按基本奖金的 80%）
+        if game == .dlt && bet.added {
+            for name in ["一等奖", "二等奖"] {
+                guard let h = hits.first(where: { $0.name == name }) else { continue }
+                let p = draw.prizes.first { $0.name.contains(name) && $0.name.contains("追加") }
+                let each = p.flatMap { Double($0.amount.replacingOccurrences(of: ",", with: "")) } ?? h.each.map { $0 * 0.8 }
+                hits.append(PrizeHit(name: name + "（追加）", count: h.count, each: each))
+            }
         }
         return BetResult(bet: bet, frontHitIdx: fIdx, backHitIdx: bIdx, frontHits: hf, backHits: hb,
                          hits: hits, combos: comb(F, fn) * comb(B, bn))

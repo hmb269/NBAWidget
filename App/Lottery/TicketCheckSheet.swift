@@ -303,6 +303,9 @@ struct TicketCheckSheet: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         LotteryBalls(game: g, front: b.frontStrings(g), back: b.backStrings(g), size: 26)
                     }
+                    if favMode && b.added {
+                        Text("追加").font(.caption2.weight(.bold)).foregroundStyle(.orange)
+                    }
                     if favMode && b.multiple > 1 {
                         Text("×\(b.multiple)").font(.caption.weight(.bold).monospacedDigit()).foregroundStyle(.orange)
                     }
@@ -370,19 +373,19 @@ struct TicketCheckSheet: View {
     private func toggleFav(_ b: LotteryBet) {
         withAnimation {
             if isFav(b) { favs.removeAll { $0.front == b.front && $0.back == b.back } }
-            else { favs.append(LotteryBet(front: b.front, back: b.back, multiple: max(1, b.multiple * scan.multiple), pick: b.pick)) }
+            else { favs.append(LotteryBet(front: b.front, back: b.back, multiple: max(1, b.multiple * scan.multiple), pick: b.pick, added: b.added || (g == .dlt && scan.added))) }
         }
         LotteryFavorites.save(favs, for: g)
     }
 
     /// 点收藏里的「对奖」：只用这一注
     private func checkOne(_ b: LotteryBet) async {
-        scan.bets = [LotteryBet(front: b.front, back: b.back, multiple: b.multiple, pick: b.pick)]
+        scan.bets = [LotteryBet(front: b.front, back: b.back, multiple: b.multiple, pick: b.pick, added: b.added)]
         await check()
     }
 
     private func checkFavorites() async {
-        scan.bets = favs.map { LotteryBet(front: $0.front, back: $0.back, multiple: $0.multiple, pick: $0.pick) }
+        scan.bets = favs.map { LotteryBet(front: $0.front, back: $0.back, multiple: $0.multiple, pick: $0.pick, added: $0.added) }
         await check()
     }
 
@@ -631,8 +634,11 @@ struct TicketCheckSheet: View {
                 if periods.contains(where: \.floating) {
                     Text("含浮动奖（一、二等奖等），金额以开奖公告为准").font(.caption).foregroundStyle(.secondary)
                 }
-                if scan.added, periods.flatMap(\.hits).contains(where: { $0.name == "一等奖" || $0.name == "二等奖" }) {
-                    Text("追加投注：一、二等奖另加基本奖金的 80%").font(.caption).foregroundStyle(.secondary)
+                if let first = periods.filter({ !$0.hits.isEmpty }).map(\.draw).first, let c = Self.claimText(first) {
+                    Label((periods.filter { !$0.hits.isEmpty }.count > 1 ? "最早一期" : "") + c.0, systemImage: "calendar.badge.clock")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(c.1 ? Color.red : Color.green)
+                    Text("开奖之日起 60 天内兑奖，最后一天遇法定节假日顺延，以彩票站为准").font(.caption2).foregroundStyle(.tertiary)
                 }
                 if pending > 0 {
                     Text("还有 \(pending) 期没开奖").font(.caption).foregroundStyle(.secondary)
@@ -665,6 +671,11 @@ struct TicketCheckSheet: View {
             LotteryBalls(game: g, front: p.draw.front, back: p.draw.back, size: g == .kl8 ? 24 : 26)
             if !p.hits.isEmpty {
                 Text(summary(p.hits)).font(.caption).foregroundStyle(.orange)
+                if let c = Self.claimText(p.draw) {
+                    Label(c.0, systemImage: "calendar.badge.clock")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(c.1 ? Color.red : Color.green)
+                }
             }
             if open {
                 ForEach(Array(p.results.enumerated()), id: \.element.id) { i, r in
@@ -705,6 +716,29 @@ struct TicketCheckSheet: View {
         }
     }
 
+    /// 票上勾了追加，就每注都算追加
+    private func withAdded(_ b: LotteryBet) -> LotteryBet {
+        var b = b
+        if g == .dlt && scan.added { b.added = true }
+        return b
+    }
+
+    /// 兑奖期限：开奖之日起 60 天（最后一天遇法定节假日顺延，以彩票站为准）
+    static func claimDeadline(_ d: LotteryDraw) -> Date? {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
+        guard let day = f.date(from: String(d.date.prefix(10))) else { return nil }
+        return Calendar.current.date(byAdding: .day, value: 60, to: day)
+    }
+
+    static func claimText(_ d: LotteryDraw) -> (String, Bool)? {
+        guard let end = claimDeadline(d) else { return nil }
+        let cal = Calendar.current
+        let left = cal.dateComponents([.day], from: cal.startOfDay(for: Date()), to: end).day ?? 0
+        let f = DateFormatter(); f.locale = Locale(identifier: "zh_CN"); f.dateFormat = "yyyy年M月d日"
+        if left < 0 { return ("已过兑奖期（截止 \(f.string(from: end))）", true) }
+        return ("兑奖截止 \(f.string(from: end))，还剩 \(left) 天", left <= 7)
+    }
+
     private func summary(_ hits: [PrizeHit]) -> String {
         var merged: [(String, Int)] = []
         for h in hits {
@@ -737,7 +771,7 @@ struct TicketCheckSheet: View {
         do {
             let r = try await LotteryAPI.draws(g, from: from, to: to.isEmpty ? nil : to, periods: nil)
             periods = r.draws.sorted { (LotteryAPI.issueNumber($0.issue) ?? 0) < (LotteryAPI.issueNumber($1.issue) ?? 0) }.map { d in
-                PeriodResult(draw: d, results: scan.bets.map { PrizeCalc.check($0, draw: d, game: g, multiple: scan.multiple * max(1, $0.multiple)) })
+                PeriodResult(draw: d, results: scan.bets.map { PrizeCalc.check(withAdded($0), draw: d, game: g, multiple: scan.multiple * max(1, $0.multiple)) })
             }
             pending = r.pending
             if periods.isEmpty && pending == 0 {
@@ -751,16 +785,16 @@ struct TicketCheckSheet: View {
 
 /// 收藏的号码：每种玩法分开存
 enum LotteryFavorites {
-    private struct Item: Codable { var front: [Int]; var back: [Int]; var multiple: Int?; var pick: Int? }
+    private struct Item: Codable { var front: [Int]; var back: [Int]; var multiple: Int?; var pick: Int?; var added: Bool? }
 
     static func load(_ g: LotteryGame) -> [LotteryBet] {
         guard let data = UserDefaults.standard.data(forKey: "lotteryFavs_" + g.rawValue),
               let items = try? JSONDecoder().decode([Item].self, from: data) else { return [] }
-        return items.map { LotteryBet(front: $0.front, back: $0.back, multiple: $0.multiple ?? 1, pick: $0.pick) }
+        return items.map { LotteryBet(front: $0.front, back: $0.back, multiple: $0.multiple ?? 1, pick: $0.pick, added: $0.added ?? false) }
     }
 
     static func save(_ list: [LotteryBet], for g: LotteryGame) {
-        let items = list.map { Item(front: $0.front, back: $0.back, multiple: $0.multiple, pick: $0.pick) }
+        let items = list.map { Item(front: $0.front, back: $0.back, multiple: $0.multiple, pick: $0.pick, added: $0.added) }
         if let data = try? JSONEncoder().encode(items) { UserDefaults.standard.set(data, forKey: "lotteryFavs_" + g.rawValue) }
         AutoBackup.schedule()   // 收藏也进备份
         NotificationCenter.default.post(name: .lotteryFavsChanged, object: nil)
@@ -771,7 +805,8 @@ enum LotteryFavorites {
         var out: [String: [[[Int]]]] = [:]
         for g in LotteryGame.checkableGames {
             let list = load(g)
-            if !list.isEmpty { out[g.rawValue] = list.map { [$0.front, $0.back, [$0.multiple]] + ($0.pick.map { [[$0]] } ?? []) } }
+            // [前区, 后区, [倍数], [选几(0=无)], [追加 1/0]]
+            if !list.isEmpty { out[g.rawValue] = list.map { [$0.front, $0.back, [$0.multiple], [$0.pick ?? 0], [$0.added ? 1 : 0]] } }
         }
         return out
     }
@@ -783,7 +818,8 @@ enum LotteryFavorites {
             guard let g = LotteryGame(rawValue: key) else { continue }
             var list = load(g)
             for b in bets where b.count >= 2 && !list.contains(where: { $0.front == b[0] && $0.back == b[1] }) {
-                list.append(LotteryBet(front: b[0], back: b[1], multiple: b.count > 2 ? (b[2].first ?? 1) : 1, pick: b.count > 3 ? b[3].first : nil)); added += 1
+                list.append(LotteryBet(front: b[0], back: b[1], multiple: b.count > 2 ? (b[2].first ?? 1) : 1, pick: b.count > 3 ? b[3].first.flatMap { $0 > 0 ? $0 : nil } : nil,
+                                       added: b.count > 4 ? b[4].first == 1 : false)); added += 1
             }
             save(list, for: g)
         }
