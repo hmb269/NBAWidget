@@ -640,8 +640,7 @@ struct SettingsView: View {
             CardSection {
                 CardTitle("小组件")
                 RowDivider()
-                Text("长按桌面空白处 → 编辑 → 添加小组件 → 搜索「阿波」，可以选 NBA、健康、血糖和喝水。
-喝水：每天 4 杯 × 350 ml，喝一杯点一下杯子打勾，点已打勾的杯子撤销，零点自动清空，同时会写进「健康 → 饮水」。\n所有小组件点空白处都只刷新，不会打开 App。\n湖人、76人的比赛排在最上面，队名显示为红色。")
+                Text("长按桌面空白处 → 编辑 → 添加小组件 → 搜索「阿波」，可以选 NBA、健康和血糖。\n所有小组件点空白处都只刷新，不会打开 App。\n湖人、76人的比赛排在最上面，队名显示为红色。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 10)
