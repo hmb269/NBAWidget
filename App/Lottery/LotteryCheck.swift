@@ -44,9 +44,13 @@ struct LotteryBet: Identifiable, Hashable {
 
     /// 从一行文字解析出一注
     /// - kl8Pick：快乐8 的「选几」（认出来了就只接受这么多个号码的行）
-    static func parse(_ line: String, game: LotteryGame, kl8Pick: Int? = nil, strict: Bool = false) -> LotteryBet? {
-        let s = clean(line)
+    /// - single：票上写着「单式」，每注号码个数是固定的（多出来的是注序号或识别错）
+    static func parse(_ line: String, game: LotteryGame, kl8Pick: Int? = nil, strict: Bool = false, single: Bool = false) -> LotteryBet? {
+        var s = clean(line)
         if strict, junk.contains(where: { s.contains($0) }) { return nil }
+        // 去掉倍数「[10倍]」「(5倍)」「x3」，免得 10 被当成号码
+        s = s.replacingOccurrences(of: "[\\[\\(（【]?\\s*\\d+\\s*倍\\s*[\\]\\)）】]?", with: " ", options: .regularExpression)
+        s = s.replacingOccurrences(of: "[xX×]\\s*\\d+\\s*$", with: " ", options: .regularExpression)
         switch game {
         case .kl8:
             let nums = Array(Set(numbers(s))).sorted()
@@ -65,6 +69,11 @@ struct LotteryBet: Identifiable, Hashable {
             if back.isEmpty {
                 guard f.count >= fn + bn else { return nil }
                 front = Array(f.dropLast(bn)); back = Array(f.suffix(bn))
+            }
+            if single {
+                // 单式：前面多出来的是注序号（①被认成 1、11），后面多出来的丢掉
+                if front.count > fn { front = Array(front.suffix(fn)) }
+                if back.count > bn { back = Array(back.prefix(bn)) }
             }
             front = Array(Set(front)).sorted(); back = Array(Set(back)).sorted()
             guard front.count >= fn, back.count >= bn, front.count <= 20, back.count <= 16,
@@ -199,7 +208,8 @@ enum TicketReader {
                 let v = String(all[r]); pick = cn[v] ?? Int(v)
             }
         }
-        t.bets = ls.compactMap { LotteryBet.parse($0, game: t.game, kl8Pick: pick, strict: true) }
+        let single = all.contains("单式")
+        t.bets = ls.compactMap { LotteryBet.parse($0, game: t.game, kl8Pick: pick, strict: true, single: single) }
         return t
     }
 }
