@@ -7,6 +7,10 @@ import UniformTypeIdentifiers
 struct LotteryView: View {
     @State private var segment = 0          // 0 福彩 1 体彩 2 收藏
     @Environment(\.scenePhase) private var scenePhase
+    @State private var pendingWins = LotteryView.countPending()
+
+    static func countPending() -> Int { LotteryWins.load().filter { !$0.claimed && !$0.expired }.count }
+    private var winsBadge: String { pendingWins > 0 ? "🏆 中奖 \(pendingWins)" : "🏆 中奖" }
     @State private var data: [LotteryGame: [LotteryDraw]] = Dictionary(uniqueKeysWithValues: LotteryGame.allCases.map { ($0, LotteryAPI.cached($0)) })
     @State private var errors: [LotteryGame: String] = [:]
     @State private var loading = false
@@ -42,10 +46,14 @@ struct LotteryView: View {
                 Text("福彩").tag(0)
                 Text("体彩").tag(1)
                 Text("★ 收藏").tag(2)
+                Text(winsBadge).tag(3)
             }
             .pickerStyle(.segmented)
+            .onReceive(NotificationCenter.default.publisher(for: .lotteryWinsChanged)) { _ in pendingWins = Self.countPending() }
 
-            if segment == 2 {
+            if segment == 3 {
+                LotteryWinsPane()
+            } else if segment == 2 {
                 LotteryFavoritesPane(onAdd: { g in
                     scanImage = nil
                     scan = TicketScan(game: g)

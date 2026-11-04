@@ -811,6 +811,10 @@ struct TicketCheckSheet: View {
                 PeriodResult(draw: d, results: scan.bets.map { PrizeCalc.check(withAdded($0), draw: d, game: g, multiple: scan.multiple * max(1, $0.multiple)) })
             }
             pending = r.pending
+            // 中了的自动记到「中奖」栏
+            for p in periods where !p.hits.isEmpty {
+                LotteryWins.record(game: g, draw: p.draw, results: p.results, factor: scan.multiple, photo: image)
+            }
             if periods.isEmpty && pending == 0 {
                 message = "没找到第\(from)\(to.isEmpty ? "" : "~\(to)")期的开奖结果：期号可能填错了，或者太久以前（只能查最近 100 期）。"
             }
