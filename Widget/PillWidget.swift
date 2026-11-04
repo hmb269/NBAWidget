@@ -158,9 +158,9 @@ struct PillProvider: TimelineProvider {
             if let a = PillLog.armedAt, now.timeIntervalSince(a) < PillLog.armWindow {
                 entries.append(PillEntry(date: a.addingTimeInterval(PillLog.armWindow), health: health))
             }
-            // 零点换天；平时每 30 分钟看一眼健康里有没有新记录
             let midnight = Calendar.current.startOfDay(for: now.addingTimeInterval(86400)).addingTimeInterval(5)
-            let next = min(midnight, now.addingTimeInterval(30 * 60))
+            // 健康「用药」重签名后读不到，只需零点换天（点胶囊时系统会立即刷新）
+            let next = midnight
             completion(Timeline(entries: entries, policy: .after(next)))
         }
     }

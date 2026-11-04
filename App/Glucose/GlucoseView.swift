@@ -1,5 +1,6 @@
 import SwiftUI
 import HealthKit
+import WidgetKit
 
 // 血糖记录的流程：
 // 1. 从罗氏智航同步 → 先存在 App 里（不直接写健康）
@@ -163,6 +164,8 @@ enum GlucoseStore {
                 removed = ours.count
             }
         }
+        // 写完马上刷新血糖小组件（平时 1 小时才自动刷新一次）
+        WidgetCenter.shared.reloadTimelines(ofKind: "Glucose")
         return (samples.count, removed)
     }
 
