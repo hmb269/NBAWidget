@@ -21,7 +21,8 @@ enum HealthService {
     static func requestAccess() async -> String? {
         guard isAvailable else { return "这台设备不支持健康数据" }
         do {
-            try await store.requestAuthorization(toShare: [], read: Set([stepType, massType, sdnnType, sleepType] + (rmssdType.map { [$0] } ?? [])))
+            // 喝水：小组件打勾时顺便写进健康（饮水）
+            try await store.requestAuthorization(toShare: [HKQuantityType(.dietaryWater)], read: Set([stepType, massType, sdnnType, sleepType] + (rmssdType.map { [$0] } ?? [])))
             return nil
         } catch {
             return "授权失败：\(error.localizedDescription)"
