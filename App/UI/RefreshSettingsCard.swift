@@ -12,7 +12,7 @@ struct RefreshSettingsCard: View {
             RowDivider()
             row("健康", sub: "步数、睡眠、体重、HRV", value: $s.health, options: RefreshSettings.healthOptions)
             RowDivider()
-            row("血糖", sub: "写入健康后会立即刷新", value: $s.glucose, options: RefreshSettings.glucoseOptions)
+            row("血糖", sub: "写入健康后、点小组件时会立即刷新", value: $s.glucose, options: RefreshSettings.glucoseOptions)
         }
         .task(id: s) {
             try? await Task.sleep(for: .milliseconds(500))

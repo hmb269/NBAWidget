@@ -7,7 +7,7 @@ struct RefreshSettings: Equatable {
     var glucose = 60
 
     static let healthOptions = [15, 30, 60]
-    static let glucoseOptions = [30, 60, 120]
+    static let glucoseOptions = [30, 60, 120, 240, 480, 720]
     static let prefix = "阿波设置·刷新·"
 
     var albumTitle: String { Self.prefix + "健康\(health)·血糖\(glucose)" }
