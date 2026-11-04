@@ -134,20 +134,35 @@ struct CupView: View {
                     .fill(LinearGradient(colors: [waterCyan.opacity(0.95), waterBlue], startPoint: .top, endPoint: .bottom))
                     .clipShape(cup)
                     .opacity(arming ? 0.35 : 1)
-                VStack(spacing: big ? 3 : 1) {
-                    Image(systemName: arming ? "arrow.uturn.backward" : "checkmark")
-                        .font(.system(size: big ? 13 : 10, weight: .heavy))
-                    if let time {
-                        Text(time)
-                            .font(.system(size: big ? 13 : 9, weight: .bold, design: .rounded).monospacedDigit())
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.5)
+                Group {
+                    if arming || time == nil {
+                        Image(systemName: arming ? "arrow.uturn.backward" : "checkmark")
+                            .font(.system(size: big ? 16 : 13, weight: .heavy))
+                    } else if let time {
+                        // 时间就是「已喝」的标记：放得下就一行「13:53」，放不下就上下两行「13 / 53」
+                        let parts = time.split(separator: ":").map(String.init)
+                        let size: CGFloat = big ? 16 : 14
+                        ViewThatFits(in: .horizontal) {
+                            Text(time)
+                                .font(.system(size: size, weight: .heavy, design: .rounded).monospacedDigit())
+                                .fixedSize()
+                            VStack(spacing: -2) {
+                                ForEach(parts.indices, id: \.self) { Text(parts[$0]) }
+                            }
+                            .font(.system(size: size, weight: .heavy, design: .rounded).monospacedDigit())
+                            .fixedSize()
+                            VStack(spacing: -2) {
+                                ForEach(parts.indices, id: \.self) { Text(parts[$0]) }
+                            }
+                            .font(.system(size: size - 3, weight: .heavy, design: .rounded).monospacedDigit())
+                            .fixedSize()
+                        }
                     }
                 }
                 .foregroundStyle(.white)
                 .shadow(color: .black.opacity(0.3), radius: 2)
                 .padding(.horizontal, 2)
-                .centered(in: kind, dy: kind == .bottle ? 8 : (big ? 6 : 4))
+                .centered(in: kind, dy: kind == .bottle ? 8 : (kind == .mug ? 4 : 3))
             } else if isNext {
                 Image(systemName: "plus")
                     .font(.system(size: 12, weight: .bold))

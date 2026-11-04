@@ -227,9 +227,9 @@ struct WaterWidgetView: View {
                 .lineLimit(1)
             Spacer(minLength: 6)
             if WaterLog.goal <= 4 {
-                HStack(spacing: 6) {
+                HStack(spacing: 5) {
                     ForEach(0..<WaterLog.goal, id: \.self) { i in
-                        cupButton(i, height: 44, showTime: false)
+                        cupButton(i, height: 50, showTime: false)
                     }
                 }
             } else {
