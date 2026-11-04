@@ -171,14 +171,17 @@ enum TicketReader {
             if let m = re.firstMatch(in: all, range: NSRange(all.startIndex..., in: all)),
                let r = Range(m.range(at: 1), in: all) { t.issue = String(all[r]); break }
         }
-        // 多期票：「第2026120期至第2026124期」「2026120-2026124期」，或者「连续5期」「共5期」
-        if let m = try! NSRegularExpression(pattern: "(\\d{5,7})\\s*期?\\s*[-—~～至到]\\s*第?\\s*(\\d{5,7})").firstMatch(in: all, range: NSRange(all.startIndex..., in: all)),
-           let r1 = Range(m.range(at: 1), in: all), let r2 = Range(m.range(at: 2), in: all) {
+        // 多期票：「第2026120期至第2026124期」「2026120-2026124期」（后面必须带「期」，避免把票号 110450-298261 当成期号）；
+        // 或者「连续5期」「追加投注20期5倍」这种只写期数的
+        let range = NSRange(all.startIndex..., in: all)
+        if let m = try! NSRegularExpression(pattern: "(?<!\\d)(\\d{5}|\\d{7})\\s*期?\\s*[-—~～至到]\\s*第?\\s*(\\d{5}|\\d{7})\\s*期").firstMatch(in: all, range: range),
+           let r1 = Range(m.range(at: 1), in: all), let r2 = Range(m.range(at: 2), in: all),
+           let a = LotteryAPI.issueNumber(String(all[r1])), let b = LotteryAPI.issueNumber(String(all[r2])), b > a, b - a < 200 {
             t.issue = String(all[r1]); t.issueTo = String(all[r2])
-        } else if let m = try! NSRegularExpression(pattern: "(?:连续|共|多期)\\s*(\\d{1,3})\\s*期").firstMatch(in: all, range: NSRange(all.startIndex..., in: all)),
+        } else if let m = try! NSRegularExpression(pattern: "(?<!\\d)(\\d{1,3})\\s*期(?!号)").firstMatch(in: all, range: range),
                   let r = Range(m.range(at: 1), in: all), let n = Int(all[r]), n > 1,
                   let start = LotteryAPI.issueNumber(t.issue) {
-            // 只知道起始期和期数：先按同一年连续推算结束期
+            // 只知道起始期和期数：按同一年连续推算结束期
             let end = start + n - 1
             t.issueTo = t.issue.count == 5 ? String(end - 2_000_000) : String(end)
         }
