@@ -7,6 +7,7 @@ struct PillSettingsCard: View {
     @State private var healthNames: [String] = []
     @State private var message: String?
     @State private var loading = false
+    @State private var alertText: String?
 
     var body: some View {
         CardSection(footer: message ?? "健康 App 的「用药」苹果只允许读、不允许其他 App 写：在健康或手表上点了「已服用」，小组件会自动显示已吃；在小组件上点的只记在阿波里。药名要和健康里的药名（或昵称）一致才能关联。") {
@@ -72,6 +73,11 @@ struct PillSettingsCard: View {
             }
             .padding(.vertical, 8)
         }
+        .alert("健康「用药」", isPresented: Binding(get: { alertText != nil }, set: { if !$0 { alertText = nil } })) {
+            Button("好") { alertText = nil }
+        } message: {
+            Text(alertText ?? "")
+        }
         .task(id: s) {
             try? await Task.sleep(for: .milliseconds(800))
             guard !Task.isCancelled, s.albumTitle != (PillSettings.savedTitle ?? PillSettings().albumTitle) else { return }
@@ -88,14 +94,26 @@ struct PillSettingsCard: View {
     private func loadHealth() async {
         loading = true
         defer { loading = false }
-        guard #available(iOS 26.0, *) else { message = "读取健康「用药」需要 iOS 26"; return }
+        guard #available(iOS 26.0, *) else { alertText = "读取健康「用药」需要 iOS 26 或更新。"; return }
         do {
             try await MedsHealth.requestAccess()
-            healthNames = await MedsHealth.medicationNames()
-            message = healthNames.isEmpty ? "健康里没有读到药。先在健康 App →「用药」里添加维生素D，并在授权页勾选它。" : nil
-            WidgetCenter.shared.reloadTimelines(ofKind: "Pill")
         } catch {
-            message = "授权失败：\(error.localizedDescription)"
+            alertText = "授权失败：\(error.localizedDescription)"
+            return
+        }
+        healthNames = await MedsHealth.medicationNames()
+        WidgetCenter.shared.reloadTimelines(ofKind: "Pill")
+        if healthNames.isEmpty {
+            alertText = """
+            没有读到任何药。可能是：
+            1. 健康 App 里还没添加药：打开健康 →「浏览」→「用药」→ 添加药物，把维生素D加进去，设成隔天。
+            2. 授权页没弹出或没勾选：打开系统「设置 → 健康 → 数据访问与设备 → 阿波 →『用药』」，打开维生素D。
+            弄好后回来再点一次。
+            """
+        } else {
+            let hit = healthNames.contains { $0.contains(s.name) || s.name.contains($0) }
+            alertText = "读到 \(healthNames.count) 种药：" + healthNames.joined(separator: "、") +
+                (hit ? "\n已经和「\(s.name)」关联上了。" : "\n点「从健康里选」选一个，药名一致才能关联。")
         }
     }
 }
