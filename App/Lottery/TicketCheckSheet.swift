@@ -629,5 +629,35 @@ enum LotteryFavorites {
     static func save(_ list: [LotteryBet], for g: LotteryGame) {
         let items = list.map { Item(front: $0.front, back: $0.back) }
         if let data = try? JSONEncoder().encode(items) { UserDefaults.standard.set(data, forKey: "lotteryFavs_" + g.rawValue) }
+        AutoBackup.schedule()   // 收藏也进备份
+        NotificationCenter.default.post(name: .lotteryFavsChanged, object: nil)
     }
+
+    /// 备份用：玩法 → [[前区],[后区]]
+    static func exportAll() -> [String: [[[Int]]]] {
+        var out: [String: [[[Int]]]] = [:]
+        for g in LotteryGame.checkableGames {
+            let list = load(g)
+            if !list.isEmpty { out[g.rawValue] = list.map { [$0.front, $0.back] } }
+        }
+        return out
+    }
+
+    /// 从备份恢复：合并，已有的不重复。返回新增几注
+    static func importAll(_ m: [String: [[[Int]]]]) -> Int {
+        var added = 0
+        for (key, bets) in m {
+            guard let g = LotteryGame(rawValue: key) else { continue }
+            var list = load(g)
+            for b in bets where b.count == 2 && !list.contains(where: { $0.front == b[0] && $0.back == b[1] }) {
+                list.append(LotteryBet(front: b[0], back: b[1])); added += 1
+            }
+            save(list, for: g)
+        }
+        return added
+    }
+}
+
+extension Notification.Name {
+    static let lotteryFavsChanged = Notification.Name("lotteryFavsChanged")
 }

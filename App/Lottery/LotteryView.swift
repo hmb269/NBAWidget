@@ -5,7 +5,8 @@ import UniformTypeIdentifiers
 // MARK: - 彩票页
 
 struct LotteryView: View {
-    @State private var welfare = true
+    @State private var segment = 0          // 0 福彩 1 体彩 2 收藏
+    @Environment(\.scenePhase) private var scenePhase
     @State private var data: [LotteryGame: [LotteryDraw]] = Dictionary(uniqueKeysWithValues: LotteryGame.allCases.map { ($0, LotteryAPI.cached($0)) })
     @State private var errors: [LotteryGame: String] = [:]
     @State private var loading = false
@@ -21,7 +22,7 @@ struct LotteryView: View {
 
     /// 按自己排的顺序（长按拖动调整）
     private var games: [LotteryGame] {
-        let base = welfare ? LotteryGame.welfare : LotteryGame.sports
+        let base = segment == 0 ? LotteryGame.welfare : LotteryGame.sports
         return base.sorted { (order.firstIndex(of: $0.rawValue) ?? 99) < (order.firstIndex(of: $1.rawValue) ?? 99) }
     }
 
@@ -36,11 +37,19 @@ struct LotteryView: View {
         PageScroll(title: "彩票", subtitle: todayText) {
             checkCard
 
-            Picker("", selection: $welfare) {
-                Text("福彩").tag(true)
-                Text("体彩").tag(false)
+            Picker("", selection: $segment) {
+                Text("福彩").tag(0)
+                Text("体彩").tag(1)
+                Text("★ 收藏").tag(2)
             }
             .pickerStyle(.segmented)
+
+            if segment == 2 {
+                LotteryFavoritesPane(data: data) { g in
+                    scanImage = nil
+                    scan = TicketScan(game: g)
+                }
+            } else {
 
             ForEach(games) { g in
                 NavigationLink {
@@ -57,10 +66,11 @@ struct LotteryView: View {
                 .onDrop(of: [.text], delegate: LotteryReorder(target: g, order: $order, dragging: $dragging))
             }
 
-            Text("长按卡片可以拖动调整顺序")
+            Text("长按卡片可以拖动调整顺序 · 下拉刷新 · 开奖后会自动刷新")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .frame(maxWidth: .infinity)
+            }
 
             Text("数据来自中国福利彩票、中国体育彩票官网，仅供参考，兑奖以彩票站和官方公告为准。")
                 .font(.caption2)
@@ -69,7 +79,18 @@ struct LotteryView: View {
                 .padding(.horizontal, 6)
         }
         .refreshable { await load() }
-        .task { await load() }
+        .task {
+            await load()
+            // 开奖后自动刷新：到了开奖时间、但还没拿到今天这期，就每分钟查一次（最多查 3 小时）
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60))
+                let waiting = LotteryGame.allCases.filter { awaiting($0) }
+                if !waiting.isEmpty { await load(waiting) }
+            }
+        }
+        .onChange(of: scenePhase) { _, p in
+            if p == .active { Task { await load() } }
+        }
         .fullScreenCover(isPresented: $showCamera) {
             CameraPicker { img in Task { await read(img) } }
                 .ignoresSafeArea()
@@ -120,7 +141,7 @@ struct LotteryView: View {
                 .glassButton()
                 Button {
                     scanImage = nil
-                    scan = TicketScan(game: welfare ? .ssq : .dlt)
+                    scan = TicketScan(game: segment == 1 ? .dlt : .ssq)
                 } label: {
                     Label("手输", systemImage: "keyboard").frame(maxWidth: .infinity)
                 }
@@ -142,11 +163,20 @@ struct LotteryView: View {
         scan = s
     }
 
-    private func load() async {
+    /// 今天开奖、已过开奖时间、还没拿到今天这期
+    private func awaiting(_ g: LotteryGame) -> Bool {
+        let now = Date()
+        guard g.isDrawDay(now) else { return false }
+        let t = g.drawDate(on: now)
+        guard now >= t, now < t.addingTimeInterval(3 * 3600) else { return false }
+        return !(data[g]?.first?.isToday ?? false)
+    }
+
+    private func load(_ only: [LotteryGame] = LotteryGame.allCases) async {
         loading = true
         defer { loading = false }
         await withTaskGroup(of: (LotteryGame, Result<[LotteryDraw], Error>).self) { group in
-            for g in LotteryGame.allCases {
+            for g in only {
                 group.addTask {
                     do { return (g, .success(try await LotteryAPI.history(g))) } catch { return (g, .failure(error)) }
                 }
@@ -256,11 +286,6 @@ struct LotteryGameCard: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 Text(game.name).font(.headline)
-                Text(game.schedule)
-                    .font(.caption2.weight(.semibold))
-                    .padding(.horizontal, 7).padding(.vertical, 2)
-                    .background(Capsule().fill(Color.white.opacity(0.1)))
-                    .foregroundStyle(.secondary)
                 Spacer()
                 if let d = draw {
                     Text("第\(d.issue)期").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
@@ -289,7 +314,7 @@ struct LotteryGameCard: View {
                         }
                     }
                 }
-                Text(d.date).font(.caption2).foregroundStyle(.tertiary)
+                LotteryDrawStatus(game: game, draw: d)
             } else if let error {
                 Text(error).font(.footnote).foregroundStyle(.orange)
             } else {
@@ -308,6 +333,45 @@ struct LotteryGameCard: View {
     }
 }
 
+/// 卡片底部：这期几点开的 + 下次开奖 / 正在等公布
+struct LotteryDrawStatus: View {
+    let game: LotteryGame
+    let draw: LotteryDraw
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { ctx in
+            let now = ctx.date
+            let next = game.nextDraw(after: now)
+            let todayDraw = game.drawDate(on: now)
+            let waiting = game.isDrawDay(now) && now >= todayDraw && !draw.isToday && now < todayDraw.addingTimeInterval(3 * 3600)
+            HStack(spacing: 6) {
+                Text("\(draw.date) \(game.timeText) 开奖").font(.caption2).foregroundStyle(.tertiary)
+                Spacer()
+                if waiting {
+                    ProgressView().controlSize(.mini)
+                    Text("今晚已开奖，等官方公布…").font(.caption2.weight(.semibold)).foregroundStyle(.orange)
+                } else {
+                    Text("下次 " + nextText(next, now: now)).font(.caption2.weight(.semibold))
+                        .foregroundStyle(Calendar.current.isDate(next, inSameDayAs: now) ? Color.orange : Color.secondary)
+                }
+            }
+        }
+    }
+
+    private func nextText(_ d: Date, now: Date) -> String {
+        let cal = Calendar.current
+        let t = game.timeText
+        if cal.isDate(d, inSameDayAs: now) {
+            let mins = Int(d.timeIntervalSince(now) / 60)
+            if mins < 60 { return "今天 \(t)（还有 \(mins) 分钟）" }
+            return "今天 \(t)"
+        }
+        if cal.isDateInTomorrow(d) { return "明天 \(t)" }
+        let f = DateFormatter(); f.locale = Locale(identifier: "zh_CN"); f.dateFormat = "EEE"
+        return f.string(from: d) + " " + t
+    }
+}
+
 // MARK: - 开奖历史
 
 struct LotteryHistoryView: View {
@@ -317,14 +381,14 @@ struct LotteryHistoryView: View {
     @State private var error: String?
 
     var body: some View {
-        PageScroll(title: game.name, subtitle: "近 \(draws.count) 期开奖 · \(game.schedule)开奖") {
+        PageScroll(title: game.name, subtitle: "近 \(draws.count) 期 · \(game.schedule) 开奖") {
             if let error { Text(error).font(.footnote).foregroundStyle(.orange) }
             ForEach(draws) { d in
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
                         Text("第\(d.issue)期").font(.subheadline.weight(.semibold).monospacedDigit())
                         Spacer()
-                        Text(d.date).font(.caption).foregroundStyle(.secondary)
+                        Text(d.date + " " + game.timeText).font(.caption).foregroundStyle(.secondary)
                     }
                     LotteryBalls(game: game, front: d.front, back: d.back, size: game == .kl8 ? 24 : 28)
                     if game.hasPool {

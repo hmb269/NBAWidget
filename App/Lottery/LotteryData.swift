@@ -24,14 +24,55 @@ enum LotteryGame: String, CaseIterable, Identifiable, Codable {
     static var welfare: [LotteryGame] { [.ssq, .d3, .qlc, .kl8] }
     static var sports: [LotteryGame] { [.dlt, .pl3, .pl5, .qxc] }
 
+    /// 开奖时间（北京时间）：福彩 21:15（快乐8 21:30），体彩 21:25
+    var drawTime: (hour: Int, minute: Int) {
+        switch self {
+        case .kl8: return (21, 30)
+        case .ssq, .d3, .qlc: return (21, 15)
+        default: return (21, 25)
+        }
+    }
+
+    /// 开奖的星期（1 = 周日）
+    var drawWeekdays: Set<Int> {
+        switch self {
+        case .ssq: return [3, 5, 1]
+        case .qlc: return [2, 4, 6]
+        case .dlt: return [2, 4, 7]
+        case .qxc: return [3, 6, 1]
+        default: return [1, 2, 3, 4, 5, 6, 7]
+        }
+    }
+
+    var timeText: String { String(format: "%02d:%02d", drawTime.hour, drawTime.minute) }
+
     var schedule: String {
         switch self {
-        case .ssq: return "每周二、四、日"
-        case .qlc: return "每周一、三、五"
-        case .dlt: return "每周一、三、六"
-        case .qxc: return "每周二、五、日"
-        default: return "每天"
+        case .ssq: return "每周二、四、日 " + timeText
+        case .qlc: return "每周一、三、五 " + timeText
+        case .dlt: return "每周一、三、六 " + timeText
+        case .qxc: return "每周二、五、日 " + timeText
+        default: return "每天 " + timeText
         }
+    }
+
+    /// 某天的开奖时刻
+    func drawDate(on day: Date) -> Date {
+        let cal = Calendar.current
+        return cal.date(bySettingHour: drawTime.hour, minute: drawTime.minute, second: 0, of: day) ?? day
+    }
+
+    func isDrawDay(_ day: Date) -> Bool { drawWeekdays.contains(Calendar.current.component(.weekday, from: day)) }
+
+    /// 下一次开奖（今天还没到点就是今天）
+    func nextDraw(after now: Date = Date()) -> Date {
+        let cal = Calendar.current
+        for i in 0..<8 {
+            let day = cal.date(byAdding: .day, value: i, to: now)!
+            let t = drawDate(on: day)
+            if isDrawDay(day) && t > now { return t }
+        }
+        return now
     }
 
     /// 体彩接口的游戏编号
@@ -91,6 +132,12 @@ struct LotteryDraw: Codable, Identifiable, Hashable {
     var prizes: [LotteryPrize]
     var winners: String? = nil   // 一等奖中奖地（福彩公告里有）
     var id: String { issue }
+
+    /// 开奖日期（yyyy-MM-dd 部分）是不是今天
+    var isToday: Bool {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
+        return date.hasPrefix(f.string(from: Date()))
+    }
 
     func prize(_ name: String) -> LotteryPrize? {
         prizes.first { $0.name == name } ?? prizes.first { $0.name.hasPrefix(name) && !$0.name.contains("追加") }
