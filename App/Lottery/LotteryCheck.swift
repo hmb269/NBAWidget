@@ -104,7 +104,8 @@ struct LotteryBet: Identifiable, Hashable {
 
 struct TicketScan {
     var game: LotteryGame = .ssq
-    var issue = ""
+    var issue = ""           // 起始期号
+    var issueTo = ""         // 结束期号（多期票；空 = 只有一期）
     var bets: [LotteryBet] = []
     var added = false        // 大乐透追加
     var multiple = 1         // 倍数
@@ -159,6 +160,18 @@ enum TicketReader {
             if let m = re.firstMatch(in: all, range: NSRange(all.startIndex..., in: all)),
                let r = Range(m.range(at: 1), in: all) { t.issue = String(all[r]); break }
         }
+        // 多期票：「第2026120期至第2026124期」「2026120-2026124期」，或者「连续5期」「共5期」
+        if let m = try! NSRegularExpression(pattern: "(\\d{5,7})\\s*期?\\s*[-—~～至到]\\s*第?\\s*(\\d{5,7})").firstMatch(in: all, range: NSRange(all.startIndex..., in: all)),
+           let r1 = Range(m.range(at: 1), in: all), let r2 = Range(m.range(at: 2), in: all) {
+            t.issue = String(all[r1]); t.issueTo = String(all[r2])
+        } else if let m = try! NSRegularExpression(pattern: "(?:连续|共|多期)\\s*(\\d{1,3})\\s*期").firstMatch(in: all, range: NSRange(all.startIndex..., in: all)),
+                  let r = Range(m.range(at: 1), in: all), let n = Int(all[r]), n > 1,
+                  let start = LotteryAPI.issueNumber(t.issue) {
+            // 只知道起始期和期数：先按同一年连续推算结束期
+            let end = start + n - 1
+            t.issueTo = t.issue.count == 5 ? String(end - 2_000_000) : String(end)
+        }
+
         // 倍数：「3倍」
         if let m = try! NSRegularExpression(pattern: "(\\d{1,2})\\s*倍").firstMatch(in: all, range: NSRange(all.startIndex..., in: all)),
            let r = Range(m.range(at: 1), in: all), let n = Int(all[r]), n > 0 { t.multiple = n }

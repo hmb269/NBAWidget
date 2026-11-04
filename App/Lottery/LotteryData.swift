@@ -270,6 +270,37 @@ enum LotteryAPI {
         UserDefaults.standard.set(data, forKey: "lottery_" + g.rawValue)
     }
 
+    /// 期号统一成 7 位数字比较（大乐透 26126 → 2026126）
+    static func issueNumber(_ s: String) -> Int? {
+        let t = s.trimmingCharacters(in: .whitespaces)
+        guard let v = Int(t) else { return nil }
+        return t.count == 5 ? 2_000_000 + v : v
+    }
+
+    /// 多期：从 from 到 to（含），或者从 from 起连续 periods 期。返回已开奖的期和还没开奖的期数
+    static func draws(_ g: LotteryGame, from: String, to: String?, periods: Int?) async throws -> (draws: [LotteryDraw], pending: Int) {
+        guard let a = issueNumber(from) else { return ([], 0) }
+        let b = to.flatMap(issueNumber)
+        var list = cached(g)
+        let nums = list.compactMap { issueNumber($0.issue) }
+        let latest = nums.max() ?? 0, oldest = nums.min() ?? Int.max
+        if list.isEmpty || (b ?? a) > latest || a < oldest || periods != nil {
+            list = try await history(g, count: 100)
+        }
+        let sorted = list.sorted { (issueNumber($0.issue) ?? 0) < (issueNumber($1.issue) ?? 0) }
+        let newest = sorted.last.flatMap { issueNumber($0.issue) } ?? 0
+        if let n = periods, n > 1 {
+            let picked = Array(sorted.filter { (issueNumber($0.issue) ?? 0) >= a }.prefix(n))
+            return (picked, max(0, n - picked.count))
+        }
+        let end = b ?? a
+        let lo = min(a, end), hi = max(a, end)
+        let picked = sorted.filter { let v = issueNumber($0.issue) ?? 0; return v >= lo && v <= hi }
+        // 同一年内还没开的期数
+        let pending = hi > newest ? hi - max(lo, newest + 1) + 1 : 0
+        return (picked, max(0, pending))
+    }
+
     /// 找某一期：先找缓存，没有就多拉一些
     static func draw(_ g: LotteryGame, issue: String) async throws -> LotteryDraw? {
         let match = { (d: LotteryDraw) in d.issue == issue || d.issue.hasSuffix(issue) || issue.hasSuffix(d.issue) }
