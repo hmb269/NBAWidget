@@ -14,12 +14,20 @@ struct PillSettingsCard: View {
             RowDivider()
 
             HStack(spacing: 16) {
-                PillCapsule(state: .due).frame(width: 54)
-                PillCapsule(state: .taken).frame(width: 54)
-                PillCapsule(state: .rest).frame(width: 54)
+                PillCapsule(state: .due, kind: s.shape).frame(width: 54, height: 44)
+                PillCapsule(state: .taken, kind: s.shape).frame(width: 54, height: 44)
+                PillCapsule(state: .rest, kind: s.shape).frame(width: 54, height: 44)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
+            .padding(.vertical, 10)
+            .animation(.easeOut(duration: 0.2), value: s.shape)
+
+            RowDivider()
+            Picker("形状", selection: $s.shape) {
+                ForEach(PillShapeKind.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .padding(.vertical, 10)
 
             RowDivider()
             HStack {

@@ -12,9 +12,18 @@ let pillYellow = Color(red: 1.0, green: 0.78, blue: 0.25)
 let pillOrange = Color(red: 1.0, green: 0.55, blue: 0.20)
 let pillGreen = Color(red: 0.30, green: 0.85, blue: 0.55)
 
+enum PillShapeKind: String, CaseIterable, Identifiable {
+    case capsule = "胶囊"
+    case softgel = "软胶囊"
+    case round = "圆药片"
+    case oval = "椭圆片"
+    var id: String { rawValue }
+}
+
 struct PillSettings: Equatable {
     var name: String = "维生素D"
     var every: Int = 2          // 每几天吃一次（2 = 隔天）
+    var shape: PillShapeKind = .capsule
 
     static let prefix = "阿波设置·用药·"
     static let everyRange = 1...7
@@ -30,18 +39,21 @@ struct PillSettings: Equatable {
 
     var albumTitle: String {
         let clean = name.replacingOccurrences(of: "·", with: " ").trimmingCharacters(in: .whitespaces)
-        return Self.prefix + (clean.isEmpty ? "维生素D" : clean) + "·每\(every)天"
+        return Self.prefix + (clean.isEmpty ? "维生素D" : clean) + "·每\(every)天·" + shape.rawValue
     }
 
-    init(name: String = "维生素D", every: Int = 2) { self.name = name; self.every = every }
+    init(name: String = "维生素D", every: Int = 2, shape: PillShapeKind = .capsule) {
+        self.name = name; self.every = every; self.shape = shape
+    }
 
     init?(albumTitle t: String) {
         guard t.hasPrefix(Self.prefix) else { return nil }
         let parts = t.dropFirst(Self.prefix.count).split(separator: "·").map(String.init)
-        guard parts.count == 2,
+        guard parts.count >= 2,
               let n = Int(parts[1].replacingOccurrences(of: "每", with: "").replacingOccurrences(of: "天", with: "")) else { return nil }
         name = parts[0]
         every = min(max(n, Self.everyRange.lowerBound), Self.everyRange.upperBound)
+        shape = parts.count >= 3 ? (PillShapeKind(rawValue: parts[2]) ?? .capsule) : .capsule
     }
 
     // MARK: 缓存 + 相簿
@@ -98,8 +110,9 @@ enum MedsHealth {
     /// App 里调用：申请读取用药（会弹出让你勾选哪些药）
     static func requestAccess() async throws {
         guard #available(iOS 26.0, *) else { return }
+        // 用药只能用「逐个药物授权」；服药记录跟着药物授权走，
+        // 不能再用普通的 requestAuthorization 去要（会直接闪退）
         try await store.requestPerObjectReadAuthorization(for: HKObjectType.userAnnotatedMedicationType(), predicate: nil)
-        try await store.requestAuthorization(toShare: [], read: [HKObjectType.medicationDoseEventType()])
     }
 
     /// 健康里登记的药名（App 设置里给你选）
@@ -136,38 +149,118 @@ enum MedsHealth {
 
 // MARK: - 药丸图形
 
-/// 一颗胶囊：左右两色，斜着放
+/// 药丸图形：胶囊 / 软胶囊 / 圆药片 / 椭圆片，三种状态三种颜色
 struct PillCapsule: View {
     enum Phase { case due, taken, rest }
     let state: Phase
+    var kind: PillShapeKind = .capsule
+
+    private var main: Color {
+        switch state {
+        case .due: return pillOrange
+        case .taken: return pillGreen
+        case .rest: return Color.white.opacity(0.22)
+        }
+    }
+    private var second: Color {
+        switch state {
+        case .due: return pillYellow
+        case .taken: return pillGreen.opacity(0.55)
+        case .rest: return Color.white.opacity(0.10)
+        }
+    }
+    private var glow: Color { state == .due ? pillOrange.opacity(0.55) : .clear }
+    private var rim: Color { Color.white.opacity(state == .rest ? 0.18 : 0.25) }
 
     var body: some View {
-        let left: Color, right: Color
-        switch state {
-        case .due: left = pillOrange; right = pillYellow
-        case .taken: left = pillGreen; right = pillGreen.opacity(0.55)
-        case .rest: left = Color.white.opacity(0.22); right = Color.white.opacity(0.10)
+        switch kind {
+        case .capsule: capsule
+        case .softgel: softgel
+        case .round: round
+        case .oval: oval
         }
-        return GeometryReader { g in
+    }
+
+    // 两色胶囊，斜放
+    private var capsule: some View {
+        GeometryReader { g in
             let w = g.size.width, h = g.size.height
             HStack(spacing: 0) {
                 UnevenRoundedRectangle(topLeadingRadius: h / 2, bottomLeadingRadius: h / 2, style: .continuous)
-                    .fill(LinearGradient(colors: [left, left.opacity(0.8)], startPoint: .top, endPoint: .bottom))
+                    .fill(LinearGradient(colors: [main, main.opacity(0.8)], startPoint: .top, endPoint: .bottom))
                 UnevenRoundedRectangle(bottomTrailingRadius: h / 2, topTrailingRadius: h / 2, style: .continuous)
-                    .fill(LinearGradient(colors: [right, right.opacity(0.75)], startPoint: .top, endPoint: .bottom))
+                    .fill(LinearGradient(colors: [second, second.opacity(0.75)], startPoint: .top, endPoint: .bottom))
             }
             .overlay(alignment: .top) {
-                // 高光
                 Capsule().fill(Color.white.opacity(state == .rest ? 0.06 : 0.35))
                     .frame(width: w * 0.62, height: h * 0.16)
                     .padding(.top, h * 0.16)
             }
-            .overlay {
-                Capsule().stroke(Color.white.opacity(state == .rest ? 0.18 : 0.25), lineWidth: 1)
-            }
-            .shadow(color: state == .due ? pillOrange.opacity(0.55) : .clear, radius: 8)
+            .overlay { Capsule().stroke(rim, lineWidth: 1) }
+            .shadow(color: glow, radius: 8)
         }
         .aspectRatio(2.4, contentMode: .fit)
         .rotationEffect(.degrees(-35))
+    }
+
+    // 软胶囊（维生素D 常见的那种）：半透明椭圆，带光泽
+    private var softgel: some View {
+        GeometryReader { g in
+            let w = g.size.width, h = g.size.height
+            Ellipse()
+                .fill(RadialGradient(colors: [second.opacity(state == .rest ? 1 : 0.95), main.opacity(state == .rest ? 1 : 0.85)],
+                                     center: UnitPoint(x: 0.4, y: 0.35), startRadius: 1, endRadius: w * 0.6))
+                .overlay(alignment: .topLeading) {
+                    Ellipse().fill(Color.white.opacity(state == .rest ? 0.08 : 0.5))
+                        .frame(width: w * 0.32, height: h * 0.2)
+                        .rotationEffect(.degrees(-12))
+                        .offset(x: w * 0.18, y: h * 0.16)
+                }
+                .overlay { Ellipse().stroke(rim, lineWidth: 1) }
+                .shadow(color: glow, radius: 8)
+        }
+        .aspectRatio(1.55, contentMode: .fit)
+        .rotationEffect(.degrees(-25))
+    }
+
+    // 圆药片：中间一道刻痕
+    private var round: some View {
+        GeometryReader { g in
+            let w = g.size.width
+            Circle()
+                .fill(LinearGradient(colors: [second, main], startPoint: .topLeading, endPoint: .bottomTrailing))
+                .overlay { Circle().stroke(Color.white.opacity(state == .rest ? 0.12 : 0.35), lineWidth: 1).padding(w * 0.07) }
+                .overlay {
+                    Capsule().fill(Color.black.opacity(state == .rest ? 0.15 : 0.22))
+                        .frame(width: w * 0.62, height: max(1.5, w * 0.035))
+                }
+                .overlay { Circle().stroke(rim, lineWidth: 1) }
+                .shadow(color: glow, radius: 8)
+        }
+        .aspectRatio(1, contentMode: .fit)
+        .rotationEffect(.degrees(-30))
+        .padding(.horizontal, 8)
+    }
+
+    // 椭圆药片：一种颜色，中间刻痕
+    private var oval: some View {
+        GeometryReader { g in
+            let w = g.size.width, h = g.size.height
+            Capsule()
+                .fill(LinearGradient(colors: [second, main], startPoint: .top, endPoint: .bottom))
+                .overlay {
+                    Capsule().fill(Color.black.opacity(state == .rest ? 0.15 : 0.22))
+                        .frame(width: max(1.5, w * 0.025), height: h * 0.62)
+                }
+                .overlay(alignment: .top) {
+                    Capsule().fill(Color.white.opacity(state == .rest ? 0.06 : 0.3))
+                        .frame(width: w * 0.55, height: h * 0.14)
+                        .padding(.top, h * 0.14)
+                }
+                .overlay { Capsule().stroke(rim, lineWidth: 1) }
+                .shadow(color: glow, radius: 8)
+        }
+        .aspectRatio(1.9, contentMode: .fit)
+        .rotationEffect(.degrees(-30))
     }
 }

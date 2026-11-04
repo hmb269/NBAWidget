@@ -262,7 +262,7 @@ struct PillWidgetView: View {
     private func pill(_ st: PillStatus, width: CGFloat) -> some View {
         let phase: PillCapsule.Phase = st.kind == .due ? .due : st.kind == .taken ? .taken : .rest
         let content = ZStack {
-            PillCapsule(state: phase)
+            PillCapsule(state: phase, kind: s.shape)
                 .opacity(armedUndo ? 0.45 : 1)
             if st.kind == .taken || armedUndo {
                 Image(systemName: armedUndo ? "arrow.uturn.backward.circle.fill" : "checkmark.circle.fill")
