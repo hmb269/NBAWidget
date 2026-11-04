@@ -628,6 +628,7 @@ struct SettingsView: View {
             GlucoseMealTimesCard()
             WaterSettingsCard()
             PillSettingsCard()
+            WeComPushCard()
             backupCard
 
             CardSection(footer: iconStatus) {

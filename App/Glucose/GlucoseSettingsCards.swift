@@ -74,8 +74,24 @@ struct GlucoseSyncCard: View {
                     GlucoseLocal.save(list)
                     changed()
                     message = "读到 \(readings.count) 条，新增 \(added) 条。到「血糖」页标好测量人和餐点后，点「写入健康」"
+                    pushGlucose(list: list, read: readings.count, added: added)
                 }
             }
+        }
+    }
+
+    /// 同步完推送企业微信：新增几条 + 最新一次
+    private func pushGlucose(list: [GlucoseRecord], read: Int, added: Int) {
+        let c = PushConfig.current
+        guard c.glucose, c.isReady, added > 0, let r = list.max(by: { $0.date < $1.date }) else { return }
+        let f = DateFormatter(); f.locale = Locale(identifier: "zh_CN"); f.dateFormat = "M月d日 HH:mm"
+        let tag = GlucoseTags.all[r.id] ?? GlucoseTags.auto(r)
+        var t = "🩸 罗氏智航同步：新增 \(added) 条\n最新 " + String(format: "%.1f", r.mmol) + " mmol/L"
+        if let tag { t += " · \(tag)" }
+        t += " · " + f.string(from: r.date)
+        Task {
+            do { try await WeCom.send(t, config: c) }
+            catch { message = (message ?? "") + "\n企业微信推送失败：" + error.localizedDescription }
         }
     }
 

@@ -136,14 +136,17 @@ struct WaterProvider: TimelineProvider {
         completion(WaterEntry(date: Date()))
     }
     func getTimeline(in context: Context, completion: @escaping (Timeline<WaterEntry>) -> Void) {
-        WaterSettings.refreshFromAlbum()
-        let midnight = Calendar.current.startOfDay(for: Date().addingTimeInterval(86400)).addingTimeInterval(5)
-        var entries = [WaterEntry(date: Date())]
-        // 「再点撤销」8 秒后自动恢复成打勾的样子
-        if let a = WaterLog.undoArmedAt, WaterLog.undoArmed() {
-            entries.append(WaterEntry(date: a.addingTimeInterval(WaterLog.undoWindow)))
+        Task {
+            WaterSettings.refreshFromAlbum()
+            await WidgetPush.run()
+            let midnight = Calendar.current.startOfDay(for: Date().addingTimeInterval(86400)).addingTimeInterval(5)
+            var entries = [WaterEntry(date: Date())]
+            // 「再点撤销」8 秒后自动恢复成打勾的样子
+            if let a = WaterLog.undoArmedAt, WaterLog.undoArmed() {
+                entries.append(WaterEntry(date: a.addingTimeInterval(WaterLog.undoWindow)))
+            }
+            completion(Timeline(entries: entries, policy: .after(WidgetPush.refreshDate(midnight))))
         }
-        completion(Timeline(entries: entries, policy: .after(midnight)))
     }
 }
 

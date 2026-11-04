@@ -152,6 +152,7 @@ struct PillProvider: TimelineProvider {
     func getTimeline(in context: Context, completion: @escaping (Timeline<PillEntry>) -> Void) {
         Task {
             PillSettings.refreshFromAlbum()
+            await WidgetPush.run()
             let health = await MedsHealth.takenDates(matching: PillSettings.current.name)
             let now = Date()
             var entries = [PillEntry(date: now, health: health)]
@@ -161,7 +162,7 @@ struct PillProvider: TimelineProvider {
             // 零点换天；平时每 30 分钟看一眼健康里有没有新记录
             let midnight = Calendar.current.startOfDay(for: now.addingTimeInterval(86400)).addingTimeInterval(5)
             let next = min(midnight, now.addingTimeInterval(30 * 60))
-            completion(Timeline(entries: entries, policy: .after(next)))
+            completion(Timeline(entries: entries, policy: .after(WidgetPush.refreshDate(next))))
         }
     }
 }
