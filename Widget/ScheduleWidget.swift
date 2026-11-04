@@ -10,6 +10,7 @@ struct NBAWidgetBundle: WidgetBundle {
         HealthWidget()
         GlucoseWidget()
         WaterWidget()
+        PillWidget()
     }
 }
 

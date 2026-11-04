@@ -532,6 +532,7 @@ struct RefreshHealthIntent: AppIntent {
         GlucosePrefs.clearSelection()
         WeightSelection.clear()
         WaterLog.clearUndo()
+        PillLog.clearArm()
         return .result()
     }
 }
