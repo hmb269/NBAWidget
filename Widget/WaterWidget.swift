@@ -277,10 +277,11 @@ struct WaterWidgetView: View {
         return Button(intent: DrinkWaterIntent(index: i)) {
             VStack(spacing: 4) {
                 let arming = undo && i == count - 1
-                CupView(filled: filled, isNext: i == count && !undo, arming: arming)
+                CupView(filled: filled, isNext: i == count && !undo, arming: arming,
+                        time: filled ? f.string(from: times[i]) : nil, big: showTime)
                     .frame(height: height)
                 if showTime {
-                    Text(arming ? "再点撤销" : filled ? f.string(from: times[i]) : "第\(i + 1)杯")
+                    Text(arming ? "再点撤销" : "第\(i + 1)杯")
                         .font(.system(size: 10, weight: .medium).monospacedDigit())
                         .foregroundStyle(arming ? Color.orange : filled ? Color.primary.opacity(0.8) : Color.secondary.opacity(0.7))
                         .lineLimit(1)
@@ -298,6 +299,8 @@ struct CupView: View {
     let filled: Bool
     let isNext: Bool
     var arming = false   // 等待第二次点击撤销
+    var time: String? = nil  // 喝这杯的时间，写在杯子里
+    var big = false
 
     var body: some View {
         ZStack {
@@ -308,11 +311,20 @@ struct CupView: View {
                     .fill(LinearGradient(colors: [waterCyan.opacity(0.95), waterBlue], startPoint: .top, endPoint: .bottom))
                     .clipShape(CupShape())
                     .opacity(arming ? 0.35 : 1)
-                Image(systemName: arming ? "arrow.uturn.backward" : "checkmark")
-                    .font(.system(size: 13, weight: .heavy))
-                    .foregroundStyle(.white)
-                    .shadow(color: .black.opacity(0.25), radius: 2)
-                    .offset(y: 4)
+                VStack(spacing: big ? 3 : 1) {
+                    Image(systemName: arming ? "arrow.uturn.backward" : "checkmark")
+                        .font(.system(size: big ? 13 : 10, weight: .heavy))
+                    if let time {
+                        Text(time)
+                            .font(.system(size: big ? 13 : 9, weight: .bold, design: .rounded).monospacedDigit())
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.6)
+                    }
+                }
+                .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.3), radius: 2)
+                .padding(.horizontal, 3)
+                .offset(y: big ? 6 : 4)
             } else if isNext {
                 Image(systemName: "plus")
                     .font(.system(size: 12, weight: .bold))
