@@ -379,14 +379,6 @@ struct LotteryGameCard: View {
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard(22)
-        // 今天开奖的卡片描一圈金边
-        .overlay {
-            if today {
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .stroke(gold, lineWidth: 1.5)
-                    .shadow(color: .orange.opacity(0.5), radius: 6)
-            }
-        }
         // 整张卡片都能点、都能长按拖动（不只是有文字的地方）
         .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .contentShape(.dragPreview, RoundedRectangle(cornerRadius: 22, style: .continuous))
@@ -416,7 +408,11 @@ struct LotteryDrawStatus: View {
             let waiting = inWindow && !draw.isToday
             let detailsPending = inWindow && draw.isToday && game.hasPool && (draw.pool == nil || draw.prizes.isEmpty)
             HStack(spacing: 6) {
-                Text("\(draw.date) \(game.timeText) 开奖").font(.caption2).foregroundStyle(.tertiary)
+                if draw.isToday {
+                    Text("今天 \(game.timeText) 开奖").font(.caption2.weight(.semibold)).foregroundStyle(.orange)
+                } else {
+                    Text("\(draw.date) \(game.timeText) 开奖").font(.caption2).foregroundStyle(.tertiary)
+                }
                 Spacer()
                 if waiting {
                     ProgressView().controlSize(.mini)
