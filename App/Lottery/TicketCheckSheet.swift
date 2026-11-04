@@ -7,6 +7,10 @@ struct TicketCheckSheet: View {
     let image: UIImage?
     /// 从收藏点进来：号码已定，只选期号对奖（不显示选号面板）
     var favMode = false
+    /// 拍照进来默认只看结果；号码认错了点「手动修改」才显示选号面板
+    @State private var editing = false
+    @State private var multi = false
+    private var readOnly: Bool { favMode || (image != nil && !editing) }
     @Environment(\.dismiss) private var dismiss
 
     // 选号面板
@@ -47,7 +51,7 @@ struct TicketCheckSheet: View {
                     }
 
                     settingsCard
-                    if favMode {
+                    if readOnly {
                         favBetsCard
                     } else {
                         pickerCard
@@ -92,6 +96,7 @@ struct TicketCheckSheet: View {
                 ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() } }
             }
             .onAppear {
+                if image != nil && scan.bets.isEmpty { editing = true }
                 if image != nil, !scan.issue.isEmpty, !scan.bets.isEmpty { Task { await check() } }
                 else if image != nil {
                     message = scan.bets.isEmpty ? "没认出号码，拍正一点、光线亮一点再试，或者在下面点选号码。" : "没认出期号，填一下再点对奖。"
@@ -104,10 +109,16 @@ struct TicketCheckSheet: View {
                     Task { await loadIssues() }
                 }
             }
-            .task { await loadIssues() }
+            .task {
+                multi = !scan.issueTo.isEmpty
+                await loadIssues()
+            }
             .onChange(of: scan.issue) { _, _ in
                 // 收藏对奖：滚轮一停就自动对
-                if favMode && !issueList.isEmpty { Task { await check() } }
+                if readOnly && !issueList.isEmpty { Task { await check() } }
+            }
+            .onChange(of: scan.issueTo) { _, _ in
+                if readOnly && multi && !issueList.isEmpty { Task { await check() } }
             }
         }
     }
@@ -116,11 +127,11 @@ struct TicketCheckSheet: View {
 
     private var settingsCard: some View {
         CardSection {
-            if favMode {
+            if readOnly {
                 HStack {
                     Text(g.name).font(.headline)
                     Spacer()
-                    Text("选期号就自动对奖").font(.caption).foregroundStyle(.secondary)
+                    Text(favMode ? "选期号就自动对奖" : "拍照识别 · 选期号自动对奖").font(.caption).foregroundStyle(.secondary)
                 }
                 .padding(.vertical, 10)
             } else {
@@ -131,56 +142,51 @@ struct TicketCheckSheet: View {
                 .padding(.vertical, 10)
             }
             RowDivider()
-            // 期号：滚轮选（默认最近开奖的一期），多期票再填结束期号
-            HStack(alignment: .center, spacing: 8) {
+            // 期号：滚轮选（默认最近开奖的一期）；多期票打开开关，选开始期和结束期
+            Toggle(isOn: $multi.animation()) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("期号")
-                    if let d = issueList.first(where: { $0.issue == scan.issue }) {
-                        Text(d.date).font(.caption2).foregroundStyle(.secondary)
-                    } else if !scan.issue.isEmpty {
-                        Text("未开奖或较早").font(.caption2).foregroundStyle(.orange)
-                    }
+                    Text("多期票")
+                    Text(multi ? "选开始期和结束期" : "只对一期").font(.caption2).foregroundStyle(.secondary)
                 }
-                Spacer()
-                if issueOptions.isEmpty {
-                    TextField([.ssq, .kl8].contains(g) ? "2026120" : "26120", text: $scan.issue)
-                        .keyboardType(.numberPad)
-                        .multilineTextAlignment(.center)
-                        .font(.body.monospacedDigit())
-                        .frame(width: 120)
-                        .padding(.vertical, 6)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.06)))
+            }
+            .padding(.vertical, 6)
+            .onChange(of: multi) { _, on in
+                if on {
+                    if scan.issueTo.isEmpty { scan.issueTo = scan.issue }
                 } else {
-                    Picker("期号", selection: $scan.issue) {
-                        ForEach(issueOptions, id: \.self) { i in
-                            Text("第\(i)期").font(.body.monospacedDigit()).tag(i)
-                        }
-                    }
-                    .pickerStyle(.wheel)
-                    .frame(width: 170, height: 96)
-                    .clipped()
+                    scan.issueTo = ""
                 }
             }
-            .padding(.vertical, 4)
             RowDivider()
-            HStack(spacing: 8) {
-                Text("多期票")
-                Spacer()
-                Text("到第").foregroundStyle(.secondary)
-                TextField("结束期号", text: $scan.issueTo)
-                    .keyboardType(.numberPad)
-                    .multilineTextAlignment(.center)
-                    .font(.body.monospacedDigit())
-                    .frame(width: 110)
-                    .padding(.vertical, 6)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.06)))
-                Text("期").foregroundStyle(.secondary)
-                if !scan.issueTo.isEmpty {
-                    Button { scan.issueTo = "" } label: { Image(systemName: "xmark.circle.fill") }
-                        .buttonStyle(.plain).foregroundStyle(.secondary)
+            if issueOptions.isEmpty {
+                HStack(spacing: 8) {
+                    Text(multi ? "从" : "期号")
+                    Spacer()
+                    issueField($scan.issue)
+                    if multi {
+                        Text("到").foregroundStyle(.secondary)
+                        issueField($scan.issueTo)
+                    }
                 }
+                .padding(.vertical, 8)
+            } else if multi {
+                HStack(spacing: 4) {
+                    issueWheel("开始期", $scan.issue)
+                    Text("到").foregroundStyle(.secondary)
+                    issueWheel("结束期", $scan.issueTo)
+                }
+                .padding(.vertical, 4)
+            } else {
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("期号")
+                        Text(dateOf(scan.issue)).font(.caption2).foregroundStyle(issueList.contains { $0.issue == scan.issue } ? Color.secondary : Color.orange)
+                    }
+                    Spacer()
+                    issueWheel(nil, $scan.issue).frame(width: 180)
+                }
+                .padding(.vertical, 4)
             }
-            .padding(.vertical, 8)
             RowDivider()
             Stepper("倍数 \(scan.multiple)", value: $scan.multiple, in: 1...99).padding(.vertical, 6)
             if g == .dlt {
@@ -190,11 +196,49 @@ struct TicketCheckSheet: View {
         }
     }
 
-    /// 滚轮里的期号：最近开奖的 100 期（新的在上），拍照认出的期号不在里面就加进去
+    /// 滚轮里的期号：接下来没开的 5 期 + 最近开奖的 100 期（新的在上），拍照认出的期号不在里面就加进去
     private var issueOptions: [String] {
         var list = issueList.map(\.issue)
-        if !scan.issue.isEmpty, !list.contains(scan.issue) { list.insert(scan.issue, at: 0) }
+        if let latest = list.first, let n = Int(latest) {
+            let future = (1...5).reversed().map { String(n + $0) }
+            list = future + list
+        }
+        for i in [scan.issue, scan.issueTo] where !i.isEmpty && !list.contains(i) { list.insert(i, at: 0) }
         return list
+    }
+
+    private func dateOf(_ issue: String) -> String {
+        if let d = issueList.first(where: { $0.issue == issue }) { return d.date }
+        return issue.isEmpty ? "" : "还没开奖"
+    }
+
+    private func issueWheel(_ title: String?, _ sel: Binding<String>) -> some View {
+        VStack(spacing: 0) {
+            if let title { Text(title).font(.caption2).foregroundStyle(.secondary) }
+            Picker(title ?? "期号", selection: sel) {
+                ForEach(issueOptions, id: \.self) { i in
+                    let open = issueList.contains { $0.issue == i }
+                    Text(open ? i : i + " 未开").font(.callout.monospacedDigit()).tag(i)
+                }
+            }
+            .pickerStyle(.wheel)
+            .frame(height: 100)
+            .clipped()
+            if title != nil {
+                Text(dateOf(sel.wrappedValue)).font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func issueField(_ b: Binding<String>) -> some View {
+        TextField([.ssq, .kl8].contains(g) ? "2026120" : "26120", text: b)
+            .keyboardType(.numberPad)
+            .multilineTextAlignment(.center)
+            .font(.body.monospacedDigit())
+            .frame(width: 100)
+            .padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.06)))
     }
 
     private func loadIssues() async {
@@ -204,7 +248,7 @@ struct TicketCheckSheet: View {
         guard game == g else { return }
         issueList = list.sorted { (LotteryAPI.issueNumber($0.issue) ?? 0) > (LotteryAPI.issueNumber($1.issue) ?? 0) }
         if scan.issue.isEmpty, let latest = issueList.first { scan.issue = latest.issue }
-        if favMode { await check() }
+        if readOnly && !scan.bets.isEmpty { await check() }
         favs = LotteryFavorites.load(game)
     }
 
@@ -212,12 +256,32 @@ struct TicketCheckSheet: View {
 
     private var favBetsCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("要对的号码（\(scan.bets.count) 注）", systemImage: "star.fill")
-                .font(.subheadline.weight(.semibold)).foregroundStyle(.yellow)
-            ForEach(scan.bets) { b in
-                ScrollView(.horizontal, showsIndicators: false) {
-                    LotteryBalls(game: g, front: b.frontStrings(g), back: b.backStrings(g), size: 26)
+            HStack {
+                Label(favMode ? "要对的号码（\(scan.bets.count) 注）" : "识别出的号码（\(scan.bets.count) 注）",
+                      systemImage: favMode ? "star.fill" : "text.viewfinder")
+                    .font(.subheadline.weight(.semibold)).foregroundStyle(favMode ? Color.yellow : Color.primary)
+                Spacer()
+                if !favMode {
+                    Button("号码不对？手动改") { withAnimation { editing = true } }
+                        .font(.caption.weight(.semibold))
                 }
+            }
+            if scan.bets.isEmpty {
+                Text("没认出号码").font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach(scan.bets) { b in
+                HStack(spacing: 8) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        LotteryBalls(game: g, front: b.frontStrings(g), back: b.backStrings(g), size: 26)
+                    }
+                    if !favMode {
+                        Button { toggleFav(b) } label: { Image(systemName: isFav(b) ? "star.fill" : "star").font(.title3) }
+                            .buttonStyle(.plain).foregroundStyle(isFav(b) ? Color.yellow : Color.secondary)
+                    }
+                }
+            }
+            if !favMode && !scan.bets.isEmpty {
+                Text("点 ☆ 收藏这注号码，以后在「收藏」里直接对奖").font(.caption2).foregroundStyle(.tertiary)
             }
         }
         .padding(16)
