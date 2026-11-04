@@ -313,6 +313,14 @@ struct LotteryGameCard: View {
                             .foregroundStyle(.black)
                             .padding(.horizontal, 8).padding(.vertical, 3)
                             .background(Capsule().fill(gold))
+                    } else if game.isDrawDay(Date()) {
+                        // 今天要开、但号码还没出来：橙色空心标签「今晚开奖」
+                        Label(Date() < game.drawDate(on: Date()) ? "今晚 \(game.timeText) 开奖" : "今晚已开 · 等公布",
+                              systemImage: "clock")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.orange)
+                            .padding(.horizontal, 8).padding(.vertical, 3)
+                            .background(Capsule().stroke(Color.orange.opacity(0.8), lineWidth: 1.2))
                     } else {
                         Text("上期 · " + shortDate(d.date))
                             .font(.caption.weight(.semibold))
@@ -329,7 +337,12 @@ struct LotteryGameCard: View {
             }
 
             if let d = draw {
+                if !today && game.isDrawDay(Date()) {
+                    // 下面这组是上一期的号码，写清楚
+                    Text("下面是上期号码（\(shortDate(d.date))）").font(.caption2).foregroundStyle(.secondary)
+                }
                 LotteryBalls(game: game, front: d.front, back: d.back, size: game == .kl8 ? 26 : 32)
+                    .opacity(!today && game.isDrawDay(Date()) ? 0.55 : 1)
 
                 // 奖池、奖级：这期还没公布就先显示上一期的，标「上期」
                 let info = pending(d) ? (prev ?? d) : d
