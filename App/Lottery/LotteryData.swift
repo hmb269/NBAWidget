@@ -57,7 +57,9 @@ enum LotteryGame: String, CaseIterable, Identifiable, Codable {
     var hasPool: Bool { ![.d3, .pl3].contains(self) }
 
     /// 支持拍照自动对奖的
-    var checkable: Bool { self == .ssq || self == .dlt }
+    var checkable: Bool { [.ssq, .dlt, .kl8, .qxc].contains(self) }
+    static var checkableGames: [LotteryGame] { [.ssq, .dlt, .kl8, .qxc] }
+    var shortName: String { self == .dlt ? "大乐透" : name }
 
     var frontColor: Color {
         switch self {
@@ -87,6 +89,7 @@ struct LotteryDraw: Codable, Identifiable, Hashable {
     var pool: Double?      // 奖池（元）
     var sales: Double?
     var prizes: [LotteryPrize]
+    var winners: String? = nil   // 一等奖中奖地（福彩公告里有）
     var id: String { issue }
 
     func prize(_ name: String) -> LotteryPrize? {
@@ -182,9 +185,20 @@ enum LotteryAPI {
                 back: LotteryFormat.string(r["blue"]).split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty },
                 pool: LotteryFormat.number(r["poolmoney"]),
                 sales: LotteryFormat.number(r["sales"]),
-                prizes: prizes
+                prizes: prizes,
+                winners: cleanWinners(LotteryFormat.string(r["content"]))
             )
         }
+    }
+
+    /// 「北京1注,河北2注,共3注。」→「北京 1 注、河北 2 注」
+    private static func cleanWinners(_ s: String) -> String? {
+        var t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return nil }
+        if let r = t.range(of: "共") { t = String(t[..<r.lowerBound]) }
+        t = t.replacingOccurrences(of: "，", with: ",").replacingOccurrences(of: "。", with: "")
+        let parts = t.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        return parts.isEmpty ? s : parts.joined(separator: "、")
     }
 
     private static func welfarePrizeName(_ g: LotteryGame, type: Int) -> String {

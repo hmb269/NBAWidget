@@ -1,5 +1,6 @@
 import SwiftUI
 import PhotosUI
+import UniformTypeIdentifiers
 
 // MARK: - 彩票页
 
@@ -15,10 +16,24 @@ struct LotteryView: View {
     @State private var scan: TicketScan?
     @State private var scanImage: UIImage?
 
-    private var games: [LotteryGame] { welfare ? LotteryGame.welfare : LotteryGame.sports }
+    @State private var order: [String] = UserDefaults.standard.stringArray(forKey: "lotteryOrder") ?? LotteryGame.allCases.map(\.rawValue)
+    @State private var dragging: LotteryGame?
+
+    /// 按自己排的顺序（长按拖动调整）
+    private var games: [LotteryGame] {
+        let base = welfare ? LotteryGame.welfare : LotteryGame.sports
+        return base.sorted { (order.firstIndex(of: $0.rawValue) ?? 99) < (order.firstIndex(of: $1.rawValue) ?? 99) }
+    }
+
+    private var todayText: String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "M月d日 EEEE"
+        return f.string(from: Date())
+    }
 
     var body: some View {
-        PageScroll(title: "彩票", subtitle: "福彩 · 体彩 开奖、奖池和拍照对奖") {
+        PageScroll(title: "彩票", subtitle: todayText) {
             checkCard
 
             Picker("", selection: $welfare) {
@@ -34,7 +49,18 @@ struct LotteryView: View {
                     LotteryGameCard(game: g, draw: data[g]?.first, error: errors[g])
                 }
                 .buttonStyle(.plain)
+                // 长按拖动排序
+                .onDrag {
+                    dragging = g
+                    return NSItemProvider(object: g.rawValue as NSString)
+                }
+                .onDrop(of: [.text], delegate: LotteryReorder(target: g, order: $order, dragging: $dragging))
             }
+
+            Text("长按卡片可以拖动调整顺序")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .frame(maxWidth: .infinity)
 
             Text("数据来自中国福利彩票、中国体育彩票官网，仅供参考，兑奖以彩票站和官方公告为准。")
                 .font(.caption2)
@@ -75,7 +101,7 @@ struct LotteryView: View {
                 .frame(width: 48, height: 48)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("拍照对奖").font(.title3.weight(.bold))
-                    Text(scanning ? "正在识别彩票…" : "拍一下彩票，自动识别期号和号码（双色球、大乐透）")
+                    Text(scanning ? "正在识别彩票…" : "拍一下彩票，自动识别期号和号码（双色球、大乐透、快乐8、七星彩）")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
@@ -135,6 +161,30 @@ struct LotteryView: View {
     }
 }
 
+// MARK: - 拖动排序
+
+struct LotteryReorder: DropDelegate {
+    let target: LotteryGame
+    @Binding var order: [String]
+    @Binding var dragging: LotteryGame?
+
+    func dropEntered(info: DropInfo) {
+        guard let d = dragging, d != target,
+              let from = order.firstIndex(of: d.rawValue), let to = order.firstIndex(of: target.rawValue) else { return }
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+            order.move(fromOffsets: IndexSet(integer: from), toOffset: to > from ? to + 1 : to)
+        }
+        UserDefaults.standard.set(order, forKey: "lotteryOrder")
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+
+    func performDrop(info: DropInfo) -> Bool {
+        dragging = nil
+        return true
+    }
+}
+
 // MARK: - 号码球
 
 struct LotteryBalls: View {
@@ -142,24 +192,26 @@ struct LotteryBalls: View {
     let front: [String]
     let back: [String]
     var size: CGFloat = 30
-    var hitFront: Set<Int>? = nil
+    var hitFront: Set<Int>? = nil   // 中了的位置（下标）；nil = 不标中没中
     var hitBack: Set<Int>? = nil
 
     var body: some View {
-        let digits = [.d3, .pl3, .pl5].contains(game) || (game == .qxc)
-        if game == .kl8 {
+        let square = [.d3, .pl3, .pl5, .qxc].contains(game)
+        if game == .kl8 && front.count > 10 {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 10), spacing: 5) {
-                ForEach(Array(front.enumerated()), id: \.offset) { _, n in ball(n, color: game.frontColor, s: size * 0.82, hit: nil) }
+                ForEach(Array(front.enumerated()), id: \.offset) { i, n in
+                    ball(n, color: game.frontColor, s: size * 0.82, hit: hitFront.map { $0.contains(i) })
+                }
             }
         } else {
             HStack(spacing: 5) {
-                ForEach(Array(front.enumerated()), id: \.offset) { _, n in
-                    ball(n, color: game.frontColor, s: size, hit: hitFront.map { $0.contains(Int(n) ?? -1) }, square: digits)
+                ForEach(Array(front.enumerated()), id: \.offset) { i, n in
+                    ball(n, color: game.frontColor, s: size, hit: hitFront.map { $0.contains(i) }, square: square)
                 }
                 if !back.isEmpty {
                     Spacer().frame(width: 2)
-                    ForEach(Array(back.enumerated()), id: \.offset) { _, n in
-                        ball(n, color: game.backColor, s: size, hit: hitBack.map { $0.contains(Int(n) ?? -1) }, square: digits)
+                    ForEach(Array(back.enumerated()), id: \.offset) { i, n in
+                        ball(n, color: game.backColor, s: size, hit: hitBack.map { $0.contains(i) }, square: square)
                     }
                 }
             }
@@ -183,7 +235,11 @@ struct LotteryBalls: View {
             }
             .overlay {
                 if hit == false {
-                    Circle().stroke(color.opacity(0.5), lineWidth: 1)
+                    if square {
+                        RoundedRectangle(cornerRadius: s * 0.25, style: .continuous).stroke(color.opacity(0.5), lineWidth: 1)
+                    } else {
+                        Circle().stroke(color.opacity(0.5), lineWidth: 1)
+                    }
                 }
             }
     }
@@ -277,6 +333,17 @@ struct LotteryHistoryView: View {
                     }
                     if open == d.issue, !d.prizes.isEmpty {
                         VStack(spacing: 6) {
+                            if let w = d.winners {
+                                HStack(alignment: .top, spacing: 6) {
+                                    Image(systemName: "mappin.and.ellipse").font(.caption).foregroundStyle(.orange)
+                                    Text("一等奖中奖地：" + w).font(.caption).foregroundStyle(.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                .padding(.bottom, 4)
+                            } else if !game.isWelfare {
+                                Text("体彩官网的开奖接口不提供中奖地").font(.caption2).foregroundStyle(.tertiary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
                             ForEach(d.prizes, id: \.self) { p in
                                 HStack {
                                     Text(p.name).font(.caption)
@@ -335,17 +402,16 @@ struct TicketCheckSheet: View {
                             .frame(maxWidth: .infinity)
                     }
 
-                    CardSection(footer: image == nil ? "每行一注，前区和后区用 + 隔开，复式直接多写几个号码。" : "识别不一定准，核对一下，有错直接改。每行一注，前区和后区用 + 隔开。") {
+                    CardSection(footer: (image == nil ? "" : "识别不一定准，核对一下，有错直接改。") + formatHint) {
                         Picker("玩法", selection: $scan.game) {
-                            Text("双色球").tag(LotteryGame.ssq)
-                            Text("大乐透").tag(LotteryGame.dlt)
+                            ForEach(LotteryGame.checkableGames) { Text($0.shortName).tag($0) }
                         }
                         .pickerStyle(.segmented)
                         .padding(.vertical, 10)
                         RowDivider()
                         HStack {
                             Text("期号")
-                            TextField(scan.game == .ssq ? "如 2026128" : "如 26128", text: $scan.issue)
+                            TextField([.ssq, .kl8].contains(scan.game) ? "如 2026128" : "如 26128", text: $scan.issue)
                                 .keyboardType(.numberPad)
                                 .multilineTextAlignment(.trailing)
                                 .font(.body.monospacedDigit())
@@ -403,7 +469,7 @@ struct TicketCheckSheet: View {
                 ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() } }
             }
             .onAppear {
-                betsText = scan.bets.map(\.text).joined(separator: "\n")
+                betsText = scan.bets.map { $0.text(scan.game) }.joined(separator: "\n")
                 if image != nil, !scan.issue.isEmpty, !scan.bets.isEmpty { Task { await check() } }
                 else if image != nil { message = scan.bets.isEmpty ? "没认出号码，拍正一点、光线亮一点再试，或者直接手动输入。" : "没认出期号，填一下再点对奖。" }
             }
@@ -451,14 +517,14 @@ struct TicketCheckSheet: View {
             ForEach(Array(results.enumerated()), id: \.element.id) { i, r in
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Text("第\(i + 1)注" + (r.combos > 1 ? "（复式 \(r.combos) 注）" : "")).font(.caption.weight(.semibold))
+                        Text("第\(i + 1)注" + (scan.game == .kl8 ? "（选\(r.bet.front.count)）" : "") + (r.combos > 1 ? "（复式 \(r.combos) 注）" : "")).font(.caption.weight(.semibold))
                         Spacer()
-                        Text("前区中 \(r.frontHit.count) · 后区中 \(r.backHit.count)").font(.caption).foregroundStyle(.secondary)
+                        Text(hitSummary(r)).font(.caption).foregroundStyle(.secondary)
                     }
                     LotteryBalls(game: scan.game,
-                                 front: r.bet.front.map { String(format: "%02d", $0) },
-                                 back: r.bet.back.map { String(format: "%02d", $0) },
-                                 size: 28, hitFront: r.frontHit, hitBack: r.backHit)
+                                 front: r.bet.frontStrings(scan.game),
+                                 back: r.bet.backStrings(scan.game),
+                                 size: scan.game == .kl8 ? 26 : 28, hitFront: r.frontHitIdx, hitBack: r.backHitIdx)
                     if r.hits.isEmpty {
                         Text("未中奖").font(.caption).foregroundStyle(.secondary)
                     } else {
@@ -466,7 +532,7 @@ struct TicketCheckSheet: View {
                             HStack {
                                 Text("\(h.name) × \(h.count)").font(.caption.weight(.semibold)).foregroundStyle(.orange)
                                 Spacer()
-                                Text(h.total.map { LotteryFormat.yuan(String(format: "%.0f", $0)) } ?? "浮动奖金")
+                                Text(h.total.map { LotteryFormat.yuan(String(format: $0 < 100 && $0 != $0.rounded() ? "%.1f" : "%.0f", $0)) } ?? (scan.game == .kl8 ? "浮动（最高500万）" : "浮动奖金"))
                                     .font(.caption.monospacedDigit())
                             }
                         }
@@ -477,18 +543,32 @@ struct TicketCheckSheet: View {
         }
     }
 
+    private var formatHint: String {
+        switch scan.game {
+        case .ssq: return "每行一注：6 个以上红球 + 1 个以上蓝球，如「01 05 12 18 22 30 + 07」，复式多写几个号码。"
+        case .dlt: return "每行一注：5 个以上前区 + 2 个以上后区，如「05 12 18 25 33 + 03 11」，复式多写几个号码。"
+        case .kl8: return "每行一注：选几就写几个号码（1~80），如选五「03 18 27 44 69」。"
+        case .qxc: return "每行一注：前区 6 位数字 + 后区 1 个号码（0~14），如「3 7 0 5 9 1 + 12」。"
+        default: return ""
+        }
+    }
+
+    private func hitSummary(_ r: BetResult) -> String {
+        switch scan.game {
+        case .kl8: return "中 \(r.frontHits) 个"
+        case .qxc: return "前区对上 \(r.frontHits) 位 · 后区\(r.backHits > 0 ? "中" : "没中")"
+        default: return "前区中 \(r.frontHits) · 后区中 \(r.backHits)"
+        }
+    }
+
     private func check() async {
         message = nil
         draw = nil
         results = []
         let bets = betsText.split(whereSeparator: \.isNewline).compactMap { LotteryBet.parse(String($0), game: scan.game) }
         let issue = scan.issue.trimmingCharacters(in: .whitespaces)
-        guard issue.count >= 5 else { message = "请填期号（双色球 7 位，如 2026128；大乐透 5 位，如 26128）"; return }
-        guard !bets.isEmpty else {
-            message = scan.game == .ssq ? "号码格式不对：双色球每行 6 个以上红球 + 1 个以上蓝球，如「01 05 12 18 22 30 + 07」"
-                                        : "号码格式不对：大乐透每行 5 个以上前区 + 2 个以上后区，如「05 12 18 25 33 + 03 11」"
-            return
-        }
+        guard issue.count >= 5 else { message = "请填期号（双色球、快乐8 是 7 位，如 2026128；大乐透、七星彩 5 位，如 26128）"; return }
+        guard !bets.isEmpty else { message = "号码格式不对。" + formatHint; return }
         checking = true
         defer { checking = false }
         do {
