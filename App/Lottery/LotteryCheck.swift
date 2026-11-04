@@ -178,7 +178,7 @@ enum TicketReader {
         t.rawText = all
         if all.contains("大乐透") || all.contains("超级") { t.game = .dlt }
         else if all.contains("快乐8") || all.contains("快乐") || all.contains("KL8") { t.game = .kl8 }
-        else if all.contains("七星彩") || all.contains("七星") { t.game = .qxc }
+        else if all.contains("七星") || all.contains("7星") || all.lowercased().contains("seven star") { t.game = .qxc }
         else if all.contains("双色球") { t.game = .ssq }
         t.added = t.game == .dlt && all.contains("追加")
 

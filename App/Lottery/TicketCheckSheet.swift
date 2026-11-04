@@ -44,10 +44,7 @@ struct TicketCheckSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     if let image {
-                        Image(uiImage: image).resizable().scaledToFit()
-                            .frame(maxHeight: 160)
-                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                            .frame(maxWidth: .infinity)
+                        ticketPhoto(image)
                     }
 
                     settingsCard
@@ -119,6 +116,46 @@ struct TicketCheckSheet: View {
             }
             .onChange(of: scan.issueTo) { _, _ in
                 if readOnly && multi && !issueList.isEmpty { Task { await check() } }
+            }
+        }
+    }
+
+    // MARK: 彩票照片 + 中奖印章
+
+    private var wonPeriods: [PeriodResult] { periods.filter { !$0.hits.isEmpty } }
+
+    private func ticketPhoto(_ image: UIImage) -> some View {
+        let won = !wonPeriods.isEmpty
+        let money = periods.map(\.money).reduce(0, +)
+        let floating = periods.contains(where: \.floating)
+        return VStack(spacing: 10) {
+            ZStack {
+                Image(uiImage: image).resizable().scaledToFit()
+                    .frame(maxHeight: 220)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                if !periods.isEmpty {
+                    TicketStamp(won: won)
+                        .transition(.scale(scale: 2.2).combined(with: .opacity))
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .animation(.spring(response: 0.35, dampingFraction: 0.55), value: periods.isEmpty)
+
+            if won {
+                VStack(spacing: 4) {
+                    Text(money > 0 ? "奖金约 " + LotteryFormat.yuan(String(format: "%.0f", money)) + (floating ? " + 浮动奖" : "") : "浮动奖金，以公告为准")
+                        .font(.title3.weight(.bold).monospacedDigit())
+                        .foregroundStyle(.orange)
+                    if wonPeriods.count > 1 || periods.count > 1 {
+                        Text("\(periods.count) 期里中了 \(wonPeriods.count) 期").font(.caption).foregroundStyle(.secondary)
+                    }
+                    if let first = wonPeriods.first, let c = Self.claimText(first.draw) {
+                        Label((wonPeriods.count > 1 ? "最早一期" : "") + c.0, systemImage: "calendar.badge.clock")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(c.1 ? Color.red : Color.green)
+                    }
+                }
+                .frame(maxWidth: .infinity)
             }
         }
     }
@@ -829,4 +866,27 @@ enum LotteryFavorites {
 
 extension Notification.Name {
     static let lotteryFavsChanged = Notification.Name("lotteryFavsChanged")
+}
+
+/// 盖在彩票照片上的印章：中奖啦（红） / 未中奖（灰）
+struct TicketStamp: View {
+    let won: Bool
+    var body: some View {
+        let c = won ? Color(red: 0.92, green: 0.15, blue: 0.18) : Color.gray
+        ZStack {
+            Circle().stroke(c, lineWidth: 4)
+            Circle().stroke(c, lineWidth: 1.5).padding(7)
+            VStack(spacing: 2) {
+                Text(won ? "★ ★ ★" : "—").font(.system(size: 10, weight: .bold))
+                Text(won ? "中奖啦" : "未中奖").font(.system(size: 26, weight: .heavy))
+                Text(won ? "WINNER" : "NO PRIZE").font(.system(size: 9, weight: .bold)).tracking(2)
+            }
+            .foregroundStyle(c)
+        }
+        .frame(width: 124, height: 124)
+        .background(Circle().fill(Color.white.opacity(won ? 0.12 : 0.05)))
+        .rotationEffect(.degrees(-18))
+        .opacity(0.9)
+        .shadow(color: c.opacity(0.4), radius: 6)
+    }
 }
