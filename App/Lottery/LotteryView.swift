@@ -58,7 +58,7 @@ struct LotteryView: View {
                 NavigationLink {
                     LotteryHistoryView(game: g, draws: data[g] ?? [])
                 } label: {
-                    LotteryGameCard(game: g, draw: data[g]?.first, error: errors[g])
+                    LotteryGameCard(game: g, draw: data[g]?.first, prev: (data[g]?.count ?? 0) > 1 ? data[g]?[1] : nil, error: errors[g])
                 }
                 .buttonStyle(.plain)
                 // 长按拖动排序
@@ -180,7 +180,7 @@ struct LotteryView: View {
         guard now >= t, now < t.addingTimeInterval(3 * 3600) else { return false }
         guard let d = data[g]?.first, d.isToday else { return true }
         // 号码出来了但奖池、奖级还没公布：继续等
-        return g.hasPool && ((d.pool ?? 0) <= 0 || d.prizes.isEmpty)
+        return g.hasPool && (d.pool == nil || d.prizes.isEmpty)
     }
 
     private func load(_ only: [LotteryGame] = LotteryGame.allCases) async {
@@ -291,15 +291,39 @@ struct LotteryBalls: View {
 struct LotteryGameCard: View {
     let game: LotteryGame
     let draw: LotteryDraw?
+    var prev: LotteryDraw? = nil
     let error: String?
 
+    private let gold = LinearGradient(colors: [Color(red: 1, green: 0.85, blue: 0.4), Color(red: 1, green: 0.6, blue: 0.25)],
+                                      startPoint: .top, endPoint: .bottom)
+
+    /// 号码出来了，但奖池、奖级还没公布
+    private func pending(_ d: LotteryDraw) -> Bool { game.hasPool && (d.pool == nil || d.prizes.isEmpty) }
+
     var body: some View {
+        let today = draw?.isToday ?? false
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
+            HStack(alignment: .center, spacing: 8) {
                 Text(game.name).font(.headline)
+                if let d = draw {
+                    if today {
+                        // 今天开的：橙色实心标签，一眼就能看出来
+                        Label("今日开奖", systemImage: "sparkles")
+                            .font(.caption.weight(.heavy))
+                            .foregroundStyle(.black)
+                            .padding(.horizontal, 8).padding(.vertical, 3)
+                            .background(Capsule().fill(gold))
+                    } else {
+                        Text("上期 · " + shortDate(d.date))
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 8).padding(.vertical, 3)
+                            .background(Capsule().fill(Color.white.opacity(0.08)))
+                    }
+                }
                 Spacer()
                 if let d = draw {
-                    Text("第\(d.issue)期").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    Text("第\(d.issue)期").font(.caption.monospacedDigit()).foregroundStyle(today ? Color.orange : Color.secondary)
                 }
                 Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
             }
@@ -307,21 +331,25 @@ struct LotteryGameCard: View {
             if let d = draw {
                 LotteryBalls(game: game, front: d.front, back: d.back, size: game == .kl8 ? 26 : 32)
 
+                // 奖池、奖级：这期还没公布就先显示上一期的，标「上期」
+                let info = pending(d) ? (prev ?? d) : d
+                let fromPrev = pending(d) && prev != nil
                 HStack(alignment: .bottom) {
                     if game.hasPool {
                         VStack(alignment: .leading, spacing: 1) {
-                            Text("奖池").font(.caption2).foregroundStyle(.secondary)
-                            Text(d.pool.map { $0 > 0 } == true ? LotteryFormat.money(d.pool) : (d.isToday ? "开奖后公布" : "未公布"))
-                                .font(.system(size: d.pool.map { $0 > 0 } == true ? 22 : 15, weight: .bold, design: .rounded).monospacedDigit())
-                                .foregroundStyle(LinearGradient(colors: [Color(red: 1, green: 0.85, blue: 0.4), Color(red: 1, green: 0.6, blue: 0.25)],
-                                                                startPoint: .top, endPoint: .bottom))
+                            Text(fromPrev ? "奖池（上期，本期公布中）" : "奖池").font(.caption2).foregroundStyle(.secondary)
+                            Text(info.pool != nil ? LotteryFormat.money(info.pool) : "公布中")
+                                .font(.system(size: info.pool != nil ? 22 : 15, weight: .bold, design: .rounded).monospacedDigit())
+                                .foregroundStyle(gold)
+                                .opacity(fromPrev ? 0.6 : 1)
                         }
                     }
                     Spacer()
-                    if let p = d.prizes.first, game != .kl8 {
+                    if let p = info.prizes.first, game != .kl8 {
                         VStack(alignment: .trailing, spacing: 1) {
-                            Text("\(p.name) \(p.count.isEmpty ? "—" : p.count) 注").font(.caption2).foregroundStyle(.secondary)
+                            Text((fromPrev ? "上期" : "") + "\(p.name) \(p.count.isEmpty ? "—" : p.count) 注").font(.caption2).foregroundStyle(.secondary)
                             Text(LotteryFormat.yuan(p.amount)).font(.subheadline.weight(.semibold).monospacedDigit())
+                                .opacity(fromPrev ? 0.6 : 1)
                         }
                     }
                 }
@@ -338,9 +366,26 @@ struct LotteryGameCard: View {
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard(22)
+        // 今天开奖的卡片描一圈金边
+        .overlay {
+            if today {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .stroke(gold, lineWidth: 1.5)
+                    .shadow(color: .orange.opacity(0.5), radius: 6)
+            }
+        }
         // 整张卡片都能点、都能长按拖动（不只是有文字的地方）
         .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .contentShape(.dragPreview, RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+
+    /// 「2026-11-03(二)」→「11月3日 周二」
+    private func shortDate(_ s: String) -> String {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
+        guard let d = f.date(from: String(s.prefix(10))) else { return s }
+        if Calendar.current.isDateInYesterday(d) { return "昨天" }
+        let o = DateFormatter(); o.locale = Locale(identifier: "zh_CN"); o.dateFormat = "M月d日 EEE"
+        return o.string(from: d)
     }
 }
 
@@ -356,7 +401,7 @@ struct LotteryDrawStatus: View {
             let todayDraw = game.drawDate(on: now)
             let inWindow = game.isDrawDay(now) && now >= todayDraw && now < todayDraw.addingTimeInterval(3 * 3600)
             let waiting = inWindow && !draw.isToday
-            let detailsPending = inWindow && draw.isToday && game.hasPool && ((draw.pool ?? 0) <= 0 || draw.prizes.isEmpty)
+            let detailsPending = inWindow && draw.isToday && game.hasPool && (draw.pool == nil || draw.prizes.isEmpty)
             HStack(spacing: 6) {
                 Text("\(draw.date) \(game.timeText) 开奖").font(.caption2).foregroundStyle(.tertiary)
                 Spacer()
@@ -409,7 +454,7 @@ struct LotteryHistoryView: View {
                     LotteryBalls(game: game, front: d.front, back: d.back, size: game == .kl8 ? 24 : 28)
                     if game.hasPool {
                         HStack {
-                            Text("奖池 " + ((d.pool ?? 0) > 0 ? LotteryFormat.money(d.pool) : "未公布")).font(.caption.weight(.semibold)).foregroundStyle(.orange)
+                            Text("奖池 " + (d.pool != nil ? LotteryFormat.money(d.pool) : "未公布")).font(.caption.weight(.semibold)).foregroundStyle(.orange)
                             Spacer()
                             if let s = d.sales { Text("销量 " + LotteryFormat.money(s)).font(.caption).foregroundStyle(.secondary) }
                         }
