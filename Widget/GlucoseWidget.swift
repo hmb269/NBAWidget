@@ -172,8 +172,9 @@ struct GlucoseProvider: TimelineProvider {
         Task {
             let entry = await load()
             GlucoseProvider.lastEntry = entry
-            // 血糖一天就测几次，1 小时刷新一次足够（App 里同步/写入后会立即刷新）
-            let next = Calendar.current.date(byAdding: .minute, value: 60, to: Date())!
+            // 刷新间隔在 App 设置里改（默认 1 小时；App 里写入健康后会立即刷新）
+            RefreshSettings.refreshFromAlbum()
+            let next = Calendar.current.date(byAdding: .minute, value: RefreshSettings.current.glucose, to: Date())!
             completion(Timeline(entries: [entry], policy: .after(next)))
         }
     }
