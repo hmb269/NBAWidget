@@ -95,7 +95,9 @@ enum GlucoseStore {
     private static let photoKey = "照片编号"
 
     static func requestAccess() async throws {
-        try await HealthService.store.requestAuthorization(toShare: [type], read: [type])
+        // 顺便申请「饮水」写入权限：喝水小组件打勾时写进健康
+        let water = HKQuantityType(.dietaryWater)
+        try await HealthService.store.requestAuthorization(toShare: [type, water], read: [type])
     }
 
     static func mealName(_ code: UInt8?) -> String? {
