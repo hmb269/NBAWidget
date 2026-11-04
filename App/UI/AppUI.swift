@@ -149,7 +149,7 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     private let tabs: [(String, String)] = [
-        ("健康", "heart.fill"), ("血糖", "drop.fill"), ("NBA", "basketball.fill"), ("设置", "gearshape.fill")
+        ("健康", "heart.fill"), ("血糖", "drop.fill"), ("彩票", "ticket.fill"), ("NBA", "basketball.fill"), ("设置", "gearshape.fill")
     ]
 
     var body: some View {
@@ -157,8 +157,9 @@ struct RootView: View {
         TabView(selection: $tab) {
             NavigationStack { HealthHomeView() }.tag(0)
             NavigationStack { GlucoseView() }.tag(1)
-            NavigationStack { NBAView() }.tag(2)
-            NavigationStack { SettingsView() }.tag(3)
+            NavigationStack { LotteryView() }.tag(2)
+            NavigationStack { NBAView() }.tag(3)
+            NavigationStack { SettingsView() }.tag(4)
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
         .background(AppBackground())
