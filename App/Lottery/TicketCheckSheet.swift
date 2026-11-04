@@ -11,6 +11,7 @@ struct TicketCheckSheet: View {
     @State private var pickFront: [Int] = []          // 七星彩：6 位，-1 = 没选
     @State private var pickBack: [Int] = []
     @State private var qxcFront: [Int] = Array(repeating: -1, count: 6)
+    @State private var qxcPos = 0
 
     @State private var periods: [PeriodResult] = []
     @State private var pending = 0
@@ -135,52 +136,56 @@ struct TicketCheckSheet: View {
     // MARK: 点球选号
 
     private var pickerCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("点选号码").font(.subheadline.weight(.semibold))
                 Spacer()
                 Text(pickHint).font(.caption).foregroundStyle(pickValid ? Color.green : Color.secondary)
             }
-
-            switch g {
-            case .qxc:
-                ForEach(0..<6, id: \.self) { pos in
-                    HStack(spacing: 6) {
-                        Text("第\(pos + 1)位").font(.caption2).foregroundStyle(.secondary).frame(width: 34, alignment: .leading)
-                        ForEach(0...9, id: \.self) { d in
-                            pickBall(d, text: "\(d)", on: qxcFront[pos] == d, color: g.frontColor, square: true) {
-                                qxcFront[pos] = qxcFront[pos] == d ? -1 : d
+            // 号码多的时候在这块里上下滑动
+            ScrollView(.vertical, showsIndicators: true) {
+                VStack(alignment: .leading, spacing: 10) {
+                    switch g {
+                    case .qxc:
+                        // 七星彩：先选第几位，再点数字，点完自动跳到下一位
+                        HStack(spacing: 6) {
+                            ForEach(0..<6, id: \.self) { pos in
+                                Button {
+                                    qxcPos = pos
+                                } label: {
+                                    VStack(spacing: 2) {
+                                        Text("第\(pos + 1)位").font(.system(size: 10, weight: .medium))
+                                        Text(qxcFront[pos] >= 0 ? "\(qxcFront[pos])" : "–")
+                                            .font(.system(size: 18, weight: .bold, design: .rounded))
+                                    }
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 6)
+                                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .fill(qxcPos == pos ? g.frontColor.opacity(0.35) : Color.white.opacity(0.06)))
+                                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .stroke(qxcPos == pos ? g.frontColor : .clear, lineWidth: 1.5))
+                                }
+                                .buttonStyle(.plain)
                             }
                         }
+                        grid(0...9, cols: 5, color: g.frontColor, square: true, selected: qxcFront[qxcPos] >= 0 ? [qxcFront[qxcPos]] : []) { d in
+                            qxcFront[qxcPos] = qxcFront[qxcPos] == d ? -1 : d
+                            if qxcFront[qxcPos] >= 0, let next = (0..<6).first(where: { qxcFront[$0] < 0 }) { qxcPos = next }
+                        }
+                        Text("后区").font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.top, 2)
+                        grid(0...14, cols: 5, color: g.backColor, square: true, selected: pickBack) { toggle(&pickBack, $0, max: 1) }
+                    case .kl8:
+                        grid(1...80, cols: 8, color: g.frontColor, selected: pickFront) { toggle(&pickFront, $0, max: 10) }
+                    default:
+                        Text(g == .dlt ? "前区" : "红球").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        grid(1...(g == .dlt ? 35 : 33), cols: 7, color: g.frontColor, selected: pickFront) { toggle(&pickFront, $0, max: 20) }
+                        Text(g == .dlt ? "后区" : "蓝球").font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.top, 2)
+                        grid(1...(g == .dlt ? 12 : 16), cols: 7, color: g.backColor, selected: pickBack) { toggle(&pickBack, $0, max: 16) }
                     }
                 }
-                Text("后区").font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.top, 4)
-                grid(0...14, cols: 8, color: g.backColor, square: true, selected: pickBack) { toggle(&pickBack, $0, max: 1) }
-            case .kl8:
-                grid(1...80, cols: 10, color: g.frontColor, selected: pickFront) { toggle(&pickFront, $0, max: 10) }
-            default:
-                Text(g == .dlt ? "前区" : "红球").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                grid(1...(g == .dlt ? 35 : 33), cols: 9, color: g.frontColor, selected: pickFront) { toggle(&pickFront, $0, max: 20) }
-                Text(g == .dlt ? "后区" : "蓝球").font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.top, 4)
-                grid(1...(g == .dlt ? 12 : 16), cols: 9, color: g.backColor, selected: pickBack) { toggle(&pickBack, $0, max: 16) }
+                .padding(.vertical, 2)
             }
-
-            HStack(spacing: 10) {
-                Button {
-                    clearPicker()
-                } label: {
-                    Label("清空", systemImage: "arrow.counterclockwise").frame(maxWidth: .infinity)
-                }
-                .glassButton()
-                Button {
-                    addPicked()
-                } label: {
-                    Label("添加这一注", systemImage: "plus.circle.fill").frame(maxWidth: .infinity)
-                }
-                .glassButton()
-                .disabled(!pickValid)
-            }
-            .font(.subheadline.weight(.semibold))
+            .frame(height: g == .qxc ? 330 : 340)
         }
         .padding(16)
         .glassCard(22)
@@ -188,33 +193,34 @@ struct TicketCheckSheet: View {
 
     private func grid(_ range: ClosedRange<Int>, cols: Int, color: Color, square: Bool = false,
                       selected: [Int], tap: @escaping (Int) -> Void) -> some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 5), count: cols), spacing: 6) {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: cols), spacing: 8) {
             ForEach(Array(range), id: \.self) { n in
-                pickBall(n, text: square ? "\(n)" : String(format: "%02d", n), on: selected.contains(n), color: color, square: square) { tap(n) }
+                pickBall(text: square ? "\(n)" : String(format: "%02d", n), on: selected.contains(n), color: color, square: square) { tap(n) }
             }
         }
     }
 
-    private func pickBall(_ n: Int, text: String, on: Bool, color: Color, square: Bool = false, tap: @escaping () -> Void) -> some View {
+    private func pickBall(text: String, on: Bool, color: Color, square: Bool = false, tap: @escaping () -> Void) -> some View {
         Button(action: tap) {
-            Text(text)
-                .font(.system(size: 13, weight: .bold, design: .rounded).monospacedDigit())
-                .foregroundStyle(on ? Color.white : color)
-                .frame(maxWidth: .infinity)
-                .aspectRatio(1, contentMode: .fit)
-                .background {
-                    if square {
-                        RoundedRectangle(cornerRadius: 7, style: .continuous).fill(on ? color : Color.white.opacity(0.06))
-                    } else {
-                        Circle().fill(on ? color : Color.white.opacity(0.06))
-                    }
+            ZStack {
+                if square {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous).fill(on ? color : Color.white.opacity(0.06))
+                    if !on { RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(color.opacity(0.5), lineWidth: 1.2) }
+                } else {
+                    Circle().fill(on ? color : Color.white.opacity(0.06))
+                    if !on { Circle().stroke(color.opacity(0.5), lineWidth: 1.2) }
                 }
-                .overlay {
-                    if !on {
-                        if square { RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(color.opacity(0.45), lineWidth: 1) }
-                        else { Circle().stroke(color.opacity(0.45), lineWidth: 1) }
-                    }
-                }
+                Text(text)
+                    .font(.system(size: 17, weight: .bold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(on ? Color.white : color)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .padding(2)
+            }
+            .aspectRatio(1, contentMode: .fit)
+            .scaleEffect(on ? 1.06 : 1)
+            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: on)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
@@ -251,24 +257,31 @@ struct TicketCheckSheet: View {
     }
 
     private func clearPicker() {
-        pickFront = []; pickBack = []; qxcFront = Array(repeating: -1, count: 6)
+        pickFront = []; pickBack = []; qxcFront = Array(repeating: -1, count: 6); qxcPos = 0
     }
 
     private func addPicked() {
-        let bet = g == .qxc ? LotteryBet(front: qxcFront, back: pickBack)
-                            : LotteryBet(front: pickFront.sorted(), back: pickBack.sorted())
+        let bet = draftBet
         withAnimation { scan.bets.append(bet) }
         clearPicker()
     }
 
     /// 点已有的一注：放回选号面板里修改
     private func edit(_ bet: LotteryBet) {
-        if g == .qxc { qxcFront = bet.front; pickBack = bet.back }
+        if g == .qxc { qxcFront = bet.front; pickBack = bet.back; qxcPos = 0 }
         else { pickFront = bet.front; pickBack = bet.back }
         withAnimation { scan.bets.removeAll { $0.id == bet.id } }
     }
 
     // MARK: 已选的注
+
+    private var hasDraft: Bool {
+        g == .qxc ? (qxcFront.contains { $0 >= 0 } || !pickBack.isEmpty) : (!pickFront.isEmpty || !pickBack.isEmpty)
+    }
+
+    private var draftBet: LotteryBet {
+        g == .qxc ? LotteryBet(front: qxcFront, back: pickBack) : LotteryBet(front: pickFront.sorted(), back: pickBack.sorted())
+    }
 
     private var betsCard: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -280,19 +293,55 @@ struct TicketCheckSheet: View {
                         .font(.caption).foregroundStyle(.orange)
                 }
             }
-            if scan.bets.isEmpty {
-                Text("在上面点选号码，点「添加这一注」。可以加很多注。")
-                    .font(.caption).foregroundStyle(.secondary)
+
+            // 正在选的这一注：点一个球就出现在这里，选够了点「确认」
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Text("正在选").font(.caption.weight(.semibold)).foregroundStyle(g.frontColor)
+                    Spacer()
+                    Text(pickValid ? "选好了，点确认加入" : pickHint).font(.caption2).foregroundStyle(.secondary)
+                }
+                if hasDraft {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        LotteryBalls(game: g, front: draftStrings.0, back: draftStrings.1, size: 28)
+                    }
+                } else {
+                    Text("在上面点球，选中的号码会出现在这里").font(.caption).foregroundStyle(.tertiary)
+                        .frame(height: 28)
+                }
+                HStack(spacing: 10) {
+                    Button {
+                        withAnimation { clearPicker() }
+                    } label: {
+                        Label("清空", systemImage: "arrow.counterclockwise").frame(maxWidth: .infinity)
+                    }
+                    .glassButton()
+                    .disabled(!hasDraft)
+                    Button {
+                        addPicked()
+                    } label: {
+                        Label("确认这一注", systemImage: "checkmark.circle.fill").frame(maxWidth: .infinity)
+                    }
+                    .glassButton()
+                    .tint(.green)
+                    .disabled(!pickValid)
+                }
+                .font(.subheadline.weight(.semibold))
             }
+            .padding(12)
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.white.opacity(0.05)))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(pickValid ? Color.green.opacity(0.6) : Color.white.opacity(0.1), style: StrokeStyle(lineWidth: 1, dash: pickValid ? [] : [4, 3])))
+
             ForEach(Array(scan.bets.enumerated()), id: \.element.id) { i, b in
                 HStack(spacing: 8) {
                     Text("\(i + 1)").font(.caption2.monospacedDigit()).foregroundStyle(.secondary).frame(width: 16)
                     ScrollView(.horizontal, showsIndicators: false) {
-                        LotteryBalls(game: g, front: b.frontStrings(g), back: b.backStrings(g), size: 24)
+                        LotteryBalls(game: g, front: b.frontStrings(g), back: b.backStrings(g), size: 26)
                     }
-                    Button { edit(b) } label: { Image(systemName: "pencil.circle") }
+                    Button { edit(b) } label: { Image(systemName: "pencil.circle").font(.title3) }
                         .buttonStyle(.plain).foregroundStyle(.secondary)
-                    Button { withAnimation { scan.bets.removeAll { $0.id == b.id } } } label: { Image(systemName: "xmark.circle.fill") }
+                    Button { withAnimation { scan.bets.removeAll { $0.id == b.id } } } label: { Image(systemName: "xmark.circle.fill").font(.title3) }
                         .buttonStyle(.plain).foregroundStyle(.secondary)
                 }
             }
@@ -300,6 +349,12 @@ struct TicketCheckSheet: View {
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard(22)
+    }
+
+    /// 正在选的号码（七星彩没选的位显示「–」）
+    private var draftStrings: ([String], [String]) {
+        if g == .qxc { return (qxcFront.map { $0 >= 0 ? "\($0)" : "–" }, pickBack.map(String.init)) }
+        return (pickFront.sorted().map { String(format: "%02d", $0) }, pickBack.sorted().map { String(format: "%02d", $0) })
     }
 
     // MARK: 结果
