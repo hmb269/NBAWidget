@@ -197,8 +197,7 @@ enum WeCom {
 
     // MARK: 每日健康汇总
 
-    /// 锁屏时健康数据读不到，返回 nil，等解锁后下次刷新再推
-    static func dailySummary() async -> String? {
+    static func dailySummary() async -> String {
         var lines: [String] = ["今日健康汇总"]
         let sleep = try? await HealthService.lastNightSleep()
         if let s = sleep {
@@ -216,6 +215,6 @@ enum WeCom {
         if let steps = try? await HealthService.todaySteps() {
             lines.append("🚶 今日步数 \(steps)")
         }
-        return lines.count > 1 ? lines.joined(separator: "\n") : nil
+        return lines.joined(separator: "\n")
     }
 }

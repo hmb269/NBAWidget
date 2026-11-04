@@ -30,9 +30,8 @@ enum WidgetPush {
         }
 
         if c.daily, WeCom.isTime(c.dailyTime), !WeCom.sentToday("daily") {
-            if let t = await WeCom.dailySummary() {
-                await WeCom.pushOnce("daily", text: t, config: c)
-            }
+            let t = await WeCom.dailySummary()
+            await WeCom.pushOnce("daily", text: t, config: c)
         }
     }
 
