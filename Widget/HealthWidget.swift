@@ -188,7 +188,6 @@ struct HealthProvider: TimelineProvider {
         Task {
             let entry = await HealthEntry.load()
             HealthProvider.lastEntry = entry
-            await WidgetPush.run()
             let next = Calendar.current.date(byAdding: .minute, value: 15, to: Date())!
             completion(Timeline(entries: [entry], policy: .after(next)))
         }
