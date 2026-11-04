@@ -8,6 +8,7 @@ struct LotteryBet: Identifiable, Hashable {
     var id = UUID()
     var front: [Int]
     var back: [Int]
+    var multiple = 1      // 这注的倍数（收藏时一起存）
 
     func text(_ g: LotteryGame) -> String {
         switch g {
@@ -23,7 +24,7 @@ struct LotteryBet: Identifiable, Hashable {
     func frontStrings(_ g: LotteryGame) -> [String] { g == .qxc ? front.map(String.init) : front.map { String(format: "%02d", $0) } }
     func backStrings(_ g: LotteryGame) -> [String] { g == .qxc ? back.map(String.init) : back.map { String(format: "%02d", $0) } }
 
-    private static let junk = ["年", "月", "日", ":", "：", "期", "元", "站", "机", "销售", "合计", "开奖", "时间", "地址"]
+    private static let junk = ["年", "月", "日", ":", "：", "期", "元", "站", "机", "销售", "合计", "开奖", "时间", "地址", "验票", "流水", "编号"]
 
     private static func clean(_ line: String) -> String {
         var s = line
@@ -93,12 +94,20 @@ struct LotteryBet: Identifiable, Hashable {
         return LotteryBet(front: front, back: back)
     }
 
-    /// 只取两位数（01、33），避开年份、时间、流水号
+    /// 取两位数的号码（01、33）。识别时常把相邻号码粘在一起（「1424」→ 14、24），偶数位的数字串按两位拆开；
+    /// 单个数字（注序号「1」、倍数）忽略
     static func numbers(_ s: String) -> [Int] {
-        let re = try! NSRegularExpression(pattern: "(?<!\\d)\\d{2}(?!\\d)")
-        return re.matches(in: s, range: NSRange(s.startIndex..., in: s)).compactMap {
-            Range($0.range, in: s).flatMap { Int(s[$0]) }
+        let re = try! NSRegularExpression(pattern: "\\d+")
+        var out: [Int] = []
+        for m in re.matches(in: s, range: NSRange(s.startIndex..., in: s)) {
+            guard let r = Range(m.range, in: s) else { continue }
+            let t = Array(s[r])
+            guard t.count >= 2, t.count % 2 == 0, t.count <= 20 else { continue }
+            for i in stride(from: 0, to: t.count, by: 2) {
+                if let v = Int(String(t[i...i + 1])) { out.append(v) }
+            }
         }
+        return out
     }
 }
 

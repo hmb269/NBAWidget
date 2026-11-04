@@ -188,7 +188,9 @@ struct TicketCheckSheet: View {
                 .padding(.vertical, 4)
             }
             RowDivider()
-            Stepper("倍数 \(scan.multiple)", value: $scan.multiple, in: 1...99).padding(.vertical, 6)
+            if !favMode {
+                Stepper("倍数 \(scan.multiple)", value: $scan.multiple, in: 1...99).padding(.vertical, 6)
+            }
             if g == .dlt {
                 RowDivider()
                 Toggle("追加投注", isOn: $scan.added).padding(.vertical, 6)
@@ -274,6 +276,9 @@ struct TicketCheckSheet: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         LotteryBalls(game: g, front: b.frontStrings(g), back: b.backStrings(g), size: 26)
                     }
+                    if favMode && b.multiple > 1 {
+                        Text("×\(b.multiple)").font(.caption.weight(.bold).monospacedDigit()).foregroundStyle(.orange)
+                    }
                     if !favMode {
                         Button { toggleFav(b) } label: { Image(systemName: isFav(b) ? "star.fill" : "star").font(.title3) }
                             .buttonStyle(.plain).foregroundStyle(isFav(b) ? Color.yellow : Color.secondary)
@@ -338,19 +343,19 @@ struct TicketCheckSheet: View {
     private func toggleFav(_ b: LotteryBet) {
         withAnimation {
             if isFav(b) { favs.removeAll { $0.front == b.front && $0.back == b.back } }
-            else { favs.append(LotteryBet(front: b.front, back: b.back)) }
+            else { favs.append(LotteryBet(front: b.front, back: b.back, multiple: max(1, b.multiple * scan.multiple))) }
         }
         LotteryFavorites.save(favs, for: g)
     }
 
     /// 点收藏里的「对奖」：只用这一注
     private func checkOne(_ b: LotteryBet) async {
-        scan.bets = [LotteryBet(front: b.front, back: b.back)]
+        scan.bets = [LotteryBet(front: b.front, back: b.back, multiple: b.multiple)]
         await check()
     }
 
     private func checkFavorites() async {
-        scan.bets = favs.map { LotteryBet(front: $0.front, back: $0.back) }
+        scan.bets = favs.map { LotteryBet(front: $0.front, back: $0.back, multiple: $0.multiple) }
         await check()
     }
 
@@ -705,7 +710,7 @@ struct TicketCheckSheet: View {
         do {
             let r = try await LotteryAPI.draws(g, from: from, to: to.isEmpty ? nil : to, periods: nil)
             periods = r.draws.sorted { (LotteryAPI.issueNumber($0.issue) ?? 0) < (LotteryAPI.issueNumber($1.issue) ?? 0) }.map { d in
-                PeriodResult(draw: d, results: scan.bets.map { PrizeCalc.check($0, draw: d, game: g, multiple: scan.multiple) })
+                PeriodResult(draw: d, results: scan.bets.map { PrizeCalc.check($0, draw: d, game: g, multiple: scan.multiple * max(1, $0.multiple)) })
             }
             pending = r.pending
             if periods.isEmpty && pending == 0 {
@@ -719,16 +724,16 @@ struct TicketCheckSheet: View {
 
 /// 收藏的号码：每种玩法分开存
 enum LotteryFavorites {
-    private struct Item: Codable { var front: [Int]; var back: [Int] }
+    private struct Item: Codable { var front: [Int]; var back: [Int]; var multiple: Int? }
 
     static func load(_ g: LotteryGame) -> [LotteryBet] {
         guard let data = UserDefaults.standard.data(forKey: "lotteryFavs_" + g.rawValue),
               let items = try? JSONDecoder().decode([Item].self, from: data) else { return [] }
-        return items.map { LotteryBet(front: $0.front, back: $0.back) }
+        return items.map { LotteryBet(front: $0.front, back: $0.back, multiple: $0.multiple ?? 1) }
     }
 
     static func save(_ list: [LotteryBet], for g: LotteryGame) {
-        let items = list.map { Item(front: $0.front, back: $0.back) }
+        let items = list.map { Item(front: $0.front, back: $0.back, multiple: $0.multiple) }
         if let data = try? JSONEncoder().encode(items) { UserDefaults.standard.set(data, forKey: "lotteryFavs_" + g.rawValue) }
         AutoBackup.schedule()   // 收藏也进备份
         NotificationCenter.default.post(name: .lotteryFavsChanged, object: nil)
@@ -739,7 +744,7 @@ enum LotteryFavorites {
         var out: [String: [[[Int]]]] = [:]
         for g in LotteryGame.checkableGames {
             let list = load(g)
-            if !list.isEmpty { out[g.rawValue] = list.map { [$0.front, $0.back] } }
+            if !list.isEmpty { out[g.rawValue] = list.map { [$0.front, $0.back, [$0.multiple]] } }
         }
         return out
     }
@@ -750,8 +755,8 @@ enum LotteryFavorites {
         for (key, bets) in m {
             guard let g = LotteryGame(rawValue: key) else { continue }
             var list = load(g)
-            for b in bets where b.count == 2 && !list.contains(where: { $0.front == b[0] && $0.back == b[1] }) {
-                list.append(LotteryBet(front: b[0], back: b[1])); added += 1
+            for b in bets where b.count >= 2 && !list.contains(where: { $0.front == b[0] && $0.back == b[1] }) {
+                list.append(LotteryBet(front: b[0], back: b[1], multiple: b.count > 2 ? (b[2].first ?? 1) : 1)); added += 1
             }
             save(list, for: g)
         }

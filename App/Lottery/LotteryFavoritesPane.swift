@@ -22,10 +22,13 @@ struct LotteryFavoritesPane: View {
                 .glassCard(22)
             }
             ForEach(games) { g in
-                FavoriteGameCard(game: g, bets: favs[g] ?? [], onCheck: { onCheck(g, $0) }) { bet in
+                FavoriteGameCard(game: g, bets: favs[g] ?? [], onCheck: { onCheck(g, $0) }, onDelete: { bet in
                     favs[g]?.removeAll { $0.id == bet.id }
                     LotteryFavorites.save(favs[g] ?? [], for: g)
-                }
+                }, onMultiple: { bet, m in
+                    if let i = favs[g]?.firstIndex(where: { $0.id == bet.id }) { favs[g]?[i].multiple = m }
+                    LotteryFavorites.save(favs[g] ?? [], for: g)
+                })
             }
 
             // 添加收藏
@@ -58,6 +61,7 @@ private struct FavoriteGameCard: View {
     let bets: [LotteryBet]
     let onCheck: ([LotteryBet]) -> Void
     let onDelete: (LotteryBet) -> Void
+    let onMultiple: (LotteryBet, Int) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -76,6 +80,18 @@ private struct FavoriteGameCard: View {
                 HStack(spacing: 8) {
                     ScrollView(.horizontal, showsIndicators: false) {
                         LotteryBalls(game: game, front: b.frontStrings(game), back: b.backStrings(game), size: 26)
+                    }
+                    // 倍数：点开选
+                    Menu {
+                        Picker("倍数", selection: Binding(get: { b.multiple }, set: { onMultiple(b, $0) })) {
+                            ForEach([1, 2, 3, 4, 5, 6, 8, 10, 15, 20, 30, 50, 99], id: \.self) { Text("\($0) 倍").tag($0) }
+                        }
+                    } label: {
+                        Text("×\(b.multiple)")
+                            .font(.caption.weight(.bold).monospacedDigit())
+                            .foregroundStyle(b.multiple > 1 ? Color.orange : Color.secondary)
+                            .padding(.horizontal, 7).padding(.vertical, 4)
+                            .background(Capsule().fill(Color.white.opacity(0.08)))
                     }
                     Button { onCheck([b]) } label: {
                         Text("对奖").font(.caption.weight(.semibold))
