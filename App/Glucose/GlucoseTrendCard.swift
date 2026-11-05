@@ -342,6 +342,7 @@ struct GlucoseOverGallery: View {
     @State private var filter: Filter = .all
     @State private var editing: GlucoseRecord?
     @State private var viewing: Int?        // 正在看大图的是第几张
+    @State private var lastSeen: String?    // 大图最后停在哪张，返回时滚到那里
 
     private var shown: [Item] {
         let list: [Item]
@@ -358,6 +359,7 @@ struct GlucoseOverGallery: View {
 
     var body: some View {
         let list = shown
+        ScrollViewReader { proxy in
         ScrollView {
             VStack(spacing: 14) {
                 Picker("", selection: $filter) {
@@ -387,6 +389,7 @@ struct GlucoseOverGallery: View {
                     ForEach(Array(list.enumerated()), id: \.element.id) { i, it in
                         Button { viewing = i } label: { tile(it) }
                             .buttonStyle(.plain)
+                            .id(it.id)
                     }
                 }
 
@@ -396,16 +399,22 @@ struct GlucoseOverGallery: View {
             .padding(16)
             .padding(.bottom, 100)
         }
-        .background(AppBackground())
-        .navigationTitle("血糖相册")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.visible, for: .navigationBar)
-        .fullScreenCover(isPresented: Binding(get: { viewing != nil }, set: { if !$0 { viewing = nil } })) {
-            GlucoseOverViewer(items: list, start: viewing ?? 0, missing: missing) { r in
+        .fullScreenCover(isPresented: Binding(get: { viewing != nil }, set: { if !$0 { viewing = nil } }),
+                         onDismiss: {
+            // 返回时滚到大图里最后看的那张
+            if let id = lastSeen { withAnimation { proxy.scrollTo(id, anchor: .center) } }
+        }) {
+            GlucoseOverViewer(items: list, start: viewing ?? 0, missing: missing,
+                              onPage: { i in if list.indices.contains(i) { lastSeen = list[i].id } }) { r in
                 viewing = nil
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { editing = r }
             }
         }
+        }
+        .background(AppBackground())
+        .navigationTitle("血糖相册")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
         .sheet(item: $editing) { r in
             GlucoseRecordSheet(record: r, tag: items.first { $0.id == r.id }?.label,
                                owner: owners[r.id] ?? GlucosePeople.me, missing: missing) { note, photos in
@@ -468,6 +477,7 @@ struct GlucoseOverViewer: View {
     let items: [GlucoseOverGallery.Item]
     let start: Int
     let missing: Set<String>
+    var onPage: (Int) -> Void = { _ in }
     let onEdit: (GlucoseRecord) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -510,7 +520,8 @@ struct GlucoseOverViewer: View {
             .padding(.horizontal, 20)
             .padding(.top, 8)
         }
-        .onAppear { index = start }
+        .onAppear { index = start; onPage(start) }
+        .onChange(of: index) { _, i in onPage(i) }
     }
 
     private func page(_ it: GlucoseOverGallery.Item) -> some View {
