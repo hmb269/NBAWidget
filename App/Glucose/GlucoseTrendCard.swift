@@ -238,23 +238,10 @@ struct GlucoseTrendCard: View {
                     .foregroundStyle(.white)
                     .annotation(position: .top, spacing: 6,
                                 overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
-                        HStack(spacing: 6) {
-                            if let img = p.4 {
-                                Image(uiImage: img).resizable().scaledToFill()
-                                    .frame(width: 34, height: 34)
-                                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                            }
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(String(format: "%.1f mmol/L", p.1))
-                                    .font(.system(size: 13, weight: .bold, design: .rounded).monospacedDigit())
-                                Text(label(p.0) + " · " + p.2)
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.secondary)
-                                if let n = p.3, !n.isEmpty {
-                                    Text(n).font(.system(size: 10, weight: .medium)).lineLimit(1)
-                                }
-                            }
-                        }
+                        // 只显示数值，详情在图下面
+                        Text(String(format: "%.1f", p.1))
+                            .font(.system(size: 14, weight: .bold, design: .rounded).monospacedDigit())
+                            .foregroundStyle(p.1 > line ? danger : Color.white)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 5)
                         .glassCard(10)
