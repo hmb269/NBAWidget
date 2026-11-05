@@ -78,7 +78,7 @@ enum NBAGameAPI {
                     dnp: dnp ? ((a["reason"] as? String).map(NBAPlayers.reason) ?? "未上场") : nil,
                     stats: row(stats))
             }
-            boxByCode[code] = (players, row((st["totals"] as? [String]) ?? []))
+            boxByCode[code] = (await standardPositions(players), row((st["totals"] as? [String]) ?? []))
         }
 
         func team(_ side: String) -> BoxTeam {
@@ -101,6 +101,56 @@ enum NBAGameAPI {
 }
 
 extension NBAGameAPI {
+    private static let std: Set<String> = ["PG", "SG", "SF", "PF", "C"]
+
+    /// 把 G / F 换成 PG / SG / SF / PF：
+    /// 1. 查 ESPN 球员资料里的具体位置（查过的存本机，位置基本不变）
+    /// 2. 查不到的首发按官方首发顺序：第一个后卫 PG、第二个 SG，第一个前锋 SF、第二个 PF
+    static func standardPositions(_ list: [BoxPlayer]) async -> [BoxPlayer] {
+        var out = list
+        let d = UserDefaults.standard
+        var cache = (d.dictionary(forKey: "nbaPositions") as? [String: String]) ?? [:]
+        let need = out.filter { !std.contains($0.position) && cache[$0.id] == nil }.map(\.id)
+        if !need.isEmpty {
+            await withTaskGroup(of: (String, String?).self) { g in
+                for id in need { g.addTask { (id, await athletePosition(id)) } }
+                for await (id, pos) in g { if let pos { cache[id] = pos } }
+            }
+            d.set(cache, forKey: "nbaPositions")
+        }
+        var guards = 0, forwards = 0
+        for i in out.indices {
+            if let c = cache[out[i].id], std.contains(c) { out[i].position = c; continue }
+            guard out[i].starter else { continue }
+            switch out[i].position {
+            case "G": out[i].position = guards == 0 ? "PG" : "SG"; guards += 1
+            case "F": out[i].position = forwards == 0 ? "SF" : "PF"; forwards += 1
+            default: break
+            }
+        }
+        return out
+    }
+
+    private static func athletePosition(_ id: String) async -> String? {
+        for u in ["https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/athletes/\(id)",
+                  "https://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/athletes/\(id)"] {
+            guard let url = URL(string: u), let res = try? await URLSession.shared.data(from: url),
+                  let root = (try? JSONSerialization.jsonObject(with: res.0)) as? [String: Any] else { continue }
+            let ath = (root["athlete"] as? [String: Any]) ?? root
+            let pos = ath["position"] as? [String: Any]
+            if let a = pos?["abbreviation"] as? String, std.contains(a) { return a }
+            switch (pos?["name"] as? String ?? "").lowercased() {
+            case "point guard": return "PG"
+            case "shooting guard": return "SG"
+            case "small forward": return "SF"
+            case "power forward": return "PF"
+            case "center": return "C"
+            default: continue
+            }
+        }
+        return nil
+    }
+
     /// 球队名单：球员 id → 标准位置
     static func roster(_ teamId: String) async -> [String: String] {
         guard let url = URL(string: "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/\(teamId)/roster"),
@@ -325,12 +375,19 @@ struct NBAGameDetailView: View {
     }
 
     private func leader(_ p: BoxPlayer?, _ key: String, alignment: HorizontalAlignment) -> some View {
-        HStack(spacing: 8) {
-            if alignment == .trailing { Spacer(minLength: 0) }
-            if alignment == .trailing { Text(p?.name ?? "").font(.subheadline).foregroundStyle(.secondary).lineLimit(1) }
-            Text(p.map { "\($0.n(key))" } ?? "-").font(.system(size: 22, weight: .heavy, design: .rounded).monospacedDigit())
-            if alignment == .leading { Text(p?.name ?? "").font(.subheadline).foregroundStyle(.secondary).lineLimit(1) }
-            if alignment == .leading { Spacer(minLength: 0) }
+        let fav = p.map { favs.contains($0.id) } ?? false
+        let num = Text(p.map { "\($0.n(key))" } ?? "-")
+            .font(.system(size: 22, weight: .heavy, design: .rounded).monospacedDigit())
+            .foregroundStyle(fav ? Color.yellow : Color.primary)
+            .frame(width: 34, alignment: alignment == .leading ? .leading : .trailing)   // 数字固定宽度，上下对齐
+        let name = HStack(spacing: 2) {
+            if fav { Image(systemName: "star.fill").font(.system(size: 9)).foregroundStyle(.yellow) }
+            Text(p?.name ?? "").font(.subheadline.weight(fav ? .bold : .regular))
+                .foregroundStyle(fav ? Color.yellow : Color.secondary).lineLimit(1).minimumScaleFactor(0.7)
+        }
+        return HStack(spacing: 8) {
+            if alignment == .leading { num; name; Spacer(minLength: 0) }
+            else { Spacer(minLength: 0); name; num }
         }
         .frame(maxWidth: .infinity)
     }
@@ -385,7 +442,8 @@ struct NBAGameDetailView: View {
                                         .background(RoundedRectangle(cornerRadius: 3).fill(p.starter ? Color.orange.opacity(0.9) : Color.white.opacity(0.1)))
                                 }
                             }
-                            .frame(height: 32, alignment: .leading)
+                            .frame(maxWidth: .infinity, minHeight: 32, maxHeight: 32, alignment: .leading)
+                            .background(fav ? Color.yellow.opacity(0.08) : .clear)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -413,7 +471,7 @@ struct NBAGameDetailView: View {
                                 ForEach(Array(cols.enumerated()), id: \.offset) { _, c in
                                     Text(p.stats[c.0] ?? "-")
                                         .font(.system(size: c.0 == "PTS" ? 16 : 13, weight: c.0 == "PTS" ? .heavy : .regular, design: .rounded).monospacedDigit())
-                                        .foregroundStyle(c.0 == "PTS" ? Color.orange : (p.starter || fav ? Color.primary : Color.secondary))
+                                        .foregroundStyle(fav ? Color.yellow : (c.0 == "PTS" ? Color.orange : (p.starter ? Color.primary : Color.secondary)))
                                         .frame(width: c.2)
                                 }
                             }
