@@ -433,9 +433,10 @@ struct GlucoseOverGallery: View {
         }
         .coordinateSpace(name: "gallery")
         .onPreferenceChange(GalleryTopKey.self) { y in
-            let top = y > -300
-            if top != atTop { withAnimation(.easeInOut(duration: 0.2)) { atTop = top } }
+            if #available(iOS 18, *) { return }      // iOS 18 起用下面更可靠的方法
+            setTop(y > -300)
         }
+        .modifier(ScrollTopWatcher { setTop($0) })
         // 回到顶部
         .overlay(alignment: .bottomTrailing) {
             if !atTop {
@@ -477,6 +478,10 @@ struct GlucoseOverGallery: View {
                 onSave(r.id, note, photos)
             }
         }
+    }
+
+    private func setTop(_ top: Bool) {
+        if top != atTop { withAnimation(.easeInOut(duration: 0.2)) { atTop = top } }
     }
 
     private func tile(_ it: Item) -> some View {
@@ -528,6 +533,20 @@ struct GlucoseOverGallery: View {
     }
 }
 
+/// 监听滚动位置：滚下去超过 300 点就算「不在顶部」
+private struct ScrollTopWatcher: ViewModifier {
+    let onChange: (Bool) -> Void
+    func body(content: Content) -> some View {
+        if #available(iOS 18, *) {
+            content.onScrollGeometryChange(for: Bool.self) { g in
+                g.contentOffset.y + g.contentInsets.top < 300
+            } action: { _, top in onChange(top) }
+        } else {
+            content
+        }
+    }
+}
+
 private struct GalleryTopKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
@@ -547,44 +566,69 @@ struct ZoomablePhoto: View {
 
     var body: some View {
         GeometryReader { g in
-            GlucosePhotoView(photo: photo, missing: missing, side: 2400, fit: true)
-                .frame(width: g.size.width, height: g.size.height)
-                .scaleEffect(scale)
-                .offset(offset)
-                .contentShape(Rectangle())
-                .gesture(
-                    MagnifyGesture()
-                        .onChanged { v in scale = min(5, max(1, lastScale * v.magnification)) }
-                        .onEnded { _ in
-                            if scale < 1.05 { reset() } else {
-                                lastScale = scale; zoomed = true
-                                offset = clamp(offset, g.size); lastOffset = offset
-                            }
+            let size = g.size
+            // 图片本身只做变换；手势挂在外面不变形的框上，手指位置才准
+            ZStack {
+                GlucosePhotoView(photo: photo, missing: missing, side: 2400, fit: true)
+                    .frame(width: size.width, height: size.height)
+                    .scaleEffect(scale)
+                    .offset(offset)
+            }
+            .frame(width: size.width, height: size.height)
+            .contentShape(Rectangle())
+            .gesture(
+                MagnifyGesture()
+                    .onChanged { v in
+                        let s1 = min(5, max(1, lastScale * v.magnification))
+                        // 以双指中间为中心放大：手指下的那块保持不动
+                        offset = zoomOffset(at: v.startLocation, from: lastScale, to: s1, base: lastOffset, size: size)
+                        scale = s1
+                    }
+                    .onEnded { _ in
+                        if scale < 1.05 { withAnimation(.spring(duration: 0.3)) { reset() } } else {
+                            lastScale = scale; zoomed = true
+                            withAnimation(.spring(duration: 0.25)) { offset = clamp(offset, size) }
+                            lastOffset = clamp(offset, size)
                         }
-                )
-                // 放大后单指拖动看细节（优先于左右翻页和往下拉返回）
-                .highPriorityGesture(
-                    DragGesture()
-                        .onChanged { v in
-                            offset = CGSize(width: lastOffset.width + v.translation.width,
-                                            height: lastOffset.height + v.translation.height)
-                        }
-                        .onEnded { _ in
-                            withAnimation(.spring(duration: 0.25)) { offset = clamp(offset, g.size) }
-                            lastOffset = clamp(offset, g.size)
-                        },
-                    including: scale > 1 ? .all : .subviews
-                )
-                .onTapGesture(count: 2) {
+                    }
+            )
+            // 放大后单指拖动看细节（优先于左右翻页和往下拉返回）
+            .highPriorityGesture(
+                DragGesture()
+                    .onChanged { v in
+                        offset = CGSize(width: lastOffset.width + v.translation.width,
+                                        height: lastOffset.height + v.translation.height)
+                    }
+                    .onEnded { _ in
+                        withAnimation(.spring(duration: 0.25)) { offset = clamp(offset, size) }
+                        lastOffset = clamp(offset, size)
+                    },
+                including: scale > 1 ? .all : .subviews
+            )
+            // 双击：在点的位置放大 / 缩回
+            .gesture(
+                SpatialTapGesture(count: 2).onEnded { v in
                     withAnimation(.spring(duration: 0.3)) {
-                        if scale > 1 { reset() } else { scale = 2.5; lastScale = 2.5; zoomed = true }
+                        if scale > 1 { reset() } else {
+                            let o = zoomOffset(at: v.location, from: 1, to: 2.5, base: .zero, size: size)
+                            scale = 2.5; lastScale = 2.5; zoomed = true
+                            offset = clamp(o, size); lastOffset = offset
+                        }
                     }
                 }
-                .onTapGesture {
+                .exclusively(before: TapGesture().onEnded {
                     if scale > 1 { withAnimation(.spring(duration: 0.3)) { reset() } } else { onTap() }
-                }
+                })
+            )
         }
         .clipped()
+    }
+
+    /// 从 s0 缩放到 s1 时，让屏幕上点 p 下面的内容不动，算出新的偏移
+    private func zoomOffset(at p: CGPoint, from s0: CGFloat, to s1: CGFloat, base o0: CGSize, size: CGSize) -> CGSize {
+        let dx = p.x - size.width / 2, dy = p.y - size.height / 2
+        let k = s1 / s0
+        return CGSize(width: dx - k * (dx - o0.width), height: dy - k * (dy - o0.height))
     }
 
     private func reset() {
