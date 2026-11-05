@@ -5,6 +5,8 @@ import UniformTypeIdentifiers
 // MARK: - 彩票页
 
 struct LotteryView: View {
+    /// 当前是不是正在看彩票页（不在这页就不刷新）
+    var isActive = true
     @State private var segment = 0          // 0 福彩 1 体彩 2 收藏
     @Environment(\.scenePhase) private var scenePhase
     @State private var pendingWins = LotteryView.countPending()
@@ -90,9 +92,11 @@ struct LotteryView: View {
                 .padding(.horizontal, 6)
         }
         .refreshable { await load() }
-        .task {
+        .task(id: isActive) {
+            guard isActive else { return }
             await load()
             // 开奖后自动刷新：到了开奖时间、但还没拿到今天这期，就每分钟查一次（最多查 3 小时）
+            // 离开彩票页这个任务会被取消，不再刷新
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(60))
                 let waiting = LotteryGame.allCases.filter { awaiting($0) }
@@ -100,7 +104,7 @@ struct LotteryView: View {
             }
         }
         .onChange(of: scenePhase) { _, p in
-            if p == .active { Task { await load() } }
+            if p == .active && isActive { Task { await load() } }
         }
         .fullScreenCover(isPresented: $showCamera) {
             CameraPicker { img in Task { await read(img) } }

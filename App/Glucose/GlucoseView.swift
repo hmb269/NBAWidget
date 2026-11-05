@@ -408,18 +408,19 @@ struct GlucoseView: View {
         }
     }
 
-    // MARK: 超标相册入口
+    // MARK: 血糖相册入口
 
-    private var overItems: [GlucoseOverGallery.Item] {
-        shown.compactMap { r in
+    private var albumItems: [GlucoseOverGallery.Item] {
+        shown.map { r in
             let l = label(r)
-            guard let line = glucoseSafeLine(l), r.mmol > line else { return nil }
-            return GlucoseOverGallery.Item(record: r, label: l ?? "", line: line)
+            return GlucoseOverGallery.Item(record: r, label: l ?? "", line: glucoseSafeLine(l))
         }
     }
 
     private var overAlbumCard: some View {
-        let items = overItems.sorted { $0.record.date > $1.record.date }
+        let items = albumItems.sorted { $0.record.date > $1.record.date }
+        let overCount = items.filter(\.over).count
+        let photoItems = items.filter { !($0.record.photos ?? []).isEmpty }
         return NavigationLink {
             GlucoseOverGallery(items: items, missing: missingIDs, owners: owners) { id, note, photos in
                 updateMedia(id, note: note, photos: photos)
@@ -427,14 +428,14 @@ struct GlucoseView: View {
         } label: {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Label("超标相册", systemImage: "photo.stack").font(.headline)
+                    Label("血糖相册", systemImage: "photo.stack").font(.headline)
                         .foregroundStyle(Color(red: 1, green: 0.42, blue: 0.45))
-                    Text(items.isEmpty ? "没有超标记录" : "\(items.count) 次超标 · 看看吃了什么")
+                    Text("\(photoItems.count) 张照片 · 超标 \(overCount) 次")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
                 HStack(spacing: -10) {
-                    ForEach(items.compactMap { $0.record.photos?.first }.prefix(4), id: \.id) { p in
+                    ForEach(photoItems.compactMap { $0.record.photos?.first }.prefix(4), id: \.id) { p in
                         GlucosePhotoView(photo: p, missing: false, side: 120)
                             .frame(width: 38, height: 38)
                             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))

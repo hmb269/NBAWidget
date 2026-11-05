@@ -4,6 +4,8 @@ import WidgetKit
 // NBA 首页：一张卡片，卡片里左右滑动切换「今天 / 明天」（卡片外左右滑动还是切换 App 页面）
 
 struct NBAView: View {
+    /// 当前是不是正在看 NBA 页（不在这页就不刷新）
+    var isActive = true
     @State private var today: [Game] = []
     @State private var tomorrow: [Game] = []
     @State private var loading = false
@@ -45,7 +47,16 @@ struct NBAView: View {
             .glassCard(24)
         }
         .refreshable { await load() }
-        .task { await load() }
+        .task(id: isActive) {
+            guard isActive else { return }
+            // 进到 NBA 页刷新一次；有比赛在打时每分钟刷新，离开这页就停
+            await load()
+            while !Task.isCancelled, (today + tomorrow).contains(where: { $0.state == "in" }) {
+                try? await Task.sleep(for: .seconds(60))
+                if Task.isCancelled { break }
+                await load()
+            }
+        }
     }
 
     private let rowHeight: CGFloat = 62

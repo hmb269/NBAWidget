@@ -158,8 +158,9 @@ struct RootView: View {
         TabView(selection: $tab) {
             NavigationStack { HealthHomeView() }.tag(0)
             NavigationStack { GlucoseView() }.tag(1)
-            NavigationStack { LotteryView() }.tag(2)
-            NavigationStack { NBAView() }.tag(3)
+            // 只有正在看的页面才联网刷新
+            NavigationStack { LotteryView(isActive: tab == 2) }.tag(2)
+            NavigationStack { NBAView(isActive: tab == 3) }.tag(3)
             NavigationStack { SettingsView() }.tag(4)
         }
         .tabViewStyle(.page(indexDisplayMode: .never))

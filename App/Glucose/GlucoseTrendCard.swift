@@ -324,8 +324,9 @@ struct GlucoseOverGallery: View {
     struct Item: Identifiable {
         let record: GlucoseRecord
         let label: String
-        let line: Double
+        let line: Double?          // 超标线（没有判断标准的标签为 nil）
         var id: String { record.id }
+        var over: Bool { line.map { record.mmol > $0 } ?? false }
     }
 
     let items: [Item]
@@ -334,7 +335,7 @@ struct GlucoseOverGallery: View {
     let onSave: (String, String?, [GlucosePhoto]) -> Void
 
     enum Filter: String, CaseIterable, Identifiable {
-        case all = "全部超标", breakfast = "早餐", lunch = "午餐", dinner = "晚餐"
+        case all = "全部", over = "超标", breakfast = "早餐", lunch = "午餐", dinner = "晚餐"
         var id: String { rawValue }
     }
 
@@ -345,10 +346,12 @@ struct GlucoseOverGallery: View {
     private var shown: [Item] {
         let list: [Item]
         switch filter {
-        case .all: list = items
-        case .breakfast: list = items.filter { $0.label.contains("早餐") }
-        case .lunch: list = items.filter { $0.label.contains("午餐") }
-        case .dinner: list = items.filter { $0.label.contains("晚餐") }
+        // 超标：所有超标的（没拍照的也算）；其他：有照片的
+        case .over: list = items.filter(\.over)
+        case .all: list = items.filter { !($0.record.photos ?? []).isEmpty }
+        case .breakfast: list = items.filter { $0.label.contains("早餐") && !($0.record.photos ?? []).isEmpty }
+        case .lunch: list = items.filter { $0.label.contains("午餐") && !($0.record.photos ?? []).isEmpty }
+        case .dinner: list = items.filter { $0.label.contains("晚餐") && !($0.record.photos ?? []).isEmpty }
         }
         return list.sorted { $0.record.date > $1.record.date }
     }
@@ -365,7 +368,7 @@ struct GlucoseOverGallery: View {
                 .pickerStyle(.segmented)
 
                 HStack {
-                    Text("\(list.count) 次超标").font(.headline)
+                    Text(filter == .over ? "\(list.count) 次超标" : "\(list.count) 张 · 超标 \(list.filter(\.over).count) 次").font(.headline)
                     Spacer()
                     if !list.isEmpty {
                         let avg = list.map(\.record.mmol).reduce(0, +) / Double(list.count)
@@ -376,7 +379,7 @@ struct GlucoseOverGallery: View {
                 .padding(.horizontal, 4)
 
                 if list.isEmpty {
-                    Text("这里没有超标的记录 👍").font(.subheadline).foregroundStyle(.secondary)
+                    Text(filter == .over ? "这里没有超标的记录 👍" : "这里还没有带照片的记录").font(.subheadline).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity).padding(30).glassCard(20)
                 }
 
@@ -394,7 +397,7 @@ struct GlucoseOverGallery: View {
             .padding(.bottom, 100)
         }
         .background(AppBackground())
-        .navigationTitle("超标相册")
+        .navigationTitle("血糖相册")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .fullScreenCover(isPresented: Binding(get: { viewing != nil }, set: { if !$0 { viewing = nil } })) {
@@ -417,7 +420,7 @@ struct GlucoseOverGallery: View {
         return VStack(alignment: .leading, spacing: 6) {
             // 固定正方形：照片铺满裁剪，血糖值压在照片底部
             Color.clear
-                .aspectRatio(1, contentMode: .fit)
+                .aspectRatio(3.0 / 4.0, contentMode: .fit)   // 竖图比例，照片基本完整
                 .overlay {
                     if let p = r.photos?.first {
                         GlucosePhotoView(photo: p, missing: p.assetID.map(missing.contains) ?? false, side: 400)
@@ -436,10 +439,12 @@ struct GlucoseOverGallery: View {
                         HStack(alignment: .firstTextBaseline, spacing: 4) {
                             Text(String(format: "%.1f", r.mmol))
                                 .font(.system(size: 28, weight: .heavy, design: .rounded).monospacedDigit())
-                                .foregroundStyle(Color(red: 1, green: 0.45, blue: 0.48))
-                            Text("高 " + String(format: "%.1f", r.mmol - it.line))
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(.white.opacity(0.9))
+                                .foregroundStyle(it.over ? Color(red: 1, green: 0.45, blue: 0.48) : Color(red: 0.45, green: 0.95, blue: 0.65))
+                            if it.over, let line = it.line {
+                                Text("高 " + String(format: "%.1f", r.mmol - line))
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundStyle(.white.opacity(0.9))
+                            }
                         }
                         Text(it.label).font(.caption2.weight(.semibold)).foregroundStyle(.white)
                     }
@@ -458,7 +463,7 @@ struct GlucoseOverGallery: View {
     }
 }
 
-/// 超标相册看大图：上面照片，下面血糖值和备注（备注点一下展开全文），左右滑切换
+/// 血糖相册看大图：上面照片，下面血糖值和备注（备注点一下展开全文），左右滑切换
 struct GlucoseOverViewer: View {
     let items: [GlucoseOverGallery.Item]
     let start: Int
@@ -513,13 +518,16 @@ struct GlucoseOverViewer: View {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(String(format: "%.1f", r.mmol))
                         .font(.system(size: 40, weight: .heavy, design: .rounded).monospacedDigit())
-                        .foregroundStyle(Color(red: 1, green: 0.42, blue: 0.45))
+                        .foregroundStyle(it.over ? Color(red: 1, green: 0.42, blue: 0.45) : Color(red: 0.45, green: 0.95, blue: 0.65))
                     Text("mmol/L").font(.caption).foregroundStyle(.white.opacity(0.6))
-                    Text("超标线 " + String(format: "%.1f", it.line) + "，高 " + String(format: "%.1f", r.mmol - it.line))
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.white.opacity(0.8))
-                        .padding(.horizontal, 8).padding(.vertical, 3)
-                        .background(Capsule().fill(Color.red.opacity(0.3)))
+                    if let line = it.line {
+                        Text(it.over ? "超标线 " + String(format: "%.1f", line) + "，高 " + String(format: "%.1f", r.mmol - line)
+                                     : "正常（< " + String(format: "%.1f", line) + "）")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.white.opacity(0.8))
+                            .padding(.horizontal, 8).padding(.vertical, 3)
+                            .background(Capsule().fill(it.over ? Color.red.opacity(0.3) : Color.green.opacity(0.25)))
+                    }
                     Spacer()
                     Button { onEdit(r) } label: {
                         Image(systemName: "square.and.pencil").font(.title3).foregroundStyle(.white.opacity(0.7))
