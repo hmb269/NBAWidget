@@ -264,11 +264,23 @@ struct PillWidgetView: View {
         let content = ZStack {
             PillCapsule(state: phase, kind: s.shape)
                 .opacity(armedUndo ? 0.45 : 1)
-            if st.kind == .taken || armedUndo {
-                Image(systemName: armedUndo ? "arrow.uturn.backward.circle.fill" : "checkmark.circle.fill")
+            if armedUndo {
+                Image(systemName: "arrow.uturn.backward.circle.fill")
                     .font(.system(size: width * 0.3, weight: .bold))
-                    .foregroundStyle(.white, armedUndo ? Color.orange : pillGreen)
+                    .foregroundStyle(.white, Color.orange)
                     .shadow(color: .black.opacity(0.3), radius: 3)
+            } else if st.kind == .taken {
+                // 吃了：药丸上写几点吃的
+                let f = { () -> String in let x = DateFormatter(); x.dateFormat = "HH:mm"; return st.takenTime.map { x.string(from: $0) } ?? "" }()
+                VStack(spacing: 0) {
+                    Image(systemName: "checkmark").font(.system(size: width * 0.13, weight: .heavy))
+                    Text(f)
+                        .font(.system(size: width * 0.2, weight: .heavy, design: .rounded).monospacedDigit())
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                }
+                .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.45), radius: 3)
             } else if armedExtra {
                 Image(systemName: "plus.circle.fill")
                     .font(.system(size: width * 0.3, weight: .bold))
