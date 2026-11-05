@@ -340,6 +340,7 @@ struct GlucoseOverGallery: View {
 
     @State private var filter: Filter = .all
     @State private var editing: GlucoseRecord?
+    @State private var viewing: Int?        // 正在看大图的是第几张
 
     private var shown: [Item] {
         let list: [Item]
@@ -380,13 +381,13 @@ struct GlucoseOverGallery: View {
                 }
 
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible())], spacing: 14) {
-                    ForEach(list) { it in
-                        Button { editing = it.record } label: { tile(it) }
+                    ForEach(Array(list.enumerated()), id: \.element.id) { i, it in
+                        Button { viewing = i } label: { tile(it) }
                             .buttonStyle(.plain)
                     }
                 }
 
-                Text("超标线：空腹 6.1，餐后1小时 8.6，餐后2小时及以后 7.8（mmol/L）。点照片可以看大图、改备注。")
+                Text("超标线：空腹 6.1，餐后1小时 8.6，餐后2小时及以后 7.8（mmol/L）。点照片看大图，左右滑看下一张。")
                     .font(.caption2).foregroundStyle(.tertiary)
             }
             .padding(16)
@@ -396,6 +397,12 @@ struct GlucoseOverGallery: View {
         .navigationTitle("超标相册")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
+        .fullScreenCover(isPresented: Binding(get: { viewing != nil }, set: { if !$0 { viewing = nil } })) {
+            GlucoseOverViewer(items: list, start: viewing ?? 0, missing: missing) { r in
+                viewing = nil
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { editing = r }
+            }
+        }
         .sheet(item: $editing) { r in
             GlucoseRecordSheet(record: r, tag: items.first { $0.id == r.id }?.label,
                                owner: owners[r.id] ?? GlucosePeople.me, missing: missing) { note, photos in
@@ -446,6 +453,98 @@ struct GlucoseOverGallery: View {
                 .foregroundStyle(r.note?.isEmpty == false ? Color.primary : Color.secondary.opacity(0.6))
                 .lineLimit(2)
                 .frame(maxWidth: .infinity, minHeight: 30, alignment: .topLeading)
+        }
+    }
+}
+
+/// 超标相册看大图：上面照片，下面血糖值和备注（备注点一下展开全文），左右滑切换
+struct GlucoseOverViewer: View {
+    let items: [GlucoseOverGallery.Item]
+    let start: Int
+    let missing: Set<String>
+    let onEdit: (GlucoseRecord) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var index = 0
+    @State private var expanded = false
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Color.black.ignoresSafeArea()
+            TabView(selection: $index) {
+                ForEach(Array(items.enumerated()), id: \.element.id) { i, it in
+                    page(it).tag(i)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .onChange(of: index) { _, _ in expanded = false }
+
+            HStack(spacing: 12) {
+                Text("\(index + 1) / \(items.count)").font(.subheadline.monospacedDigit()).foregroundStyle(.white.opacity(0.7))
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark.circle.fill").font(.title).foregroundStyle(.white.opacity(0.85))
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
+        }
+        .onAppear { index = start }
+    }
+
+    private func page(_ it: GlucoseOverGallery.Item) -> some View {
+        let r = it.record
+        let f = DateFormatter(); f.locale = Locale(identifier: "zh_CN"); f.dateFormat = "M月d日 EEE HH:mm"
+        return VStack(spacing: 0) {
+            Spacer(minLength: 50)
+            Group {
+                if let p = r.photos?.first {
+                    GlucosePhotoView(photo: p, missing: p.assetID.map(missing.contains) ?? false, side: 1600, fit: true)
+                } else {
+                    VStack(spacing: 8) {
+                        Image(systemName: "fork.knife").font(.system(size: 40))
+                        Text("这条没有拍照").font(.footnote)
+                    }
+                    .foregroundStyle(.white.opacity(0.3))
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            // 照片下面：血糖值 + 餐点时间 + 备注
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(String(format: "%.1f", r.mmol))
+                        .font(.system(size: 40, weight: .heavy, design: .rounded).monospacedDigit())
+                        .foregroundStyle(Color(red: 1, green: 0.42, blue: 0.45))
+                    Text("mmol/L").font(.caption).foregroundStyle(.white.opacity(0.6))
+                    Text("超标线 " + String(format: "%.1f", it.line) + "，高 " + String(format: "%.1f", r.mmol - it.line))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.8))
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .background(Capsule().fill(Color.red.opacity(0.3)))
+                    Spacer()
+                    Button { onEdit(r) } label: {
+                        Image(systemName: "square.and.pencil").font(.title3).foregroundStyle(.white.opacity(0.7))
+                    }
+                }
+                Text(it.label + " · " + f.string(from: r.date)).font(.subheadline).foregroundStyle(.white.opacity(0.75))
+                if let n = r.note, !n.isEmpty {
+                    Text(n)
+                        .font(.body)
+                        .foregroundStyle(.white)
+                        .lineLimit(expanded ? nil : 2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .onTapGesture { withAnimation(.easeOut(duration: 0.2)) { expanded.toggle() } }
+                    if !expanded && n.count > 40 {
+                        Text("点一下看全部备注").font(.caption2).foregroundStyle(.white.opacity(0.4))
+                    }
+                } else {
+                    Text("没有备注").font(.subheadline).foregroundStyle(.white.opacity(0.35))
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(LinearGradient(colors: [.clear, .white.opacity(0.06)], startPoint: .top, endPoint: .bottom))
         }
     }
 }

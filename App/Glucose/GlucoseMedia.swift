@@ -155,6 +155,7 @@ struct GlucosePhotoView: View {
     let photo: GlucosePhoto
     var missing = false
     var side: CGFloat = 400
+    var fit = false          // 看大图时完整显示，不裁剪
 
     @State private var image: UIImage?
 
@@ -162,7 +163,8 @@ struct GlucosePhotoView: View {
         ZStack(alignment: .topTrailing) {
             Group {
                 if let image {
-                    Image(uiImage: image).resizable().scaledToFill()
+                    if fit { Image(uiImage: image).resizable().scaledToFit() }
+                    else { Image(uiImage: image).resizable().scaledToFill() }
                 } else {
                     Rectangle().fill(Color.white.opacity(0.08))
                         .overlay(Image(systemName: "photo").foregroundStyle(.secondary))
