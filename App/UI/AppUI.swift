@@ -507,7 +507,7 @@ struct NBAView: View {
     private let favorites = myTeams
 
     var body: some View {
-        PageScroll(title: "NBA", subtitle: "北京时间 · 湖人、76人排在最前") {
+        PageScroll(title: "NBA", subtitle: "北京时间 · 点比赛看球员数据") {
             if let errorText {
                 Text(errorText).font(.footnote).foregroundStyle(.orange)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -547,7 +547,13 @@ struct NBAView: View {
             } else {
                 ForEach(Array(sorted(games).enumerated()), id: \.element.id) { i, g in
                     if i > 0 { Divider().overlay(Color.white.opacity(0.06)) }
-                    CompactGameRow(game: g, favorites: favorites)
+                    // 点一场比赛进去看比分和球员数据
+                    NavigationLink {
+                        NBAGameDetailView(game: g)
+                    } label: {
+                        CompactGameRow(game: g, favorites: favorites).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }
