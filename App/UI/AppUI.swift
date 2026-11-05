@@ -79,7 +79,7 @@ struct PageScroll<Content: View>: View {
                 content()
             }
             .padding(.horizontal, 16)
-            .padding(.bottom, 16)
+            .padding(.bottom, 110)   // 留出底部标签栏的位置，最后一条不会被挡住
         }
         .background(AppBackground())
         .toolbar(.hidden, for: .navigationBar)

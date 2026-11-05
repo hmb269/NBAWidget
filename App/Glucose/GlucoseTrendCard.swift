@@ -308,3 +308,144 @@ struct GlucoseTrendCard: View {
         return f.string(from: d)
     }
 }
+
+// MARK: - 超标相册
+
+/// 这条血糖的超标线（空腹 6.1、餐后1小时 8.6、餐后2小时及以后 7.8）；其他标签不判断
+func glucoseSafeLine(_ label: String?) -> Double? {
+    guard let t = label else { return nil }
+    if t == "空腹" { return 6.1 }
+    if t.contains("后1小时") { return 8.6 }
+    if t.contains("餐后") { return 7.8 }
+    return nil
+}
+
+struct GlucoseOverGallery: View {
+    struct Item: Identifiable {
+        let record: GlucoseRecord
+        let label: String
+        let line: Double
+        var id: String { record.id }
+    }
+
+    let items: [Item]
+    let missing: Set<String>
+    let owners: [String: String]
+    let onSave: (String, String?, [GlucosePhoto]) -> Void
+
+    enum Filter: String, CaseIterable, Identifiable {
+        case all = "全部超标", breakfast = "早餐", lunch = "午餐", dinner = "晚餐"
+        var id: String { rawValue }
+    }
+
+    @State private var filter: Filter = .all
+    @State private var editing: GlucoseRecord?
+
+    private var shown: [Item] {
+        let list: [Item]
+        switch filter {
+        case .all: list = items
+        case .breakfast: list = items.filter { $0.label.contains("早餐") }
+        case .lunch: list = items.filter { $0.label.contains("午餐") }
+        case .dinner: list = items.filter { $0.label.contains("晚餐") }
+        }
+        return list.sorted { $0.record.date > $1.record.date }
+    }
+
+    var body: some View {
+        let list = shown
+        ScrollView {
+            VStack(spacing: 14) {
+                Picker("", selection: $filter) {
+                    ForEach(Filter.allCases) { f in
+                        Text(f.rawValue).tag(f)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                HStack {
+                    Text("\(list.count) 次超标").font(.headline)
+                    Spacer()
+                    if !list.isEmpty {
+                        let avg = list.map(\.record.mmol).reduce(0, +) / Double(list.count)
+                        Text("平均 " + String(format: "%.1f", avg) + " · 最高 " + String(format: "%.1f", list.map(\.record.mmol).max() ?? 0))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.horizontal, 4)
+
+                if list.isEmpty {
+                    Text("这里没有超标的记录 👍").font(.subheadline).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity).padding(30).glassCard(20)
+                }
+
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible())], spacing: 14) {
+                    ForEach(list) { it in
+                        Button { editing = it.record } label: { tile(it) }
+                            .buttonStyle(.plain)
+                    }
+                }
+
+                Text("超标线：空腹 6.1，餐后1小时 8.6，餐后2小时及以后 7.8（mmol/L）。点照片可以看大图、改备注。")
+                    .font(.caption2).foregroundStyle(.tertiary)
+            }
+            .padding(16)
+            .padding(.bottom, 100)
+        }
+        .background(AppBackground())
+        .navigationTitle("超标相册")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
+        .sheet(item: $editing) { r in
+            GlucoseRecordSheet(record: r, tag: items.first { $0.id == r.id }?.label,
+                               owner: owners[r.id] ?? GlucosePeople.me, missing: missing) { note, photos in
+                onSave(r.id, note, photos)
+            }
+        }
+    }
+
+    private func tile(_ it: Item) -> some View {
+        let r = it.record
+        let f = DateFormatter(); f.locale = Locale(identifier: "zh_CN"); f.dateFormat = "M月d日 HH:mm"
+        return VStack(alignment: .leading, spacing: 6) {
+            ZStack(alignment: .bottomLeading) {
+                Group {
+                    if let p = r.photos?.first {
+                        GlucosePhotoView(photo: p, missing: p.assetID.map(missing.contains) ?? false, side: 400)
+                    } else {
+                        LinearGradient(colors: [Color(red: 0.35, green: 0.12, blue: 0.2), Color(red: 0.15, green: 0.08, blue: 0.18)],
+                                       startPoint: .topLeading, endPoint: .bottomTrailing)
+                            .overlay(Image(systemName: "fork.knife").font(.title).foregroundStyle(.white.opacity(0.25)))
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .aspectRatio(1, contentMode: .fill)
+                .clipped()
+
+                // 底部渐变 + 血糖值
+                LinearGradient(colors: [.clear, .black.opacity(0.75)], startPoint: .center, endPoint: .bottom)
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(alignment: .firstTextBaseline, spacing: 3) {
+                        Text(String(format: "%.1f", r.mmol))
+                            .font(.system(size: 26, weight: .heavy, design: .rounded).monospacedDigit())
+                            .foregroundStyle(Color(red: 1, green: 0.42, blue: 0.45))
+                        Text("超 " + String(format: "%.1f", r.mmol - it.line))
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.85))
+                    }
+                    Text(it.label).font(.caption2.weight(.semibold)).foregroundStyle(.white)
+                }
+                .padding(8)
+            }
+            .aspectRatio(1, contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+            Text(f.string(from: r.date)).font(.caption2).foregroundStyle(.secondary)
+            Text(r.note?.isEmpty == false ? r.note! : "没有备注")
+                .font(.caption)
+                .foregroundStyle(r.note?.isEmpty == false ? Color.primary : Color.secondary.opacity(0.6))
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, minHeight: 30, alignment: .topLeading)
+        }
+    }
+}

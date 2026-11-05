@@ -255,6 +255,7 @@ struct NBAGameDetailView: View {
                 Text("数据来自 ESPN，比赛进行中每 30 秒自动刷新；点球员名字可以收藏").font(.caption2).foregroundStyle(.tertiary)
             }
             .padding(16)
+            .padding(.bottom, 100)
         }
         .background(AppBackground())
         .navigationTitle("\(game.away) vs \(game.home)")

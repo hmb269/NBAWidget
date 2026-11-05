@@ -291,6 +291,8 @@ struct GlucoseView: View {
                 editing = records.first { $0.id == id }
             })
 
+            overAlbumCard
+
             if !people.isEmpty {
                 Picker("显示", selection: $filter) {
                     Text("全部").tag("全部")
@@ -395,6 +397,48 @@ struct GlucoseView: View {
             if records.isEmpty { await readFromHealth() }
             refreshMissing()
         }
+    }
+
+    // MARK: 超标相册入口
+
+    private var overItems: [GlucoseOverGallery.Item] {
+        shown.compactMap { r in
+            let l = label(r)
+            guard let line = glucoseSafeLine(l), r.mmol > line else { return nil }
+            return GlucoseOverGallery.Item(record: r, label: l ?? "", line: line)
+        }
+    }
+
+    private var overAlbumCard: some View {
+        let items = overItems.sorted { $0.record.date > $1.record.date }
+        return NavigationLink {
+            GlucoseOverGallery(items: items, missing: missingIDs, owners: owners) { id, note, photos in
+                updateMedia(id, note: note, photos: photos)
+            }
+        } label: {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Label("超标相册", systemImage: "photo.stack").font(.headline)
+                        .foregroundStyle(Color(red: 1, green: 0.42, blue: 0.45))
+                    Text(items.isEmpty ? "没有超标记录" : "\(items.count) 次超标 · 看看吃了什么")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                HStack(spacing: -10) {
+                    ForEach(items.compactMap { $0.record.photos?.first }.prefix(4), id: \.id) { p in
+                        GlucosePhotoView(photo: p, missing: false, side: 120)
+                            .frame(width: 38, height: 38)
+                            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(Color.black.opacity(0.4), lineWidth: 1))
+                    }
+                }
+                Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+            }
+            .padding(16)
+            .glassCard(22)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: 一行
