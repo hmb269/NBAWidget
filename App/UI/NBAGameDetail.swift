@@ -31,6 +31,7 @@ struct GameSummary {
 
 enum NBAGameAPI {
     static func summary(_ id: String) async throws -> GameSummary {
+        await NBANames.refreshIfNeeded()
         let url = URL(string: "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event=\(id)")!
         let (data, _) = try await URLSession.shared.data(from: url)
         guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
@@ -40,6 +41,16 @@ enum NBAGameAPI {
         let comp = (header?["competitions"] as? [[String: Any]])?.first ?? [:]
         let status = ((comp["status"] as? [String: Any])?["type"] as? [String: Any]) ?? [:]
         let competitors = (comp["competitors"] as? [[String: Any]]) ?? []
+
+        // 标准位置（PG/SG/SF/PF/C）从两队名单里查
+        var positions: [String: String] = [:]
+        await withTaskGroup(of: [String: String].self) { g in
+            for c in competitors {
+                guard let tid = (c["team"] as? [String: Any])?["id"] as? String else { continue }
+                g.addTask { await roster(tid) }
+            }
+            for await m in g { positions.merge(m) { a, _ in a } }
+        }
 
         // 球员数据按球队代码分组
         var boxByCode: [String: ([BoxPlayer], [String: String])] = [:]
@@ -56,14 +67,13 @@ enum NBAGameAPI {
             let players: [BoxPlayer] = ((st["athletes"] as? [[String: Any]]) ?? []).compactMap { a in
                 guard let ath = a["athlete"] as? [String: Any] else { return nil }
                 let full = ath["displayName"] as? String ?? ""
-                let short = ath["shortName"] as? String ?? full
                 let stats = (a["stats"] as? [String]) ?? []
                 let dnp = (a["didNotPlay"] as? Bool) == true || stats.isEmpty
                 return BoxPlayer(
                     id: ath["id"] as? String ?? full,
-                    name: NBAPlayers.chinese[full] ?? short,
+                    name: NBANames.short(full),
                     fullName: full,
-                    position: (ath["position"] as? [String: Any])?["abbreviation"] as? String ?? "",
+                    position: positions[ath["id"] as? String ?? ""] ?? ((ath["position"] as? [String: Any])?["abbreviation"] as? String ?? ""),
                     starter: a["starter"] as? Bool ?? false,
                     dnp: dnp ? ((a["reason"] as? String).map(NBAPlayers.reason) ?? "未上场") : nil,
                     stats: row(stats))
@@ -87,6 +97,38 @@ enum NBAGameAPI {
         return GameSummary(state: status["state"] as? String ?? "",
                            detail: status["shortDetail"] as? String ?? "",
                            away: team("away"), home: team("home"))
+    }
+}
+
+extension NBAGameAPI {
+    /// 球队名单：球员 id → 标准位置
+    static func roster(_ teamId: String) async -> [String: String] {
+        guard let url = URL(string: "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/\(teamId)/roster"),
+              let res = try? await URLSession.shared.data(from: url),
+              let root = (try? JSONSerialization.jsonObject(with: res.0)) as? [String: Any] else { return [:] }
+        var m: [String: String] = [:]
+        // athletes 可能直接是球员数组，也可能按位置分组
+        var list = (root["athletes"] as? [[String: Any]]) ?? []
+        if let first = list.first, first["items"] != nil {
+            list = list.flatMap { ($0["items"] as? [[String: Any]]) ?? [] }
+        }
+        for a in list {
+            if let id = a["id"] as? String, let pos = (a["position"] as? [String: Any])?["abbreviation"] as? String {
+                m[id] = pos
+            }
+        }
+        return m
+    }
+}
+
+/// 收藏的球员（按 ESPN 球员 id）
+enum NBAFavPlayers {
+    private static let key = "nbaFavPlayers"
+    static var ids: Set<String> { Set(UserDefaults.standard.stringArray(forKey: key) ?? []) }
+    static func toggle(_ id: String) {
+        var s = ids
+        if s.contains(id) { s.remove(id) } else { s.insert(id) }
+        UserDefaults.standard.set(Array(s), forKey: key)
     }
 }
 
@@ -140,16 +182,15 @@ struct NBAGameDetailView: View {
     @State private var error: String?
     @State private var side = 0          // 0 客队 1 主队
     @State private var sortKey = "PTS"
+    @State private var favs = NBAFavPlayers.ids
     private let red = Color(red: 1.0, green: 0.30, blue: 0.35)
 
     var body: some View {
         ScrollView {
             VStack(spacing: 14) {
-                scoreCard
+                headerCard
                 if let s {
-                    if !s.away.quarters.isEmpty { quarterCard(s) }
                     if !s.away.players.isEmpty || !s.home.players.isEmpty {
-                        leadersCard(s)
                         boxCard(s)
                     } else {
                         Text(s.state == "pre" ? "比赛还没开始，开赛后这里会显示球员数据" : "暂时还没有球员数据")
@@ -161,7 +202,7 @@ struct NBAGameDetailView: View {
                 } else {
                     ProgressView().padding(30)
                 }
-                Text("数据来自 ESPN，比赛进行中每 30 秒自动刷新").font(.caption2).foregroundStyle(.tertiary)
+                Text("数据来自 ESPN，比赛进行中每 30 秒自动刷新；点球员名字可以收藏").font(.caption2).foregroundStyle(.tertiary)
             }
             .padding(16)
         }
@@ -172,7 +213,6 @@ struct NBAGameDetailView: View {
         .refreshable { await load() }
         .task {
             await load()
-            // 比赛进行中自动刷新
             while !Task.isCancelled, (s?.state ?? game.state) == "in" {
                 try? await Task.sleep(for: .seconds(30))
                 await load()
@@ -181,40 +221,57 @@ struct NBAGameDetailView: View {
     }
 
     private func load() async {
-        do { s = try await NBAGameAPI.summary(game.id); error = nil }
-        catch { if s == nil { self.error = "加载失败：\(error.localizedDescription)" } }
+        do {
+            let r = try await NBAGameAPI.summary(game.id)
+            if s == nil, myTeams.contains(r.home.code) && !myTeams.contains(r.away.code) { side = 1 }
+            s = r; error = nil
+        } catch { if s == nil { self.error = "加载失败：\(error.localizedDescription)" } }
     }
 
-    // MARK: 比分
+    // MARK: 比分 + 每节 + 两队最佳（一张卡片）
 
-    private var scoreCard: some View {
+    private var headerCard: some View {
         let state = s?.state ?? game.state
         let awayScore = s?.away.score ?? "\(game.awayScore)"
         let homeScore = s?.home.score ?? "\(game.homeScore)"
         let aw = Int(awayScore) ?? 0, hm = Int(homeScore) ?? 0
-        return HStack {
-            teamBlock(game.away, game.awayCode, "客队")
-            Spacer()
-            VStack(spacing: 4) {
-                if state == "pre" {
-                    Text(NBAService.timeString(game.time)).font(.system(size: 34, weight: .bold, design: .rounded))
-                    Text("北京时间开赛").font(.caption).foregroundStyle(.secondary)
-                } else {
-                    HStack(spacing: 10) {
-                        Text(awayScore).foregroundStyle(state == "post" && aw < hm ? Color.secondary : Color.primary)
-                        Text("-").foregroundStyle(.secondary)
-                        Text(homeScore).foregroundStyle(state == "post" && hm < aw ? Color.secondary : Color.primary)
+        return VStack(spacing: 16) {
+            // 比分
+            HStack(alignment: .center, spacing: 0) {
+                teamBlock(game.away, game.awayCode, "客队")
+                VStack(spacing: 4) {
+                    if state == "pre" {
+                        Text(NBAService.timeString(game.time)).font(.system(size: 34, weight: .bold, design: .rounded))
+                        Text("北京时间开赛").font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        HStack(spacing: 8) {
+                            Text(awayScore).foregroundStyle(state == "post" && aw < hm ? Color.secondary : Color.primary)
+                            Text(":").foregroundStyle(.tertiary)
+                            Text(homeScore).foregroundStyle(state == "post" && hm < aw ? Color.secondary : Color.primary)
+                        }
+                        .font(.system(size: 36, weight: .heavy, design: .rounded).monospacedDigit())
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                        .fixedSize()
+                        Text(state == "post" ? "已结束" : (s?.detail ?? game.liveText)
+                                .replacingOccurrences(of: "Halftime", with: "中场")
+                                .replacingOccurrences(of: "End of ", with: ""))
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(state == "in" ? red : .secondary)
                     }
-                    .font(.system(size: 38, weight: .heavy, design: .rounded).monospacedDigit())
-                    Text(state == "post" ? "已结束" : (s?.detail ?? game.liveText)
-                            .replacingOccurrences(of: "Halftime", with: "中场")
-                            .replacingOccurrences(of: "End of ", with: ""))
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(state == "in" ? red : .secondary)
                 }
+                .frame(maxWidth: .infinity)
+                teamBlock(game.home, game.homeCode, "主队")
             }
-            Spacer()
-            teamBlock(game.home, game.homeCode, "主队")
+
+            if let s, !s.away.quarters.isEmpty {
+                Divider().overlay(Color.white.opacity(0.08))
+                quarters(s)
+            }
+            if let s, !s.away.players.isEmpty {
+                Divider().overlay(Color.white.opacity(0.08))
+                leaders(s)
+            }
         }
         .padding(18)
         .glassCard(24)
@@ -223,41 +280,36 @@ struct NBAGameDetailView: View {
     private func teamBlock(_ name: String, _ code: String, _ tag: String) -> some View {
         VStack(spacing: 4) {
             Text(name).font(.title3.weight(.bold)).foregroundStyle(myTeams.contains(code) ? red : .primary)
+                .lineLimit(1).minimumScaleFactor(0.7)
             Text(tag).font(.caption2).foregroundStyle(.secondary)
         }
-        .frame(width: 80)
+        .frame(width: 76)
     }
 
-    // MARK: 每节
-
-    private func quarterCard(_ s: GameSummary) -> some View {
+    private func quarters(_ s: GameSummary) -> some View {
         let n = max(s.away.quarters.count, s.home.quarters.count)
-        let heads = (0..<n).map { $0 < 4 ? "\($0 + 1)" : "OT\($0 - 3)" }
-        return VStack(spacing: 8) {
-            row("", heads + ["总"], bold: false, dim: true)
-            Divider().overlay(Color.white.opacity(0.08))
-            row(s.away.name, s.away.quarters + [s.away.score], bold: true, dim: false)
-            row(s.home.name, s.home.quarters + [s.home.score], bold: true, dim: false)
+        let heads = (0..<n).map { $0 < 4 ? "第\($0 + 1)节" : "加时\($0 - 3)" }
+        return VStack(spacing: 6) {
+            qRow("", heads + ["总分"], head: true)
+            qRow(s.away.name, s.away.quarters + [s.away.score], head: false)
+            qRow(s.home.name, s.home.quarters + [s.home.score], head: false)
         }
-        .padding(16)
-        .glassCard(20)
     }
 
-    private func row(_ title: String, _ cells: [String], bold: Bool, dim: Bool) -> some View {
+    private func qRow(_ title: String, _ cells: [String], head: Bool) -> some View {
         HStack(spacing: 0) {
-            Text(title).font(.subheadline.weight(.semibold)).frame(width: 70, alignment: .leading)
+            Text(title).font(.subheadline.weight(.semibold)).frame(width: 60, alignment: .leading)
             ForEach(Array(cells.enumerated()), id: \.offset) { i, c in
                 Text(c)
-                    .font(.system(size: 14, weight: i == cells.count - 1 && bold ? .heavy : .medium, design: .rounded).monospacedDigit())
-                    .foregroundStyle(dim ? Color.secondary : (i == cells.count - 1 ? Color.orange : Color.primary))
+                    .font(head ? .system(size: 10, weight: .medium) : .system(size: 15, weight: i == cells.count - 1 ? .heavy : .medium, design: .rounded).monospacedDigit())
+                    .foregroundStyle(head ? Color.secondary : (i == cells.count - 1 ? Color.orange : Color.primary))
+                    .lineLimit(1).minimumScaleFactor(0.7)
                     .frame(maxWidth: .infinity)
             }
         }
     }
 
-    // MARK: 两队最佳
-
-    private func leadersCard(_ s: GameSummary) -> some View {
+    private func leaders(_ s: GameSummary) -> some View {
         VStack(spacing: 10) {
             ForEach(Array([("得分", "PTS"), ("篮板", "REB"), ("助攻", "AST")].enumerated()), id: \.offset) { _, item in
                 let (title, key) = item
@@ -270,24 +322,25 @@ struct NBAGameDetailView: View {
                 }
             }
         }
-        .padding(16)
-        .glassCard(20)
     }
 
     private func leader(_ p: BoxPlayer?, _ key: String, alignment: HorizontalAlignment) -> some View {
-        VStack(alignment: alignment, spacing: 1) {
+        HStack(spacing: 8) {
+            if alignment == .trailing { Spacer(minLength: 0) }
+            if alignment == .trailing { Text(p?.name ?? "").font(.subheadline).foregroundStyle(.secondary).lineLimit(1) }
             Text(p.map { "\($0.n(key))" } ?? "-").font(.system(size: 22, weight: .heavy, design: .rounded).monospacedDigit())
-            Text(p?.name ?? "").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            if alignment == .leading { Text(p?.name ?? "").font(.subheadline).foregroundStyle(.secondary).lineLimit(1) }
+            if alignment == .leading { Spacer(minLength: 0) }
         }
-        .frame(maxWidth: .infinity, alignment: alignment == .leading ? .leading : .trailing)
+        .frame(maxWidth: .infinity)
     }
 
     // MARK: 球员数据
 
     private let cols: [(String, String, CGFloat)] = [
-        ("MIN", "时间", 34), ("PTS", "得分", 34), ("REB", "篮板", 34), ("AST", "助攻", 34),
-        ("FG", "投篮", 46), ("3PT", "三分", 42), ("FT", "罚球", 42),
-        ("STL", "抢断", 34), ("BLK", "盖帽", 34), ("TO", "失误", 34), ("PF", "犯规", 34), ("+/-", "+/-", 38),
+        ("PTS", "得分", 36), ("REB", "篮板", 34), ("AST", "助攻", 34),
+        ("FG", "投篮", 48), ("3PT", "三分", 44), ("FT", "罚球", 44),
+        ("STL", "抢断", 34), ("BLK", "盖帽", 34), ("TO", "失误", 34), ("PF", "犯规", 34), ("+/-", "+/-", 38), ("MIN", "时间", 34),
     ]
 
     private func boxCard(_ s: GameSummary) -> some View {
@@ -305,10 +358,8 @@ struct NBAGameDetailView: View {
             }
             .pickerStyle(.segmented)
 
-            Text("点表头可以按那一项排序，左右滑动看更多数据").font(.caption2).foregroundStyle(.tertiary)
-
             HStack(alignment: .top, spacing: 0) {
-                // 名字固定在左边
+                // 名字固定在左边：首发白色加粗 + 位置，替补灰色；收藏的球员黄色带星
                 VStack(alignment: .leading, spacing: 0) {
                     Button { sortKey = "starter" } label: {
                         Text("球员").font(.caption2.weight(.semibold)).foregroundStyle(sortKey == "starter" ? Color.orange : Color.secondary)
@@ -316,15 +367,32 @@ struct NBAGameDetailView: View {
                     .buttonStyle(.plain)
                     .frame(height: 26, alignment: .leading)
                     ForEach(players) { p in
-                        HStack(spacing: 4) {
-                            Text(p.name).font(.subheadline.weight(p.starter ? .semibold : .regular)).lineLimit(1)
-                            if p.starter { Text(p.position).font(.system(size: 9)).foregroundStyle(.secondary) }
+                        let fav = favs.contains(p.id)
+                        Button {
+                            NBAFavPlayers.toggle(p.id); favs = NBAFavPlayers.ids
+                        } label: {
+                            HStack(spacing: 4) {
+                                if fav { Image(systemName: "star.fill").font(.system(size: 9)).foregroundStyle(.yellow) }
+                                Text(p.name)
+                                    .font(.system(size: 15, weight: p.starter || fav ? .bold : .regular))
+                                    .foregroundStyle(fav ? Color.yellow : (p.starter ? Color.white : Color.white.opacity(0.6)))
+                                    .lineLimit(1).minimumScaleFactor(0.7)
+                                if !p.position.isEmpty {
+                                    Text(p.position)
+                                        .font(.system(size: 9, weight: .bold))
+                                        .foregroundStyle(p.starter ? Color.black : Color.secondary)
+                                        .padding(.horizontal, 3).padding(.vertical, 1)
+                                        .background(RoundedRectangle(cornerRadius: 3).fill(p.starter ? Color.orange.opacity(0.9) : Color.white.opacity(0.1)))
+                                }
+                            }
+                            .frame(height: 32, alignment: .leading)
+                            .contentShape(Rectangle())
                         }
-                        .frame(height: 30, alignment: .leading)
+                        .buttonStyle(.plain)
                     }
-                    Text("全队").font(.subheadline.weight(.bold)).frame(height: 30, alignment: .leading)
+                    Text("全队").font(.subheadline.weight(.bold)).frame(height: 32, alignment: .leading)
                 }
-                .frame(width: 96, alignment: .leading)
+                .frame(width: 104, alignment: .leading)
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 0) {
@@ -340,15 +408,17 @@ struct NBAGameDetailView: View {
                         }
                         .frame(height: 26)
                         ForEach(players) { p in
+                            let fav = favs.contains(p.id)
                             HStack(spacing: 4) {
                                 ForEach(Array(cols.enumerated()), id: \.offset) { _, c in
                                     Text(p.stats[c.0] ?? "-")
-                                        .font(.system(size: 13, weight: c.0 == "PTS" ? .bold : .regular, design: .rounded).monospacedDigit())
-                                        .foregroundStyle(c.0 == "PTS" ? Color.orange : Color.primary)
+                                        .font(.system(size: c.0 == "PTS" ? 16 : 13, weight: c.0 == "PTS" ? .heavy : .regular, design: .rounded).monospacedDigit())
+                                        .foregroundStyle(c.0 == "PTS" ? Color.orange : (p.starter || fav ? Color.primary : Color.secondary))
                                         .frame(width: c.2)
                                 }
                             }
-                            .frame(height: 30)
+                            .frame(height: 32)
+                            .background(fav ? Color.yellow.opacity(0.08) : .clear)
                         }
                         HStack(spacing: 4) {
                             ForEach(Array(cols.enumerated()), id: \.offset) { _, c in
@@ -357,10 +427,12 @@ struct NBAGameDetailView: View {
                                     .frame(width: c.2)
                             }
                         }
-                        .frame(height: 30)
+                        .frame(height: 32)
                     }
                 }
             }
+
+            Text("橙色位置标签是首发 · 点名字收藏球员 · 点表头排序 · 左右滑看更多").font(.caption2).foregroundStyle(.tertiary)
 
             if !dnp.isEmpty {
                 Text("未上场：" + dnp.map { "\($0.name)（\($0.dnp ?? "")）" }.joined(separator: "、"))
@@ -369,9 +441,5 @@ struct NBAGameDetailView: View {
         }
         .padding(16)
         .glassCard(20)
-        .onAppear {
-            // 有我关注的球队，默认先看那一队
-            if myTeams.contains(s.home.code) && !myTeams.contains(s.away.code) { side = 1 }
-        }
     }
 }
