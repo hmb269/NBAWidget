@@ -334,12 +334,22 @@ struct GlucoseOverGallery: View {
     let owners: [String: String]
     let onSave: (String, String?, [GlucosePhoto]) -> Void
 
+    enum OverSub: String, CaseIterable, Identifiable {
+        case all = "全部", fasting = "空腹", breakfast = "早餐", lunch = "午餐", dinner = "晚餐"
+        var id: String { rawValue }
+        func match(_ label: String) -> Bool {
+            self == .all || label.contains(rawValue)
+        }
+    }
+
     enum Filter: String, CaseIterable, Identifiable {
         case all = "全部", over = "超标", breakfast = "早餐", lunch = "午餐", dinner = "晚餐"
         var id: String { rawValue }
     }
 
     @State private var filter: Filter = .all
+    @State private var overSub: OverSub = .all    // 超标里再按餐点分
+    @State private var atTop = true                // 滚到下面时显示「回到顶部」
     @State private var editing: GlucoseRecord?
     @State private var viewing: Int?        // 正在看大图的是第几张
     @State private var lastSeen: String?    // 大图最后停在哪张，返回时滚到那里
@@ -348,7 +358,7 @@ struct GlucoseOverGallery: View {
         let list: [Item]
         switch filter {
         // 超标：所有超标的（没拍照的也算）；其他：有照片的
-        case .over: list = items.filter(\.over)
+        case .over: list = items.filter { $0.over && overSub.match($0.label) }
         case .all: list = items.filter { !($0.record.photos ?? []).isEmpty }
         case .breakfast: list = items.filter { $0.label.contains("早餐") && !($0.record.photos ?? []).isEmpty }
         case .lunch: list = items.filter { $0.label.contains("午餐") && !($0.record.photos ?? []).isEmpty }
@@ -368,6 +378,28 @@ struct GlucoseOverGallery: View {
                     }
                 }
                 .pickerStyle(.segmented)
+                .id("top")
+                .background(GeometryReader { g in
+                    Color.clear.preference(key: GalleryTopKey.self, value: g.frame(in: .named("gallery")).minY)
+                })
+
+                if filter == .over {
+                    // 超标里再细分
+                    HStack(spacing: 8) {
+                        ForEach(OverSub.allCases) { s in
+                            let n = items.filter { $0.over && s.match($0.label) }.count
+                            Button { withAnimation(.snappy) { overSub = s } } label: {
+                                Text(s.rawValue + (n > 0 ? " \(n)" : ""))
+                                    .font(.footnote.weight(overSub == s ? .bold : .regular))
+                                    .foregroundStyle(overSub == s ? Color.white : Color.secondary)
+                                    .padding(.horizontal, 11).padding(.vertical, 6)
+                                    .background(Capsule().fill(overSub == s ? Color(red: 1, green: 0.42, blue: 0.45).opacity(0.55) : Color.white.opacity(0.08)))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                }
 
                 HStack {
                     Text(filter == .over ? "\(list.count) 次超标" : "\(list.count) 张 · 超标 \(list.filter(\.over).count) 次").font(.headline)
@@ -393,11 +425,35 @@ struct GlucoseOverGallery: View {
                     }
                 }
 
-                Text("超标线：空腹 6.1，餐后1小时 8.6，餐后2小时及以后 7.8（mmol/L）。点照片看大图，左右滑看下一张。")
+                Text("超标线：空腹 6.1，餐后1小时 8.6，餐后2小时及以后 7.8（mmol/L）。点照片看大图，左右滑看下一张，双指或双击放大。")
                     .font(.caption2).foregroundStyle(.tertiary)
             }
             .padding(16)
             .padding(.bottom, 100)
+        }
+        .coordinateSpace(name: "gallery")
+        .onPreferenceChange(GalleryTopKey.self) { y in
+            let top = y > -300
+            if top != atTop { withAnimation(.easeInOut(duration: 0.2)) { atTop = top } }
+        }
+        // 回到顶部
+        .overlay(alignment: .bottomTrailing) {
+            if !atTop {
+                Button {
+                    withAnimation { proxy.scrollTo("top", anchor: .top) }
+                } label: {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 46, height: 46)
+                        .background(Circle().fill(.ultraThinMaterial))
+                        .overlay(Circle().stroke(Color.white.opacity(0.2), lineWidth: 0.5))
+                        .shadow(color: .black.opacity(0.3), radius: 6, y: 2)
+                }
+                .padding(.trailing, 20)
+                .padding(.bottom, 108)
+                .transition(.scale.combined(with: .opacity))
+            }
         }
         .fullScreenCover(isPresented: Binding(get: { viewing != nil }, set: { if !$0 { viewing = nil } }),
                          onDismiss: {
@@ -472,6 +528,75 @@ struct GlucoseOverGallery: View {
     }
 }
 
+private struct GalleryTopKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
+/// 可以双指放大、双击放大、放大后拖动看细节的照片；没放大时单击触发 onTap（返回）
+struct ZoomablePhoto: View {
+    let photo: GlucosePhoto
+    let missing: Bool
+    @Binding var zoomed: Bool
+    var onTap: () -> Void
+
+    @State private var scale: CGFloat = 1
+    @State private var lastScale: CGFloat = 1
+    @State private var offset: CGSize = .zero
+    @State private var lastOffset: CGSize = .zero
+
+    var body: some View {
+        GeometryReader { g in
+            GlucosePhotoView(photo: photo, missing: missing, side: 2400, fit: true)
+                .frame(width: g.size.width, height: g.size.height)
+                .scaleEffect(scale)
+                .offset(offset)
+                .contentShape(Rectangle())
+                .gesture(
+                    MagnifyGesture()
+                        .onChanged { v in scale = min(5, max(1, lastScale * v.magnification)) }
+                        .onEnded { _ in
+                            if scale < 1.05 { reset() } else {
+                                lastScale = scale; zoomed = true
+                                offset = clamp(offset, g.size); lastOffset = offset
+                            }
+                        }
+                )
+                // 放大后单指拖动看细节（优先于左右翻页和往下拉返回）
+                .highPriorityGesture(
+                    DragGesture()
+                        .onChanged { v in
+                            offset = CGSize(width: lastOffset.width + v.translation.width,
+                                            height: lastOffset.height + v.translation.height)
+                        }
+                        .onEnded { _ in
+                            withAnimation(.spring(duration: 0.25)) { offset = clamp(offset, g.size) }
+                            lastOffset = clamp(offset, g.size)
+                        },
+                    including: scale > 1 ? .all : .subviews
+                )
+                .onTapGesture(count: 2) {
+                    withAnimation(.spring(duration: 0.3)) {
+                        if scale > 1 { reset() } else { scale = 2.5; lastScale = 2.5; zoomed = true }
+                    }
+                }
+                .onTapGesture {
+                    if scale > 1 { withAnimation(.spring(duration: 0.3)) { reset() } } else { onTap() }
+                }
+        }
+        .clipped()
+    }
+
+    private func reset() {
+        scale = 1; lastScale = 1; offset = .zero; lastOffset = .zero; zoomed = false
+    }
+
+    private func clamp(_ o: CGSize, _ size: CGSize) -> CGSize {
+        let mx = (scale - 1) * size.width / 2, my = (scale - 1) * size.height / 2
+        return CGSize(width: min(mx, max(-mx, o.width)), height: min(my, max(-my, o.height)))
+    }
+}
+
 /// 血糖相册看大图：上面照片，下面血糖值和备注（备注点一下展开全文），左右滑切换
 struct GlucoseOverViewer: View {
     let items: [GlucoseOverGallery.Item]
@@ -483,6 +608,7 @@ struct GlucoseOverViewer: View {
     @Environment(\.dismiss) private var dismiss
     @State private var index = 0
     @State private var dragY: CGFloat = 0     // 往下拉的距离，松手超过一定距离就返回
+    @State private var zoomed = false         // 照片放大时不翻页、不下拉返回
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -493,16 +619,19 @@ struct GlucoseOverViewer: View {
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
+            .scrollDisabled(zoomed)      // 放大时拖动是看细节，不翻页
             .offset(y: dragY)
             .scaleEffect(1 - min(dragY / 2000, 0.15))
             // 往下拉返回（只认竖直方向，左右滑还是翻页）
             .simultaneousGesture(
                 DragGesture(minimumDistance: 15)
                     .onChanged { v in
+                        guard !zoomed else { return }
                         let dy = v.translation.height
                         if dy > 0 && dy > abs(v.translation.width) * 1.2 { dragY = dy }
                     }
                     .onEnded { v in
+                        guard !zoomed else { dragY = 0; return }
                         if dragY > 110 || (dragY > 30 && v.predictedEndTranslation.height > 300) {
                             dismiss()
                         } else {
@@ -521,7 +650,7 @@ struct GlucoseOverViewer: View {
             .padding(.top, 8)
         }
         .onAppear { index = start; onPage(start) }
-        .onChange(of: index) { _, i in onPage(i) }
+        .onChange(of: index) { _, i in onPage(i); zoomed = false }
     }
 
     private func page(_ it: GlucoseOverGallery.Item) -> some View {
@@ -531,9 +660,10 @@ struct GlucoseOverViewer: View {
             Spacer(minLength: 50)
             Group {
                 if let p = r.photos?.first {
-                    GlucosePhotoView(photo: p, missing: p.assetID.map(missing.contains) ?? false, side: 1600, fit: true)
-                        .contentShape(Rectangle())
-                        .onTapGesture { dismiss() }      // 再点一下图片返回
+                    // 双指/双击放大；没放大时点一下返回
+                    ZoomablePhoto(photo: p, missing: p.assetID.map(missing.contains) ?? false,
+                                  zoomed: $zoomed) { dismiss() }
+                        .zIndex(1)
                 } else {
                     VStack(spacing: 8) {
                         Image(systemName: "fork.knife").font(.system(size: 40))
