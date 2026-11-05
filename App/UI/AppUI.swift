@@ -565,7 +565,11 @@ struct SettingsView: View {
                 importing = false
                 guard let url else { return }
                 do {
-                    backupMessage = try GlucoseBackup.restore(Data(contentsOf: url))
+                    backupMessage = try GlucoseBackup.restore(Data(contentsOf: url)) + "，正在找回原图…"
+                    Task {
+                        let r = await GlucoseRelink.relink()
+                        backupMessage = (backupMessage ?? "").replacingOccurrences(of: "，正在找回原图…", with: "") + "\n" + GlucoseRelink.message(r)
+                    }
                 } catch {
                     backupMessage = "导入失败：\(error.localizedDescription)"
                 }
@@ -623,6 +627,13 @@ struct SettingsView: View {
                 importing = true
             } label: {
                 Label("导入备份文件（选「阿波备份-完整.json」）", systemImage: "square.and.arrow.down").padding(.vertical, 10)
+            }
+            RowDivider()
+            Button {
+                backupMessage = "正在找回原图…"
+                Task { backupMessage = GlucoseRelink.message(await GlucoseRelink.relink()) }
+            } label: {
+                Label("重新关联原图（换手机、照片传过来后用）", systemImage: "photo.badge.checkmark").padding(.vertical, 10)
             }
             if let backupMessage {
                 RowDivider()

@@ -404,7 +404,16 @@ struct GlucoseView: View {
             // 第一次用新版：把健康里已有的血糖导进来
             if records.isEmpty { await readFromHealth() }
             // 检查相册里照片还在不在：每次打开 App 查一次就够了，不用每次切到血糖页都查
-            if !Self.checkedMissing { Self.checkedMissing = true; refreshMissing() }
+            if !Self.checkedMissing {
+                Self.checkedMissing = true
+                refreshMissing()
+                // 有找不到的原图（比如刚换手机导入了备份）就自动找一次；再给新照片记下指纹
+                if !missingIDs.isEmpty {
+                    let r = await GlucoseRelink.relink()
+                    if r.fixed > 0 { message = GlucoseRelink.message(r) }
+                }
+                await GlucoseRelink.fillInfo()
+            }
         }
     }
 

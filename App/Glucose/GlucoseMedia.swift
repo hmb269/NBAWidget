@@ -21,7 +21,12 @@ extension Notification.Name {
 /// 一张照片：小图文件名 + 相册编号
 struct GlucosePhoto: Codable, Hashable, Identifiable {
     var id: String          // App 里小图的文件名
-    var assetID: String?    // 系统相册里的编号
+    var assetID: String?    // 系统相册里的编号（换手机会变）
+    // 换手机后找回原图用的「指纹」（见 GlucoseRelink）
+    var cloudID: String? = nil   // iCloud 照片编号
+    var taken: Date? = nil       // 拍摄时间
+    var pw: Int? = nil           // 原图宽
+    var ph: Int? = nil           // 原图高
 }
 
 enum GlucoseMedia {
