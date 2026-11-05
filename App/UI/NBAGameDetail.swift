@@ -381,7 +381,6 @@ struct NBAGameDetailView: View {
             .foregroundStyle(fav ? Color.yellow : Color.primary)
             .frame(width: 34, alignment: alignment == .leading ? .leading : .trailing)   // 数字固定宽度，上下对齐
         let name = HStack(spacing: 2) {
-            if fav { Image(systemName: "star.fill").font(.system(size: 9)).foregroundStyle(.yellow) }
             Text(p?.name ?? "").font(.subheadline.weight(fav ? .bold : .regular))
                 .foregroundStyle(fav ? Color.yellow : Color.secondary).lineLimit(1).minimumScaleFactor(0.7)
         }
@@ -429,7 +428,6 @@ struct NBAGameDetailView: View {
                             NBAFavPlayers.toggle(p.id); favs = NBAFavPlayers.ids
                         } label: {
                             HStack(spacing: 4) {
-                                if fav { Image(systemName: "star.fill").font(.system(size: 9)).foregroundStyle(.yellow) }
                                 Text(p.name)
                                     .font(.system(size: 15, weight: p.starter || fav ? .bold : .regular))
                                     .foregroundStyle(fav ? Color.yellow : (p.starter ? Color.white : Color.white.opacity(0.6)))
