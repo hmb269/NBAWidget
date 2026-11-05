@@ -29,12 +29,19 @@ enum GlucoseLocal {
         return dir.appendingPathComponent("glucose.json")
     }
 
+    /// 读过一次就留在内存里（切换页面时不用每次都读文件、解析 JSON，避免卡顿）
+    private static var memo: [GlucoseRecord]?
+
     static func load() -> [GlucoseRecord] {
-        guard let d = try? Data(contentsOf: url) else { return [] }
-        return (try? JSONDecoder().decode([GlucoseRecord].self, from: d)) ?? []
+        if let memo { return memo }
+        guard let d = try? Data(contentsOf: url) else { memo = []; return [] }
+        let list = (try? JSONDecoder().decode([GlucoseRecord].self, from: d)) ?? []
+        memo = list
+        return list
     }
 
     static func save(_ list: [GlucoseRecord]) {
+        memo = list
         if let d = try? JSONEncoder().encode(list) { try? d.write(to: url, options: .atomic) }
         AutoBackup.schedule()
     }
@@ -247,6 +254,7 @@ enum GlucoseTags {
 // MARK: - 血糖页面
 
 struct GlucoseView: View {
+    private static var checkedMissing = false
     @State private var records: [GlucoseRecord] = GlucoseLocal.load()
     @State private var tags: [String: String] = GlucoseTags.all
     @State private var owners: [String: String] = GlucosePeople.owners
@@ -395,7 +403,8 @@ struct GlucoseView: View {
             try? await GlucoseStore.requestAccess()
             // 第一次用新版：把健康里已有的血糖导进来
             if records.isEmpty { await readFromHealth() }
-            refreshMissing()
+            // 检查相册里照片还在不在：每次打开 App 查一次就够了，不用每次切到血糖页都查
+            if !Self.checkedMissing { Self.checkedMissing = true; refreshMissing() }
         }
     }
 

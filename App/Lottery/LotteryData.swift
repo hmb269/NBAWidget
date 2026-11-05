@@ -306,14 +306,20 @@ enum LotteryAPI {
 
     // MARK: 缓存（没网时也能看上次的）
 
+    private static var memo: [LotteryGame: [LotteryDraw]] = [:]
+
     static func cached(_ g: LotteryGame) -> [LotteryDraw] {
+        if let m = memo[g] { return m }
         guard let data = UserDefaults.standard.data(forKey: "lottery_" + g.rawValue),
               let list = try? JSONDecoder().decode([LotteryDraw].self, from: data) else { return [] }
+        memo[g] = list
         return list
     }
 
     private static func cache(_ list: [LotteryDraw], for g: LotteryGame) {
-        guard !list.isEmpty, let data = try? JSONEncoder().encode(list) else { return }
+        guard !list.isEmpty else { return }
+        memo[g] = list
+        guard let data = try? JSONEncoder().encode(list) else { return }
         UserDefaults.standard.set(data, forKey: "lottery_" + g.rawValue)
     }
 

@@ -74,7 +74,8 @@ struct PageScroll<Content: View>: View {
     @ViewBuilder let content: () -> Content
     var body: some View {
         ScrollView {
-            VStack(spacing: 14) {
+            // 懒加载：屏幕外的卡片（比如很久以前的血糖记录）滑到了才画，切页面不卡
+            LazyVStack(spacing: 14) {
                 PageHeader(title: title, subtitle: subtitle)
                 content()
             }

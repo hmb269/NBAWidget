@@ -415,8 +415,10 @@ struct GlucoseOverGallery: View {
         let r = it.record
         let f = DateFormatter(); f.locale = Locale(identifier: "zh_CN"); f.dateFormat = "M月d日 HH:mm"
         return VStack(alignment: .leading, spacing: 6) {
-            ZStack(alignment: .bottomLeading) {
-                Group {
+            // 固定正方形：照片铺满裁剪，血糖值压在照片底部
+            Color.clear
+                .aspectRatio(1, contentMode: .fit)
+                .overlay {
                     if let p = r.photos?.first {
                         GlucosePhotoView(photo: p, missing: p.assetID.map(missing.contains) ?? false, side: 400)
                     } else {
@@ -425,27 +427,26 @@ struct GlucoseOverGallery: View {
                             .overlay(Image(systemName: "fork.knife").font(.title).foregroundStyle(.white.opacity(0.25)))
                     }
                 }
-                .frame(maxWidth: .infinity)
-                .aspectRatio(1, contentMode: .fill)
-                .clipped()
-
-                // 底部渐变 + 血糖值
-                LinearGradient(colors: [.clear, .black.opacity(0.75)], startPoint: .center, endPoint: .bottom)
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(alignment: .firstTextBaseline, spacing: 3) {
-                        Text(String(format: "%.1f", r.mmol))
-                            .font(.system(size: 26, weight: .heavy, design: .rounded).monospacedDigit())
-                            .foregroundStyle(Color(red: 1, green: 0.42, blue: 0.45))
-                        Text("超 " + String(format: "%.1f", r.mmol - it.line))
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.white.opacity(0.85))
-                    }
-                    Text(it.label).font(.caption2.weight(.semibold)).foregroundStyle(.white)
+                .overlay(alignment: .bottom) {
+                    LinearGradient(colors: [.clear, .black.opacity(0.8)], startPoint: .top, endPoint: .bottom)
+                        .frame(height: 70)
                 }
-                .padding(8)
-            }
-            .aspectRatio(1, contentMode: .fit)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(alignment: .bottomLeading) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        HStack(alignment: .firstTextBaseline, spacing: 4) {
+                            Text(String(format: "%.1f", r.mmol))
+                                .font(.system(size: 28, weight: .heavy, design: .rounded).monospacedDigit())
+                                .foregroundStyle(Color(red: 1, green: 0.45, blue: 0.48))
+                            Text("高 " + String(format: "%.1f", r.mmol - it.line))
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(.white.opacity(0.9))
+                        }
+                        Text(it.label).font(.caption2.weight(.semibold)).foregroundStyle(.white)
+                    }
+                    .shadow(color: .black.opacity(0.6), radius: 3)
+                    .padding(9)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
 
             Text(f.string(from: r.date)).font(.caption2).foregroundStyle(.secondary)
             Text(r.note?.isEmpty == false ? r.note! : "没有备注")
@@ -466,7 +467,6 @@ struct GlucoseOverViewer: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var index = 0
-    @State private var expanded = false
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -477,7 +477,6 @@ struct GlucoseOverViewer: View {
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
-            .onChange(of: index) { _, _ in expanded = false }
 
             HStack(spacing: 12) {
                 Text("\(index + 1) / \(items.count)").font(.subheadline.monospacedDigit()).foregroundStyle(.white.opacity(0.7))
@@ -528,16 +527,15 @@ struct GlucoseOverViewer: View {
                 }
                 Text(it.label + " · " + f.string(from: r.date)).font(.subheadline).foregroundStyle(.white.opacity(0.75))
                 if let n = r.note, !n.isEmpty {
-                    Text(n)
-                        .font(.body)
-                        .foregroundStyle(.white)
-                        .lineLimit(expanded ? nil : 2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                        .onTapGesture { withAnimation(.easeOut(duration: 0.2)) { expanded.toggle() } }
-                    if !expanded && n.count > 40 {
-                        Text("点一下看全部备注").font(.caption2).foregroundStyle(.white.opacity(0.4))
+                    // 备注全部显示，太长就在这块里上下滑
+                    ScrollView {
+                        Text(n)
+                            .font(.body)
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    .frame(maxHeight: 180)
+                    .fixedSize(horizontal: false, vertical: n.count < 80)
                 } else {
                     Text("没有备注").font(.subheadline).foregroundStyle(.white.opacity(0.35))
                 }

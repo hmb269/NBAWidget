@@ -54,13 +54,18 @@ enum LotteryWins {
         return dir.appendingPathComponent("lottery_wins.json")
     }
 
+    private static var memo: [LotteryWin]?
+
     static func load() -> [LotteryWin] {
+        if let memo { return memo }
         guard let data = try? Data(contentsOf: url),
-              let list = try? JSONDecoder().decode([LotteryWin].self, from: data) else { return [] }
+              let list = try? JSONDecoder().decode([LotteryWin].self, from: data) else { memo = []; return [] }
+        memo = list
         return list
     }
 
     static func save(_ list: [LotteryWin]) {
+        memo = list
         if let data = try? JSONEncoder().encode(list) { try? data.write(to: url, options: .atomic) }
         AutoBackup.schedule()
         NotificationCenter.default.post(name: .lotteryWinsChanged, object: nil)
