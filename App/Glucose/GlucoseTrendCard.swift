@@ -128,6 +128,17 @@ struct GlucoseTrendCard: View {
             }
 
             if data.count >= 1 {
+                // 图例放在图外面，不和曲线打架
+                HStack(spacing: 5) {
+                    Spacer()
+                    Path { p in p.move(to: CGPoint(x: 0, y: 1)); p.addLine(to: CGPoint(x: 16, y: 1)) }
+                        .stroke(Color(red: 1.0, green: 0.32, blue: 0.32), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                        .frame(width: 16, height: 2)
+                    Text("安全线 " + String(format: "%.1f", kind.safeLine))
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color(red: 1.0, green: 0.32, blue: 0.32))
+                }
+                .padding(.bottom, -6)
                 chart(data)
                     .frame(height: 180)
             } else {
@@ -206,11 +217,6 @@ struct GlucoseTrendCard: View {
             RuleMark(y: .value("安全线", line))
                 .foregroundStyle(danger.opacity(0.7))
                 .lineStyle(StrokeStyle(lineWidth: 1.2, dash: [5, 4]))
-                .annotation(position: .top, alignment: .leading, spacing: 2) {
-                    Text("安全线 \(String(format: "%.1f", line))")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(danger)
-                }
             ForEach(Array(data.enumerated()), id: \.offset) { _, p in
                 AreaMark(x: .value("时间", p.0), yStart: .value("下限", lo), yEnd: .value("血糖", p.1))
                     .interpolationMethod(.catmullRom)
@@ -258,10 +264,21 @@ struct GlucoseTrendCard: View {
         .chartYScale(domain: lo...hi)
         .tapToSelect($selected, dates: data.map(\.0))
         .chartYAxis {
-            AxisMarks(position: .trailing, values: .automatic(desiredCount: 4)) { v in
+            // 普通刻度（太靠近安全线的不显示，免得和 7.8 挤在一起）
+            AxisMarks(position: .trailing, values: yTicks(lo, hi, avoid: line)) { v in
                 AxisGridLine().foregroundStyle(.white.opacity(0.08))
                 AxisValueLabel {
                     if let d = v.as(Double.self) { Text(String(format: "%.0f", d)).font(.caption2) }
+                }
+            }
+            // 安全线的数值标在右边坐标轴上
+            AxisMarks(position: .trailing, values: [line]) { _ in
+                AxisValueLabel {
+                    Text(String(format: "%.1f", line))
+                        .font(.system(size: 10, weight: .bold).monospacedDigit())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 4).padding(.vertical, 1)
+                        .background(Capsule().fill(danger.opacity(0.85)))
                 }
             }
         }
@@ -272,6 +289,15 @@ struct GlucoseTrendCard: View {
                 }
             }
         }
+    }
+
+    /// 右边坐标轴的刻度：每 2 一格（范围小就每 1 一格），离安全线太近的去掉
+    private func yTicks(_ lo: Double, _ hi: Double, avoid: Double) -> [Double] {
+        let step: Double = hi - lo > 6 ? 2 : 1
+        var v = (lo / step).rounded(.up) * step
+        var out: [Double] = []
+        while v <= hi { if abs(v - avoid) > step * 0.45 { out.append(v) }; v += step }
+        return out
     }
 
     /// 统计数字；带 jump 的点一下会在图上选中那个点
