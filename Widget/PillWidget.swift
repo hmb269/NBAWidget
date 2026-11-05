@@ -272,15 +272,24 @@ struct PillWidgetView: View {
             } else if st.kind == .taken {
                 // 吃了：药丸上写几点吃的
                 let f = { () -> String in let x = DateFormatter(); x.dateFormat = "HH:mm"; return st.takenTime.map { x.string(from: $0) } ?? "" }()
-                VStack(spacing: 0) {
-                    Image(systemName: "checkmark").font(.system(size: width * 0.13, weight: .heavy))
+                // 和药丸同一个倾斜角度，沿着药丸写一行「✓ 13:34」
+                let tilt: Double = {
+                    switch s.shape {
+                    case .capsule: return -35
+                    case .softgel: return -25
+                    case .round, .oval: return -30
+                    }
+                }()
+                HStack(spacing: 3) {
+                    Image(systemName: "checkmark").font(.system(size: width * 0.12, weight: .heavy))
                     Text(f)
-                        .font(.system(size: width * 0.2, weight: .heavy, design: .rounded).monospacedDigit())
+                        .font(.system(size: width * (s.shape == .round ? 0.15 : 0.19), weight: .heavy, design: .rounded).monospacedDigit())
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
                 }
                 .foregroundStyle(.white)
                 .shadow(color: .black.opacity(0.45), radius: 3)
+                .rotationEffect(.degrees(tilt))
             } else if armedExtra {
                 Image(systemName: "plus.circle.fill")
                     .font(.system(size: width * 0.3, weight: .bold))
