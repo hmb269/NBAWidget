@@ -472,16 +472,34 @@ struct GlucoseOverViewer: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var index = 0
+    @State private var dragY: CGFloat = 0     // 往下拉的距离，松手超过一定距离就返回
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            Color.black.ignoresSafeArea()
+            Color.black.opacity(1 - min(Double(dragY) / 500, 0.6)).ignoresSafeArea()
             TabView(selection: $index) {
                 ForEach(Array(items.enumerated()), id: \.element.id) { i, it in
                     page(it).tag(i)
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
+            .offset(y: dragY)
+            .scaleEffect(1 - min(dragY / 2000, 0.15))
+            // 往下拉返回（只认竖直方向，左右滑还是翻页）
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 15)
+                    .onChanged { v in
+                        let dy = v.translation.height
+                        if dy > 0 && dy > abs(v.translation.width) * 1.2 { dragY = dy }
+                    }
+                    .onEnded { v in
+                        if dragY > 110 || (dragY > 30 && v.predictedEndTranslation.height > 300) {
+                            dismiss()
+                        } else {
+                            withAnimation(.spring(duration: 0.3)) { dragY = 0 }
+                        }
+                    }
+            )
 
             HStack(spacing: 12) {
                 Text("\(index + 1) / \(items.count)").font(.subheadline.monospacedDigit()).foregroundStyle(.white.opacity(0.7))
@@ -503,6 +521,8 @@ struct GlucoseOverViewer: View {
             Group {
                 if let p = r.photos?.first {
                     GlucosePhotoView(photo: p, missing: p.assetID.map(missing.contains) ?? false, side: 1600, fit: true)
+                        .contentShape(Rectangle())
+                        .onTapGesture { dismiss() }      // 再点一下图片返回
                 } else {
                     VStack(spacing: 8) {
                         Image(systemName: "fork.knife").font(.system(size: 40))
