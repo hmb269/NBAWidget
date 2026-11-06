@@ -177,7 +177,9 @@ enum TicketReader {
         let all = ls.joined(separator: "\n")
         t.rawText = all
         if all.contains("大乐透") || all.contains("超级") { t.game = .dlt }
-        else if all.contains("快乐8") || all.contains("快乐") || all.contains("KL8") { t.game = .kl8 }
+        // 快乐8：识别常把「快」认成「央」「块」，所以只认「乐8」也算
+        else if all.contains("快乐8") || all.contains("快乐") || all.contains("KL8")
+                    || all.range(of: "乐\\s*[8８]", options: .regularExpression) != nil { t.game = .kl8 }
         else if all.contains("七星") || all.contains("7星") || all.lowercased().contains("seven star") { t.game = .qxc }
         else if all.contains("双色球") { t.game = .ssq }
         t.added = t.game == .dlt && all.contains("追加")
@@ -243,7 +245,40 @@ enum TicketReader {
             rows = merged
         }
         t.bets = rows.compactMap { LotteryBet.parse($0, game: t.game, kl8Pick: pick, strict: true, single: single) }
+
+        // 快乐8：用票面金额核对「选几」。识别常把「选十」认成「选一」，
+        // 例如 11 个号码：选十复式 = C(11,10) = 11 注 = 22 元，选一也是 11 注，金额一样，
+        // 但选一不会这样打复式，所以金额对得上更大的选法时以大的为准
+        if t.game == .kl8, let amount = amount(all), !t.bets.isEmpty {
+            let periods: Int = {
+                guard let a = LotteryAPI.issueNumber(t.issue), let b = LotteryAPI.issueNumber(t.issueTo), b >= a else { return 1 }
+                return b - a + 1
+            }()
+            let counts = t.bets.map(\.front.count)
+            let fits = (1...10).filter { k in
+                let n = counts.reduce(0) { $0 + PrizeCalc.comb($1, k) }
+                guard n > 0 else { return false }
+                let cost = Double(n * 2 * t.multiple)
+                return abs(cost - amount) < 0.01 || abs(cost * Double(periods) - amount) < 0.01
+            }
+            var k = pick
+            if let p = pick, p == 1, let big = fits.filter({ $0 > 1 }).max() { k = big }
+            else if let p = pick, fits.contains(p) { k = p }
+            else if fits.count == 1 { k = fits[0] }
+            else if pick == nil, let big = fits.max() { k = big }
+            if let k, k != pick {
+                pick = k
+                t.bets = rows.compactMap { LotteryBet.parse($0, game: t.game, kl8Pick: k, strict: true, single: single) }
+            }
+        }
         return t
+    }
+
+    /// 票面金额「金额：22.00元」
+    private static func amount(_ all: String) -> Double? {
+        guard let m = try! NSRegularExpression(pattern: "金\\s*额\\s*[:：]?\\s*(\\d+(?:\\.\\d+)?)\\s*元").firstMatch(in: all, range: NSRange(all.startIndex..., in: all)),
+              let r = Range(m.range(at: 1), in: all) else { return nil }
+        return Double(all[r])
     }
 }
 
