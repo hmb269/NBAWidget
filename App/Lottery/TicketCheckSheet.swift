@@ -76,7 +76,7 @@ struct TicketCheckSheet: View {
                     if !periods.isEmpty || pending > 0 { resultView }
 
                     if !scan.rawText.isEmpty {
-                        DisclosureGroup("识别出的原始文字", isExpanded: $showRaw) {
+                        DisclosureGroup("识别出的原始文字" + (scan.engine.isEmpty ? "" : "（\(scan.engine)）"), isExpanded: $showRaw) {
                             Text(scan.rawText).font(.caption.monospaced()).foregroundStyle(.secondary)
                                 .textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)

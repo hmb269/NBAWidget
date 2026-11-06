@@ -1,5 +1,6 @@
 import UIKit
 import Vision
+import CoreImage
 
 // 拍照对奖：识别彩票上的文字 → 找出玩法、期号、号码 → 和开奖号码对比算奖级
 // 支持：双色球、大乐透（单式/复式）、快乐8（选一~选十）、七星彩（单式）
@@ -138,13 +139,20 @@ struct TicketScan {
     var multiple = 1         // 倍数
     var rawText = ""
     var drawDate = ""        // 票上印的开奖日期「2026-10-29」，用来校正认错的期号
+    var gameFound = false    // 票上认出了玩法名
+    var amountOK = false     // 号码算出来的金额和票面金额对得上
+    var engine = ""          // 用的哪种识别
 }
 
 enum TicketReader {
-    /// 用系统的文字识别（中文 + 数字），一行一行返回
-    static func lines(in image: UIImage) async -> [String] {
-        guard let cg = image.cgImage else { return [] }
-        return await withCheckedContinuation { cont in
+    /// 彩票上常见的词，告诉识别器优先往这些词上认
+    static let lotteryWords = ["快乐8", "双色球", "大乐透", "七星彩", "超级大乐透", "中国福利彩票", "中国体育彩票",
+                               "选一", "选二", "选三", "选四", "选五", "选六", "选七", "选八", "选九", "选十",
+                               "单式", "复式", "胆拖", "追加", "倍", "期", "开奖日期", "金额", "销售时间", "投注站"]
+
+    /// 系统文字识别（老接口）：一行一行返回
+    static func lines(in cg: CGImage, orientation: CGImagePropertyOrientation, correction: Bool) async -> [String] {
+        await withCheckedContinuation { cont in
             let req = VNRecognizeTextRequest { r, _ in
                 let obs = (r.results as? [VNRecognizedTextObservation]) ?? []
                 // 同一行的合并起来，从上到下
@@ -165,23 +173,91 @@ enum TicketReader {
             }
             req.recognitionLevel = .accurate
             req.recognitionLanguages = ["zh-Hans", "en-US"]
-            req.usesLanguageCorrection = false
-            let handler = VNImageRequestHandler(cgImage: cg, orientation: image.cgOrientation)
+            // 不纠正：数字不会被乱改；纠正 + 彩票词表：汉字认得更准
+            req.usesLanguageCorrection = correction
+            if correction { req.customWords = lotteryWords }
+            let handler = VNImageRequestHandler(cgImage: cg, orientation: orientation)
             do { try handler.perform([req]) } catch { cont.resume(returning: []) }
         }
     }
 
+    /// iOS 26 新的文档识别（专门认票据、文档）
+    static func documentLines(in cg: CGImage) async -> [String] {
+        guard #available(iOS 26.0, *) else { return [] }
+        var req = RecognizeDocumentsRequest()
+        req.textRecognitionOptions.recognitionLanguages = [Locale.Language(identifier: "zh-Hans"), Locale.Language(identifier: "en-US")]
+        req.textRecognitionOptions.useLanguageCorrection = true
+        req.textRecognitionOptions.customWords = lotteryWords
+        guard let obs = try? await req.perform(on: cg), let doc = obs.first?.document else { return [] }
+        return doc.text.transcript.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+
+    /// 把照片摆正、放大、去色、加强对比，热敏纸上的淡字更清楚
+    static func enhanced(_ image: UIImage) -> CGImage? {
+        guard let cg = image.cgImage else { return nil }
+        var ci = CIImage(cgImage: cg).oriented(image.cgOrientation)
+        let longSide = max(ci.extent.width, ci.extent.height)
+        if longSide < 2600 {
+            let s = 2600 / longSide
+            ci = ci.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: s, kCIInputAspectRatioKey: 1])
+        }
+        ci = ci.applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 0, kCIInputContrastKey: 1.45, kCIInputBrightnessKey: 0.03])
+            .applyingFilter("CISharpenLuminance", parameters: [kCIInputSharpnessKey: 0.6])
+        return CIContext().createCGImage(ci, from: ci.extent)
+    }
+
+    /// 拍照对奖：同时跑三种识别（原图 / 增强图+词表纠正 / 新的文档识别），挑号码和金额最对得上的结果
     static func scan(_ image: UIImage) async -> TicketScan {
-        let ls = await lines(in: image)
+        guard let cg = image.cgImage else { return TicketScan() }
+        let ori = image.cgOrientation
+        let better = enhanced(image)
+        async let a = lines(in: cg, orientation: ori, correction: false)
+        async let b: [String] = better.map { await lines(in: $0, orientation: .up, correction: true) } ?? []
+        async let c: [String] = better.map { await documentLines(in: $0) } ?? []
+        async let d: [String] = better.map { await lines(in: $0, orientation: .up, correction: false) } ?? []
+        let results: [(String, [String])] = [("系统识别", await a), ("增强+词表", await b), ("文档识别", await c), ("增强图", await d)]
+
+        // 玩法：任何一种识别认出了玩法名就用它
+        let union = results.flatMap(\.1).joined(separator: "\n")
+        let game = detectGame(union)
+
+        var best: TicketScan?
+        var bestScore = -1
+        for (name, ls) in results where !ls.isEmpty {
+            var t = scan(lines: ls, game: game)
+            t.engine = name
+            // 期号、开奖日期这些某种识别没认出来，就从别的识别里补
+            if t.issue.isEmpty || t.drawDate.isEmpty {
+                for (_, other) in results where !other.isEmpty {
+                    let o = scan(lines: other, game: game)
+                    if t.issue.isEmpty { t.issue = o.issue; if t.issueTo.isEmpty { t.issueTo = o.issueTo } }
+                    if t.drawDate.isEmpty { t.drawDate = o.drawDate }
+                }
+            }
+            let score = (t.bets.isEmpty ? 0 : 10) + (t.amountOK ? 8 : 0) + (t.gameFound ? 3 : 0)
+                + (t.issue.isEmpty ? 0 : 2) + (t.drawDate.isEmpty ? 0 : 1) + min(t.bets.count, 5)
+            if score > bestScore { best = t; bestScore = score }
+        }
+        return best ?? scan(lines: results[0].1, game: game)
+    }
+
+    /// 从文字里认玩法
+    static func detectGame(_ all: String) -> LotteryGame? {
+        if all.contains("大乐透") || all.contains("超级") { return .dlt }
+        // 快乐8：识别常把「快」认成「央」「块」，所以只认「乐8」也算
+        if all.contains("快乐8") || all.contains("快乐") || all.contains("KL8")
+            || all.range(of: "乐\\s*[8８]", options: .regularExpression) != nil { return .kl8 }
+        if all.contains("七星") || all.contains("7星") || all.lowercased().contains("seven star") { return .qxc }
+        if all.contains("双色球") { return .ssq }
+        return nil
+    }
+
+    static func scan(lines ls: [String], game: LotteryGame?) -> TicketScan {
         var t = TicketScan()
         let all = ls.joined(separator: "\n")
         t.rawText = all
-        if all.contains("大乐透") || all.contains("超级") { t.game = .dlt }
-        // 快乐8：识别常把「快」认成「央」「块」，所以只认「乐8」也算
-        else if all.contains("快乐8") || all.contains("快乐") || all.contains("KL8")
-                    || all.range(of: "乐\\s*[8８]", options: .regularExpression) != nil { t.game = .kl8 }
-        else if all.contains("七星") || all.contains("7星") || all.lowercased().contains("seven star") { t.game = .qxc }
-        else if all.contains("双色球") { t.game = .ssq }
+        if let game { t.game = game; t.gameFound = true }
         t.added = t.game == .dlt && all.contains("追加")
 
         // 期号：「第2026128期」或「2026128期」
@@ -270,6 +346,24 @@ enum TicketReader {
                 pick = k
                 t.bets = rows.compactMap { LotteryBet.parse($0, game: t.game, kl8Pick: k, strict: true, single: single) }
             }
+        }
+        // 号码算出来的金额和票面金额对不对得上（用来挑最好的识别结果）
+        if let amount = amount(all), !t.bets.isEmpty {
+            let n = t.bets.reduce(0) { sum, b in
+                switch t.game {
+                case .ssq: return sum + PrizeCalc.comb(b.front.count, 6) * PrizeCalc.comb(b.back.count, 1)
+                case .dlt: return sum + PrizeCalc.comb(b.front.count, 5) * PrizeCalc.comb(b.back.count, 2)
+                case .kl8: return sum + PrizeCalc.comb(b.front.count, b.pick ?? b.front.count)
+                default: return sum + 1
+                }
+            }
+            let each = t.game == .dlt && t.added ? 3.0 : 2.0
+            let periods: Double = {
+                guard let a = LotteryAPI.issueNumber(t.issue), let b = LotteryAPI.issueNumber(t.issueTo), b >= a else { return 1 }
+                return Double(b - a + 1)
+            }()
+            let cost = Double(n) * each * Double(t.multiple)
+            t.amountOK = abs(cost - amount) < 0.01 || abs(cost * periods - amount) < 0.01
         }
         return t
     }
