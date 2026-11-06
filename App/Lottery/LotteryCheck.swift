@@ -242,6 +242,10 @@ enum TicketReader {
             if score > bestScore { best = t; bestScore = score }
         }
         var out = best ?? scan(lines: results[0].1, game: game)
+        // 倍数、多期也从别的识别里补（比如「10期10倍」被某一种认成「0期月0份」）
+        let others = results.filter { !$0.1.isEmpty }.map { scan(lines: $0.1, game: game) }
+        if out.multiple == 1, let m = others.map(\.multiple).filter({ $0 > 1 && $0 <= 99 }).max() { out.multiple = m }
+        if out.issueTo.isEmpty, let o = others.first(where: { !$0.issueTo.isEmpty && $0.issue == out.issue }) { out.issueTo = o.issueTo }
         // 七星彩漏了后区那一位：单独补认
         if out.game == .qxc, out.bets.isEmpty, let better, let back = await qxcBackDigit(in: better) {
             var ls = out.rawText.components(separatedBy: "\n")
@@ -249,7 +253,9 @@ enum TicketReader {
                 ls[i] += " + \(back)"
                 var t = scan(lines: ls, game: .qxc)
                 t.engine = out.engine + "+补认后区"
-                if t.issue.isEmpty { t.issue = out.issue; t.issueTo = out.issueTo }
+                if t.issue.isEmpty { t.issue = out.issue }
+                if t.issueTo.isEmpty { t.issueTo = out.issueTo }
+                if t.multiple == 1 { t.multiple = out.multiple }
                 if t.drawDate.isEmpty { t.drawDate = out.drawDate }
                 if !t.bets.isEmpty { out = t }
             }
@@ -260,13 +266,7 @@ enum TicketReader {
     /// 七星彩后区那一位数字离前面很远，常常单独漏掉：
     /// 找到前区 6 位数字那一行，把它右边那一块裁出来放大，再单独认一次
     static func qxcBackDigit(in cg: CGImage) async -> Int? {
-        let obs: [VNRecognizedTextObservation] = await withCheckedContinuation { cont in
-            let req = VNRecognizeTextRequest { r, _ in cont.resume(returning: (r.results as? [VNRecognizedTextObservation]) ?? []) }
-            req.recognitionLevel = .accurate
-            req.recognitionLanguages = ["zh-Hans", "en-US"]
-            req.usesLanguageCorrection = false
-            do { try VNImageRequestHandler(cgImage: cg, orientation: .up).perform([req]) } catch { cont.resume(returning: []) }
-        }
+        let obs = await observations(cg, languages: ["zh-Hans", "en-US"])
         // 同一行的拼起来；前区那一行：去掉空格正好 6 个数字
         var rows: [(y: CGFloat, items: [VNRecognizedTextObservation])] = []
         for o in obs.sorted(by: { $0.boundingBox.midY > $1.boundingBox.midY }) {
@@ -278,37 +278,73 @@ enum TicketReader {
             let t = r.items.compactMap { $0.topCandidates(1).first?.string }.joined().filter { !$0.isWhitespace }
             return t.count == 6 && t.allSatisfy(\.isNumber)
         }) else { return nil }
+        let front = row.items.compactMap { $0.topCandidates(1).first?.string }.joined().filter(\.isNumber)
         let b = row.items.map(\.boundingBox).reduce(row.items[0].boundingBox) { $0.union($1) }   // 0~1，左下角为原点
         let W = CGFloat(cg.width), H = CGFloat(cg.height)
-        let x0 = (b.maxX + b.width * 0.02) * W
-        let y0 = (1 - b.maxY - b.height * 0.6) * H
-        let rect = CGRect(x: x0, y: y0, width: min(W - x0, b.width * W * 0.6), height: b.height * 2.2 * H).intersection(CGRect(x: 0, y: 0, width: W, height: H))
-        guard rect.width > 4, rect.height > 4, let crop = cg.cropping(to: rect) else { return nil }
-        // 放大 3 倍，四周留白
-        let scale: CGFloat = 3, pad: CGFloat = 40
-        let size = CGSize(width: rect.width * scale + pad * 2, height: rect.height * scale + pad * 2)
+        let full = CGRect(x: 0, y: 0, width: W, height: H)
+        // 同一条水平带：上下多留一点
+        let y0 = (1 - b.maxY - b.height * 0.35) * H, bandH = b.height * 1.7 * H
+        let frontRect = CGRect(x: b.minX * W - 6, y: y0, width: b.width * W + 12, height: bandH).intersection(full)
+        let rightX = (b.maxX + b.width * 0.03) * W
+        let rightRect = CGRect(x: rightX, y: y0, width: min(W - rightX, b.width * W * 0.7), height: bandH).intersection(full)
+        guard rightRect.width > 4, let frontCG = cg.cropping(to: frontRect), let rightCG = cg.cropping(to: rightRect),
+              let ink = inkColumns(rightCG) else { return nil }
+        // 把后区那个数字「挪」到前区旁边（去掉中间的大空白），拼成一行再认，单独一个数字就不会被当杂点丢掉
+        let backW = CGFloat(ink.upperBound - ink.lowerBound + 1)
+        guard let backCG = rightCG.cropping(to: CGRect(x: CGFloat(ink.lowerBound), y: 0, width: backW, height: rightRect.height)) else { return nil }
+        let gap = b.width * W / 9
+        let scale: CGFloat = 2, pad: CGFloat = 30
+        let size = CGSize(width: (frontRect.width + gap + backW) * scale + pad * 2, height: bandH * scale + pad * 2)
         let fmt = UIGraphicsImageRendererFormat(); fmt.scale = 1
-        let big = UIGraphicsImageRenderer(size: size, format: fmt).image { ctx in
+        let img = UIGraphicsImageRenderer(size: size, format: fmt).image { ctx in
             UIColor.white.setFill(); ctx.fill(CGRect(origin: .zero, size: size))
-            UIImage(cgImage: crop).draw(in: CGRect(x: pad, y: pad, width: rect.width * scale, height: rect.height * scale))
+            UIImage(cgImage: frontCG).draw(in: CGRect(x: pad, y: pad, width: frontRect.width * scale, height: bandH * scale))
+            UIImage(cgImage: backCG).draw(in: CGRect(x: pad + (frontRect.width + gap) * scale, y: pad, width: backW * scale, height: bandH * scale))
         }
-        guard let bigCG = big.cgImage else { return nil }
-        for level in [VNRequestTextRecognitionLevel.accurate, .fast] {
-            let text: String = await withCheckedContinuation { cont in
-                let req = VNRecognizeTextRequest { r, _ in
-                    let o = (r.results as? [VNRecognizedTextObservation]) ?? []
-                    cont.resume(returning: o.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " "))
-                }
-                req.recognitionLevel = level
-                req.recognitionLanguages = ["en-US"]
-                req.usesLanguageCorrection = false
-                req.minimumTextHeight = 0
-                do { try VNImageRequestHandler(cgImage: bigCG, orientation: .up).perform([req]) } catch { cont.resume(returning: "") }
-            }
-            let t = text.replacingOccurrences(of: "[lI|!丨]", with: "1", options: .regularExpression)
-            if let m = t.range(of: "\\d{1,2}", options: .regularExpression), let v = Int(t[m]), (0...14).contains(v) { return v }
+        guard let joined = img.cgImage else { return nil }
+        for langs in [["en-US"], ["zh-Hans", "en-US"]] {
+            let o = await observations(joined, languages: langs)
+            var t = o.sorted { $0.boundingBox.minX < $1.boundingBox.minX }
+                .compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+            t = t.replacingOccurrences(of: "[lI|!丨]", with: "1", options: .regularExpression)
+            let ds = t.filter(\.isNumber)
+            guard ds.count >= 7, ds.hasPrefix(front) else { continue }
+            if let v = Int(ds.dropFirst(6)), (0...14).contains(v) { return v }
         }
         return nil
+    }
+
+    private static func observations(_ cg: CGImage, languages: [String]) async -> [VNRecognizedTextObservation] {
+        await withCheckedContinuation { cont in
+            let req = VNRecognizeTextRequest { r, _ in cont.resume(returning: (r.results as? [VNRecognizedTextObservation]) ?? []) }
+            req.recognitionLevel = .accurate
+            req.recognitionLanguages = languages
+            req.usesLanguageCorrection = false
+            req.minimumTextHeight = 0
+            do { try VNImageRequestHandler(cgImage: cg, orientation: .up).perform([req]) } catch { cont.resume(returning: []) }
+        }
+    }
+
+    /// 图里有黑色笔画的列范围（没有就返回 nil）
+    private static func inkColumns(_ cg: CGImage) -> ClosedRange<Int>? {
+        let w = cg.width, h = cg.height
+        guard w > 0, h > 0 else { return nil }
+        var px = [UInt8](repeating: 255, count: w * h)
+        guard let ctx = CGContext(data: &px, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w,
+                                  space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+        let lo = Int(px.min() ?? 0), hi = Int(px.max() ?? 255)
+        guard hi - lo > 60 else { return nil }
+        let th = UInt8((lo + hi) / 2)
+        // 一列里黑点超过 2 个才算有字
+        var cols: [Int] = []
+        for x in 0..<w {
+            var n = 0
+            for y in 0..<h where px[y * w + x] < th { n += 1 }
+            if n > 2 { cols.append(x) }
+        }
+        guard let first = cols.first, let last = cols.last else { return nil }
+        return max(0, first - 4)...min(w - 1, last + 4)
     }
 
     /// 从文字里认玩法

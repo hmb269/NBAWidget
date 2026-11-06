@@ -81,6 +81,19 @@ struct TicketCheckSheet: View {
                     }
 
                     if !periods.isEmpty || pending > 0 { resultView }
+
+                    // 对完一张接着拍下一张
+                    if image != nil, let onRetake {
+                        Button {
+                            dismiss()
+                            onRetake()
+                        } label: {
+                            Label("再拍一张", systemImage: "camera.fill")
+                                .font(.subheadline.weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                        }
+                        .glassButton()
+                    }
                     }
 
                     if !scan.rawText.isEmpty {
