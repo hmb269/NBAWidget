@@ -413,6 +413,7 @@ enum TicketReader {
 
         // 快乐8 复式的号码常常一行写不下：「01+07+…+30+」接着下一行「42+64+77」，先把它们拼成一行
         var rows = ls
+        var parsePick = pick
         if t.game == .kl8 {
             var merged: [String] = []
             for l in ls {
@@ -424,8 +425,31 @@ enum TicketReader {
                 }
             }
             rows = merged
+            // 票上的号码用「+」连着。同一行里常混着「金额：22.00元」「开奖日期」这些字，
+            // 直接把「01+07+…」这样的号码串抠出来；以「+」结尾的串接上下一串
+            let re = try! NSRegularExpression(pattern: "[+＋]?\\s*\\d{1,2}(?:\\s*[+＋]\\s*\\d{1,2})*(?:\\s*[+＋])?")
+            var chains: [String] = []
+            for l in ls {
+                for m in re.matches(in: l, range: NSRange(l.startIndex..., in: l)) {
+                    guard let r = Range(m.range, in: l) else { continue }
+                    let c = String(l[r]).replacingOccurrences(of: " ", with: "")
+                    guard c.contains("+") || c.contains("＋") else { continue }
+                    if let last = chains.last, last.hasSuffix("+") || last.hasSuffix("＋") || c.hasPrefix("+") || c.hasPrefix("＋") {
+                        chains[chains.count - 1] = last + "+" + c
+                    } else {
+                        chains.append(c)
+                    }
+                }
+            }
+            let chainBets = chains.map { $0.replacingOccurrences(of: "[+＋]+", with: " ", options: .regularExpression) }
+                .compactMap { LotteryBet.parse($0, game: .kl8, kl8Pick: pick ?? 1, strict: true, single: single) }
+            if !chainBets.isEmpty {
+                rows = chains.map { $0.replacingOccurrences(of: "[+＋]+", with: " ", options: .regularExpression) }
+                // 没认出「选几」：先都收下，后面用金额推算
+                if pick == nil { parsePick = 1 }
+            }
         }
-        t.bets = rows.compactMap { LotteryBet.parse($0, game: t.game, kl8Pick: pick, strict: true, single: single) }
+        t.bets = rows.compactMap { LotteryBet.parse($0, game: t.game, kl8Pick: parsePick, strict: true, single: single) }
 
         // 快乐8：用票面金额核对「选几」。识别常把「选十」认成「选一」，
         // 例如 11 个号码：选十复式 = C(11,10) = 11 注 = 22 元，选一也是 11 注，金额一样，
