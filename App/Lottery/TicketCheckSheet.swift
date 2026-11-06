@@ -96,6 +96,10 @@ struct TicketCheckSheet: View {
                     }
                     }
 
+                    if !scan.aiNote.isEmpty {
+                        Text(scan.aiNote).font(.footnote).foregroundStyle(.orange).padding(.horizontal, 6)
+                    }
+
                     if !scan.rawText.isEmpty {
                         DisclosureGroup("识别出的原始文字" + (scan.engine.isEmpty ? "" : "（\(scan.engine)）"), isExpanded: $showRaw) {
                             Text(scan.rawText).font(.caption.monospaced()).foregroundStyle(.secondary)

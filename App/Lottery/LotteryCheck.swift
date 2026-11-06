@@ -151,6 +151,8 @@ struct TicketScan {
     var gameFound = false    // 票上认出了玩法名
     var amountOK = false     // 号码算出来的金额和票面金额对得上
     var engine = ""          // 用的哪种识别
+    var amount: Double?      // 票面金额
+    var aiNote = ""          // 大模型识别的说明（出错原因等）
 }
 
 enum TicketReader {
@@ -265,6 +267,33 @@ enum TicketReader {
                 if t.multiple == 1 { t.multiple = out.multiple }
                 if t.drawDate.isEmpty { t.drawDate = out.drawDate }
                 if !t.bets.isEmpty { out = t }
+            }
+        }
+        if out.amount == nil { out.amount = others.compactMap(\.amount).first }
+        out.amountOK = amountMatches(out)
+
+        // 大模型识别：设置里选了「总是用」，或者本地没认出 / 金额对不上时
+        let mode = LotteryAISettings.mode
+        if mode != .off {
+            if !LotteryAISettings.ready {
+                out.aiNote = "大模型识别还没设置好 API Key（设置 → 彩票识别）"
+            } else if mode == .always || out.bets.isEmpty || !out.amountOK {
+                do {
+                    var ai = try await LotteryAI.read(image)
+                    if !ai.bets.isEmpty {
+                        if ai.issue.isEmpty { ai.issue = out.issue }
+                        if ai.drawDate.isEmpty { ai.drawDate = out.drawDate }
+                        if ai.amount == nil { ai.amount = out.amount }
+                        ai.amountOK = amountMatches(ai)
+                        ai.rawText = out.rawText
+                        // 本地金额对得上、大模型反而对不上：还是用本地的
+                        if !(out.amountOK && !ai.amountOK) { out = ai }
+                    } else {
+                        out.aiNote = LotteryAISettings.provider.name + "也没认出号码"
+                    }
+                } catch {
+                    out.aiNote = LotteryAISettings.provider.name + "识别失败：" + error.localizedDescription
+                }
             }
         }
         return out
@@ -496,24 +525,29 @@ enum TicketReader {
             }
         }
         // 号码算出来的金额和票面金额对不对得上（用来挑最好的识别结果）
-        if let amount = amount(all), !t.bets.isEmpty {
-            let n = t.bets.reduce(0) { sum, b in
-                switch t.game {
-                case .ssq: return sum + PrizeCalc.comb(b.front.count, 6) * PrizeCalc.comb(b.back.count, 1)
-                case .dlt: return sum + PrizeCalc.comb(b.front.count, 5) * PrizeCalc.comb(b.back.count, 2)
-                case .kl8: return sum + PrizeCalc.comb(b.front.count, b.pick ?? b.front.count)
-                default: return sum + 1
-                }
-            }
-            let each = t.game == .dlt && t.added ? 3.0 : 2.0
-            let periods: Double = {
-                guard let a = LotteryAPI.issueNumber(t.issue), let b = LotteryAPI.issueNumber(t.issueTo), b >= a else { return 1 }
-                return Double(b - a + 1)
-            }()
-            let cost = Double(n) * each * Double(t.multiple)
-            t.amountOK = abs(cost - amount) < 0.01 || abs(cost * periods - amount) < 0.01
-        }
+        t.amount = amount(all)
+        t.amountOK = amountMatches(t)
         return t
+    }
+
+    /// 按号码算出来的金额和票面金额对不对得上
+    static func amountMatches(_ t: TicketScan) -> Bool {
+        guard let amount = t.amount, !t.bets.isEmpty else { return false }
+        let n = t.bets.reduce(0) { sum, b in
+            switch t.game {
+            case .ssq: return sum + PrizeCalc.comb(b.front.count, 6) * PrizeCalc.comb(b.back.count, 1)
+            case .dlt: return sum + PrizeCalc.comb(b.front.count, 5) * PrizeCalc.comb(b.back.count, 2)
+            case .kl8: return sum + PrizeCalc.comb(b.front.count, b.pick ?? b.front.count)
+            default: return sum + 1
+            }
+        }
+        let each = t.game == .dlt && t.added ? 3.0 : 2.0
+        let periods: Double = {
+            guard let a = LotteryAPI.issueNumber(t.issue), let b = LotteryAPI.issueNumber(t.issueTo), b >= a else { return 1 }
+            return Double(b - a + 1)
+        }()
+        let cost = Double(n) * each * Double(t.multiple)
+        return abs(cost - amount) < 0.01 || abs(cost * periods - amount) < 0.01
     }
 
     /// 票面金额「金额：22.00元」

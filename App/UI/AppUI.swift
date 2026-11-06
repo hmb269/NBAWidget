@@ -520,6 +520,7 @@ struct SettingsView: View {
             WaterSettingsCard()
             PillSettingsCard()
             RefreshSettingsCard()
+            LotteryAISettingsCard()
             backupCard
 
             CardSection(footer: iconStatus) {
