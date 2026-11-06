@@ -169,6 +169,10 @@ struct RootView: View {
         .safeAreaInset(edge: .bottom) { tabBar }
         .tint(Color(red: 0.40, green: 0.88, blue: 0.88))
         .preferredColorScheme(.dark)
+        // 往下滑页面就收起键盘
+        .scrollDismissesKeyboard(.interactively)
+        // 切到别的页面时收起键盘，不然会一直挡着
+        .onChange(of: tab) { _, _ in hideKeyboard() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background { AutoBackup.run() }
         }
@@ -205,6 +209,11 @@ struct RootView: View {
     }
 
     @Namespace private var tabSpace
+}
+
+/// 收起键盘（不管是哪个输入框弹出来的）
+func hideKeyboard() {
+    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
 }
 
 extension View {
