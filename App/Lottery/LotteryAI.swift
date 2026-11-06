@@ -138,7 +138,8 @@ enum LotteryAI {
       双色球 front 是红球（1~33），back 是蓝球（1~16）；
       大乐透 front 是前区（1~35），back 是后区（1~12）；
       快乐8 front 是这一注的全部号码（1~80，复式会有多于「选几」个号码，号码之间常用 + 连接、可能跨行），back 为空；
-      七星彩 front 是前 6 位（每位 0~9，按顺序），back 是最后 1 位（0~14）。
+      七星彩 front 是前 6 位（每位 0~9，按顺序，一位一个整数，不要连成 829816），back 是最后 1 位（0~14），也写成数组如 [1]。
+      七星彩号码之间空得很开，细细的「1」很容易漏，请从左到右一位一位数清楚：front 必须正好 6 个。
     - 票上的票号、流水号、验票码、站点编号、时间、金额都不是号码，不要放进 bets。
     - 看不清的地方按彩票格式合理判断，不要编造多余的注。
     """
@@ -154,17 +155,24 @@ enum LotteryAI {
     }
 
     /// 调用所选的大模型，返回识别结果
-    static func read(_ image: UIImage) async throws -> TicketScan {
+    /// - hint：本地已经认出的玩法（「7星彩」这种字认得很准），告诉模型、也用来兜底
+    static func read(_ image: UIImage, hint: LotteryGame? = nil) async throws -> TicketScan {
         let p = LotteryAISettings.provider
         let text = try await ask(image: image, provider: p, model: LotteryAISettings.model(p),
-                                 key: LotteryAISettings.key(p), base: LotteryAISettings.baseURL(p))
-        var t = try parse(text)
+                                 key: LotteryAISettings.key(p), base: LotteryAISettings.baseURL(p), hint: hint)
+        var t = try parse(text, hint: hint)
+        // 解析出来一注都没有：把模型原话带出来，界面上能看到到底哪里不对
+        if t.bets.isEmpty {
+            let one = text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            throw AIError(msg: "回复里没有合规的号码：" + one.prefix(120))
+        }
         t.engine = p.name + "大模型"
         return t
     }
 
     /// 发请求，返回模型回复的文字
-    static func ask(image: UIImage, provider: LotteryAIProvider, model: String, key: String, base: String) async throws -> String {
+    static func ask(image: UIImage, provider: LotteryAIProvider, model: String, key: String, base: String,
+                    hint: LotteryGame? = nil) async throws -> String {
         guard let data = jpeg(image) else { throw AIError(msg: "照片处理失败") }
         var b = base.trimmingCharacters(in: .whitespaces)
         while b.hasSuffix("/") { b.removeLast() }
@@ -176,7 +184,7 @@ enum LotteryAI {
                 "role": "user",
                 "content": [
                     ["type": "image_url", "image_url": ["url": "data:image/jpeg;base64," + data.base64EncodedString()]],
-                    ["type": "text", "text": prompt],
+                    ["type": "text", "text": prompt + (hint.map { "\n这张票已确认是「\($0.name)」，game 填 \($0.rawValue)。" } ?? "")],
                 ],
             ]],
         ]
@@ -202,7 +210,7 @@ enum LotteryAI {
     }
 
     /// 从模型回复里取出 JSON，转成识别结果
-    static func parse(_ text: String) throws -> TicketScan {
+    static func parse(_ text: String, hint: LotteryGame? = nil) throws -> TicketScan {
         guard let start = text.firstIndex(of: "{"), let end = text.lastIndex(of: "}"),
               let data = String(text[start...end]).data(using: .utf8),
               let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -214,15 +222,23 @@ enum LotteryAI {
             if let s = v as? String { return Int(s.trimmingCharacters(in: .whitespaces)) }
             return nil
         }
-        func ints(_ v: Any?) -> [Int] { (v as? [Any] ?? []).compactMap(int) }
+        // 数组、单个数、"1,2" 字符串都收
+        func ints(_ v: Any?) -> [Int] {
+            if let a = v as? [Any] { return a.compactMap(int) }
+            if let s = v as? String, s.contains(where: { !$0.isNumber }) {
+                return s.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
+            }
+            return int(v).map { [$0] } ?? []
+        }
 
         var t = TicketScan()
         switch (j["game"] as? String ?? "").lowercased() {
         case "dlt": t.game = .dlt
         case "kl8": t.game = .kl8
-        case "qxc": t.game = .qxc
+        case "qxc", "7xc", "七星彩", "7星彩": t.game = .qxc
         default: t.game = .ssq
         }
+        if let hint, [.ssq, .dlt, .kl8, .qxc].contains(hint) { t.game = hint }
         t.gameFound = true
         t.issue = (j["issue"] as? String) ?? int(j["issue"]).map(String.init) ?? ""
         t.issue = t.issue.filter(\.isNumber)
@@ -245,8 +261,17 @@ enum LotteryAI {
                 let k = pick ?? nums.count
                 t.bets.append(LotteryBet(front: nums, back: [], pick: nums.count > k ? k : nil))
             case .qxc:
-                guard f.count == 6, f.allSatisfy({ (0...9).contains($0) }), bk.count == 1, (0...14).contains(bk[0]) else { continue }
-                t.bets.append(LotteryBet(front: f, back: bk))
+                // 模型常见的几种「不按格式」：front 连成一个数 [829816] / "829816"，
+                // 后区也塞进 front（7 位），back 写成单个数
+                var fd = f.contains(where: { $0 > 9 })
+                    ? f.flatMap { String($0).compactMap(\.wholeNumberValue) } : f
+                var bd = bk
+                if bd.isEmpty, fd.count == 7 || fd.count == 8 {
+                    bd = [fd.dropFirst(6).reduce(0) { $0 * 10 + $1 }]
+                    fd = Array(fd.prefix(6))
+                }
+                guard fd.count == 6, fd.allSatisfy({ (0...9).contains($0) }), bd.count == 1, (0...14).contains(bd[0]) else { continue }
+                t.bets.append(LotteryBet(front: fd, back: bd))
             case .dlt:
                 guard f.count >= 5, bk.count >= 2, f.allSatisfy({ (1...35).contains($0) }), bk.allSatisfy({ (1...12).contains($0) }) else { continue }
                 t.bets.append(LotteryBet(front: f.sorted(), back: bk.sorted()))

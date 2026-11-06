@@ -177,7 +177,7 @@ enum TicketReader {
                     }
                 }
                 let lines = rows.map { row in
-                    row.items.sorted { $0.boundingBox.minX < $1.boundingBox.minX }
+                    dedupeRow(row.items)
                         .compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
                 }
                 cont.resume(returning: lines)
@@ -190,6 +190,26 @@ enum TicketReader {
             let handler = VNImageRequestHandler(cgImage: cg, orientation: orientation)
             do { try handler.perform([req]) } catch { cont.resume(returning: []) }
         }
+    }
+
+    /// 同一行里互相重叠的识别框只留一个（左到右排好）。
+    /// 系统识别有时会给同一段数字两个框，拼起来就成了「82 82981 6 1」这种重复的号码
+    static func dedupeRow(_ items: [VNRecognizedTextObservation]) -> [VNRecognizedTextObservation] {
+        var out: [VNRecognizedTextObservation] = []
+        for o in items.sorted(by: { $0.boundingBox.minX < $1.boundingBox.minX }) {
+            let b = o.boundingBox
+            if let i = out.firstIndex(where: { p in
+                let a = p.boundingBox
+                return min(a.maxX, b.maxX) - max(a.minX, b.minX) > min(a.width, b.width) * 0.5
+            }) {
+                // 重叠：留字多的，一样多留置信度高的
+                let pc = out[i].topCandidates(1).first, oc = o.topCandidates(1).first
+                if (oc?.string.count ?? 0, oc?.confidence ?? 0) > (pc?.string.count ?? 0, pc?.confidence ?? 0) { out[i] = o }
+            } else {
+                out.append(o)
+            }
+        }
+        return out
     }
 
     /// iOS 26 新的文档识别（专门认票据、文档）
@@ -279,7 +299,7 @@ enum TicketReader {
                 out.aiNote = "大模型识别还没设置好 API Key（设置 → 彩票识别）"
             } else if mode == .always || out.bets.isEmpty || !out.amountOK {
                 do {
-                    var ai = try await LotteryAI.read(image)
+                    var ai = try await LotteryAI.read(image, hint: game)
                     if !ai.bets.isEmpty {
                         if ai.issue.isEmpty { ai.issue = out.issue }
                         if ai.drawDate.isEmpty { ai.drawDate = out.drawDate }
@@ -310,6 +330,7 @@ enum TicketReader {
                 rows[i].items.append(o)
             } else { rows.append((o.boundingBox.midY, [o])) }
         }
+        rows = rows.map { (y: $0.y, items: dedupeRow($0.items)) }
         guard let row = rows.first(where: { r in
             let t = r.items.compactMap { $0.topCandidates(1).first?.string }.joined().filter { !$0.isWhitespace }
             return t.count == 6 && t.allSatisfy(\.isNumber)
@@ -550,9 +571,9 @@ enum TicketReader {
         return abs(cost - amount) < 0.01 || abs(cost * periods - amount) < 0.01
     }
 
-    /// 票面金额「金额：22.00元」
+    /// 票面金额「金额：22.00元」，体彩写「合计200元」
     private static func amount(_ all: String) -> Double? {
-        guard let m = try! NSRegularExpression(pattern: "金\\s*额\\s*[:：]?\\s*(\\d+(?:\\.\\d+)?)\\s*元").firstMatch(in: all, range: NSRange(all.startIndex..., in: all)),
+        guard let m = try! NSRegularExpression(pattern: "(?:金\\s*额|合\\s*计)\\s*[:：]?\\s*(\\d+(?:\\.\\d+)?)\\s*元").firstMatch(in: all, range: NSRange(all.startIndex..., in: all)),
               let r = Range(m.range(at: 1), in: all) else { return nil }
         return Double(all[r])
     }
