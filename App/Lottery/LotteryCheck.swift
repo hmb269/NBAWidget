@@ -105,6 +105,13 @@ struct LotteryBet: Identifiable, Hashable {
             back = tokens(bp).compactMap { Int($0) }
         } else {
             let ts = tokens(fp)
+            // 7 位全粘在一起「8298161」：前 6 位是前区，剩下的是后区（后区 10~14 时是 8 位）
+            if ts.count == 1, let one = ts.first, one.count == 7 || one.count == 8 {
+                let d = one.compactMap(\.wholeNumberValue)
+                let backDigits = d.dropFirst(6).reduce(0) { $0 * 10 + $1 }
+                guard (0...14).contains(backDigits) else { return nil }
+                return LotteryBet(front: Array(d.prefix(6)), back: [backDigits])
+            }
             guard ts.count >= 2, let last = ts.last, let b = Int(last) else { return nil }
             front = ts.dropLast().joined().compactMap { $0.wholeNumberValue }
             back = [b]
