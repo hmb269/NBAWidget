@@ -47,17 +47,15 @@ struct NBAView: View {
             .glassCard(24)
         }
         .refreshable { await load() }
+        // 只在第一次进 NBA 页时加载一次，之后不自动刷新，下拉才刷新
         .task(id: isActive) {
-            guard isActive else { return }
-            // 进到 NBA 页刷新一次；有比赛在打时每分钟刷新，离开这页就停
+            guard isActive, !loadedOnce else { return }
+            loadedOnce = true
             await load()
-            while !Task.isCancelled, (today + tomorrow).contains(where: { $0.state == "in" }) {
-                try? await Task.sleep(for: .seconds(60))
-                if Task.isCancelled { break }
-                await load()
-            }
         }
     }
+
+    @State private var loadedOnce = false
 
     private let rowHeight: CGFloat = 62
 
