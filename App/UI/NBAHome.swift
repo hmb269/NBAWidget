@@ -46,12 +46,13 @@ struct NBAView: View {
             }
             .glassCard(24)
         }
-        .refreshable { await load() }
+        .refreshable { await Task { await load() }.value }
         // 只在第一次进 NBA 页时加载一次，之后不自动刷新，下拉才刷新
         .task(id: isActive) {
             guard isActive, !loadedOnce else { return }
             loadedOnce = true
-            await load()
+            // 独立任务：滑过这一页时请求不会被取消（之前显示「加载失败：cancelled」）
+            Task { await load() }
         }
     }
 
@@ -118,6 +119,8 @@ struct NBAView: View {
             tomorrow = try await b
             errorText = nil
             WidgetCenter.shared.reloadAllTimelines()
+        } catch is CancellationError {
+        } catch let e as URLError where e.code == .cancelled {
         } catch {
             errorText = "加载失败：\(error.localizedDescription)"
         }

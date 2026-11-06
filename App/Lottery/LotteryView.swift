@@ -92,12 +92,13 @@ struct LotteryView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 6)
         }
-        .refreshable { await load() }
+        .refreshable { await Task { await load() }.value }
         // 只在第一次进彩票页时加载一次，之后不自动刷新，下拉才刷新
         .task(id: isActive) {
             guard isActive, !loadedOnce else { return }
             loadedOnce = true
-            await load()
+            // 独立任务：滑过这一页时请求不会被取消（之前显示「加载失败：cancelled」）
+            Task { await load() }
         }
         .fullScreenCover(isPresented: $showCamera) {
             CameraPicker { img in Task { await read(img) } }
