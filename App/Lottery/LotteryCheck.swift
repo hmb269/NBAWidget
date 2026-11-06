@@ -228,7 +228,7 @@ enum TicketReader {
         let results: [(String, [String])] = [("系统识别", await a), ("增强+词表", await b), ("文档识别", await c), ("增强图", await d)]
 
         // 玩法：任何一种识别认出了玩法名就用它
-        let union = results.flatMap(\.1).joined(separator: "\n")
+        let union = results.flatMap(\.1).map(fixWords).joined(separator: "\n")
         let game = detectGame(union)
 
         var best: TicketScan?
@@ -365,7 +365,19 @@ enum TicketReader {
         return nil
     }
 
-    static func scan(lines ls: [String], game: LotteryGame?) -> TicketScan {
+    /// 识别常见的错字，按票面固定写法改回来
+    static func fixWords(_ l: String) -> String {
+        var s = l
+        for (re, to) in [("[7七]\\s*星\\s*[形糕杉衫影砂珍]", "7星彩"), ("[央块筷决]\\s*乐\\s*[8８]", "快乐8"),
+                         ("双色[求球味]", "双色球"), ("大[乐东]\\s*[透诱]", "大乐透"), ("福利[科料]票", "福利彩票"),
+                         ("体育[科料]票", "体育彩票"), ("台计", "合计")] {
+            s = s.replacingOccurrences(of: re, with: to, options: .regularExpression)
+        }
+        return s
+    }
+
+    static func scan(lines ls0: [String], game: LotteryGame?) -> TicketScan {
+        let ls = ls0.map(fixWords)
         var t = TicketScan()
         let all = ls.joined(separator: "\n")
         t.rawText = all
