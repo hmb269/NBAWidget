@@ -7,6 +7,8 @@ struct TicketCheckSheet: View {
     let image: UIImage?
     /// 从收藏点进来：号码已定，只选期号对奖（不显示选号面板）
     var favMode = false
+    /// 识别失败时「重新拍照」
+    var onRetake: (() -> Void)? = nil
     /// 拍照进来默认只看结果；号码认错了点「手动修改」才显示选号面板
     @State private var editing = false
     @State private var multi = false
@@ -38,6 +40,8 @@ struct TicketCheckSheet: View {
     }
 
     private var g: LotteryGame { scan.game }
+    /// 拍照没认出号码：只显示失败提示，不展开选号这些
+    private var failed: Bool { image != nil && scan.bets.isEmpty && !editing }
 
     var body: some View {
         NavigationStack {
@@ -47,6 +51,9 @@ struct TicketCheckSheet: View {
                         ticketPhoto(image)
                     }
 
+                    if failed {
+                        failedCard
+                    } else {
                     settingsCard
                     if readOnly {
                         favBetsCard
@@ -74,6 +81,7 @@ struct TicketCheckSheet: View {
                     }
 
                     if !periods.isEmpty || pending > 0 { resultView }
+                    }
 
                     if !scan.rawText.isEmpty {
                         DisclosureGroup("识别出的原始文字" + (scan.engine.isEmpty ? "" : "（\(scan.engine)）"), isExpanded: $showRaw) {
@@ -93,10 +101,9 @@ struct TicketCheckSheet: View {
                 ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() } }
             }
             .onAppear {
-                if image != nil && scan.bets.isEmpty { editing = true }
                 if image != nil, !scan.issue.isEmpty, !scan.bets.isEmpty { /* 期号校正后在 loadIssues 里对奖 */ }
                 else if image != nil {
-                    message = scan.bets.isEmpty ? "没认出号码，拍正一点、光线亮一点再试，或者在下面点选号码。" : "没认出期号，填一下再点对奖。"
+                    message = scan.bets.isEmpty ? nil : "没认出期号，填一下再点对奖。"
                 }
             }
             .onChange(of: scan.game) { old, new in
@@ -118,6 +125,41 @@ struct TicketCheckSheet: View {
                 if readOnly && multi && !issueList.isEmpty { Task { await check() } }
             }
         }
+    }
+
+    // MARK: 识别失败
+
+    private var failedCard: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 34))
+                .foregroundStyle(.orange)
+            Text("没认出号码").font(.title3.weight(.bold))
+            Text("把彩票放平、拍正，号码那一块别反光，再拍一次试试。")
+                .font(.subheadline).foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            HStack(spacing: 10) {
+                if let onRetake {
+                    Button {
+                        dismiss()
+                        onRetake()
+                    } label: {
+                        Label("重新拍照", systemImage: "camera.fill").frame(maxWidth: .infinity)
+                    }
+                    .glassButton()
+                }
+                Button {
+                    withAnimation { editing = true; message = nil }
+                } label: {
+                    Label("手动输入", systemImage: "hand.tap").frame(maxWidth: .infinity)
+                }
+                .glassButton()
+            }
+            .font(.subheadline.weight(.semibold))
+        }
+        .frame(maxWidth: .infinity)
+        .padding(20)
+        .glassCard(24)
     }
 
     // MARK: 彩票照片 + 中奖印章

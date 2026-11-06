@@ -119,7 +119,10 @@ struct LotteryView: View {
         }
         .sheet(isPresented: Binding(get: { scan != nil }, set: { if !$0 { scan = nil } })) {
             if let s = scan {
-                TicketCheckSheet(scan: s, image: scanImage)
+                TicketCheckSheet(scan: s, image: scanImage, onRetake: {
+                    scan = nil
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { showCamera = true }
+                })
                     .presentationBackground(.ultraThinMaterial)
             }
         }

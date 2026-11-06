@@ -91,7 +91,9 @@ struct LotteryBet: Identifiable, Hashable {
     }
 
     /// 七星彩：前区 6 位（每位 0~9，顺序有意义），后区 1 个（0~14）
-    private static func parseQXC(_ s: String) -> LotteryBet? {
+    private static func parseQXC(_ s0: String) -> LotteryBet? {
+        // 单独一个「1」常被认成 l、I、|
+        let s = s0.replacingOccurrences(of: "(?<=\\s)[lI|!丨](?=\\s|$)", with: "1", options: .regularExpression)
         let (fp, bp) = split(s)
         let tokens = { (t: String) -> [String] in
             let re = try! NSRegularExpression(pattern: "\\d+")
@@ -239,7 +241,74 @@ enum TicketReader {
                 + (t.issue.isEmpty ? 0 : 2) + (t.drawDate.isEmpty ? 0 : 1) + min(t.bets.count, 5)
             if score > bestScore { best = t; bestScore = score }
         }
-        return best ?? scan(lines: results[0].1, game: game)
+        var out = best ?? scan(lines: results[0].1, game: game)
+        // 七星彩漏了后区那一位：单独补认
+        if out.game == .qxc, out.bets.isEmpty, let better, let back = await qxcBackDigit(in: better) {
+            var ls = out.rawText.components(separatedBy: "\n")
+            if let i = ls.firstIndex(where: { l in l.filter(\.isNumber).count == 6 && l.filter({ !$0.isWhitespace }).count == 6 }) {
+                ls[i] += " + \(back)"
+                var t = scan(lines: ls, game: .qxc)
+                t.engine = out.engine + "+补认后区"
+                if t.issue.isEmpty { t.issue = out.issue; t.issueTo = out.issueTo }
+                if t.drawDate.isEmpty { t.drawDate = out.drawDate }
+                if !t.bets.isEmpty { out = t }
+            }
+        }
+        return out
+    }
+
+    /// 七星彩后区那一位数字离前面很远，常常单独漏掉：
+    /// 找到前区 6 位数字那一行，把它右边那一块裁出来放大，再单独认一次
+    static func qxcBackDigit(in cg: CGImage) async -> Int? {
+        let obs: [VNRecognizedTextObservation] = await withCheckedContinuation { cont in
+            let req = VNRecognizeTextRequest { r, _ in cont.resume(returning: (r.results as? [VNRecognizedTextObservation]) ?? []) }
+            req.recognitionLevel = .accurate
+            req.recognitionLanguages = ["zh-Hans", "en-US"]
+            req.usesLanguageCorrection = false
+            do { try VNImageRequestHandler(cgImage: cg, orientation: .up).perform([req]) } catch { cont.resume(returning: []) }
+        }
+        // 同一行的拼起来；前区那一行：去掉空格正好 6 个数字
+        var rows: [(y: CGFloat, items: [VNRecognizedTextObservation])] = []
+        for o in obs.sorted(by: { $0.boundingBox.midY > $1.boundingBox.midY }) {
+            if let i = rows.firstIndex(where: { abs($0.y - o.boundingBox.midY) < o.boundingBox.height * 0.5 }) {
+                rows[i].items.append(o)
+            } else { rows.append((o.boundingBox.midY, [o])) }
+        }
+        guard let row = rows.first(where: { r in
+            let t = r.items.compactMap { $0.topCandidates(1).first?.string }.joined().filter { !$0.isWhitespace }
+            return t.count == 6 && t.allSatisfy(\.isNumber)
+        }) else { return nil }
+        let b = row.items.map(\.boundingBox).reduce(row.items[0].boundingBox) { $0.union($1) }   // 0~1，左下角为原点
+        let W = CGFloat(cg.width), H = CGFloat(cg.height)
+        let x0 = (b.maxX + b.width * 0.02) * W
+        let y0 = (1 - b.maxY - b.height * 0.6) * H
+        let rect = CGRect(x: x0, y: y0, width: min(W - x0, b.width * W * 0.6), height: b.height * 2.2 * H).intersection(CGRect(x: 0, y: 0, width: W, height: H))
+        guard rect.width > 4, rect.height > 4, let crop = cg.cropping(to: rect) else { return nil }
+        // 放大 3 倍，四周留白
+        let scale: CGFloat = 3, pad: CGFloat = 40
+        let size = CGSize(width: rect.width * scale + pad * 2, height: rect.height * scale + pad * 2)
+        let fmt = UIGraphicsImageRendererFormat(); fmt.scale = 1
+        let big = UIGraphicsImageRenderer(size: size, format: fmt).image { ctx in
+            UIColor.white.setFill(); ctx.fill(CGRect(origin: .zero, size: size))
+            UIImage(cgImage: crop).draw(in: CGRect(x: pad, y: pad, width: rect.width * scale, height: rect.height * scale))
+        }
+        guard let bigCG = big.cgImage else { return nil }
+        for level in [VNRequestTextRecognitionLevel.accurate, .fast] {
+            let text: String = await withCheckedContinuation { cont in
+                let req = VNRecognizeTextRequest { r, _ in
+                    let o = (r.results as? [VNRecognizedTextObservation]) ?? []
+                    cont.resume(returning: o.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " "))
+                }
+                req.recognitionLevel = level
+                req.recognitionLanguages = ["en-US"]
+                req.usesLanguageCorrection = false
+                req.minimumTextHeight = 0
+                do { try VNImageRequestHandler(cgImage: bigCG, orientation: .up).perform([req]) } catch { cont.resume(returning: "") }
+            }
+            let t = text.replacingOccurrences(of: "[lI|!丨]", with: "1", options: .regularExpression)
+            if let m = t.range(of: "\\d{1,2}", options: .regularExpression), let v = Int(t[m]), (0...14).contains(v) { return v }
+        }
+        return nil
     }
 
     /// 从文字里认玩法
