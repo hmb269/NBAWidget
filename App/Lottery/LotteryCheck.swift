@@ -213,9 +213,9 @@ enum TicketReader {
         let ori = image.cgOrientation
         let better = enhanced(image)
         async let a = lines(in: cg, orientation: ori, correction: false)
-        async let b: [String] = better.map { await lines(in: $0, orientation: .up, correction: true) } ?? []
-        async let c: [String] = better.map { await documentLines(in: $0) } ?? []
-        async let d: [String] = better.map { await lines(in: $0, orientation: .up, correction: false) } ?? []
+        async let b: [String] = better == nil ? [] : lines(in: better!, orientation: .up, correction: true)
+        async let c: [String] = better == nil ? [] : documentLines(in: better!)
+        async let d: [String] = better == nil ? [] : lines(in: better!, orientation: .up, correction: false)
         let results: [(String, [String])] = [("系统识别", await a), ("增强+词表", await b), ("文档识别", await c), ("增强图", await d)]
 
         // 玩法：任何一种识别认出了玩法名就用它
