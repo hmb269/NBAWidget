@@ -293,11 +293,12 @@ struct GlucoseView: View {
                 }
             }
 
-            GlucoseTrendCard(points: shown.map {
+            // 趋势默认只看自己的，其他人在卡片右上角选（不受下面「全部/我/…」筛选影响）
+            GlucoseTrendCard(points: records.map {
                 ($0.date, $0.mmol, label($0) ?? "", $0.note, $0.photos?.first.flatMap(GlucoseMedia.thumb), $0.id)
             }, onOpen: { id in
                 editing = records.first { $0.id == id }
-            })
+            }, people: people, ownerOf: { owners[$0] ?? GlucosePeople.me })
 
             overAlbumCard
 

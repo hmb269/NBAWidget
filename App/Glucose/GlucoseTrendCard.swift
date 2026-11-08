@@ -66,7 +66,11 @@ struct GlucoseTrendCard: View {
     let points: [GPoint]
     /// 点「这条记录」打开详情
     var onOpen: (String) -> Void = { _ in }
+    /// 其他测量人（不含「我」）；记录 id → 测量人
+    var people: [String] = []
+    var ownerOf: (String) -> String = { _ in GlucosePeople.me }
 
+    @State private var person = GlucosePeople.me   // 默认看自己的趋势
     @State private var kind: GlucoseKind = .after2
     @State private var days = 30
     @State private var meal: MealFilter = .all
@@ -76,6 +80,7 @@ struct GlucoseTrendCard: View {
         let start = Calendar.current.date(byAdding: .day, value: -days, to: Date())!
         return points.filter {
             $0.0 >= start && GlucoseKind.of($0.2) == kind && (kind == .fasting || meal.matches($0.2))
+                && ownerOf($0.5) == person
         }.sorted { $0.0 < $1.0 }
     }
 
@@ -93,6 +98,14 @@ struct GlucoseTrendCard: View {
                     .font(.headline)
                     .foregroundStyle(kind.color)
                 Spacer()
+                if !people.isEmpty {
+                    Picker("测量人", selection: $person) {
+                        Text(GlucosePeople.me).tag(GlucosePeople.me)
+                        ForEach(people, id: \.self) { Text($0).tag($0) }
+                    }
+                    .pickerStyle(.menu)
+                    .tint(.secondary)
+                }
                 Picker("范围", selection: $days) {
                     Text("7天").tag(7)
                     Text("30天").tag(30)
@@ -166,6 +179,7 @@ struct GlucoseTrendCard: View {
         .glassCard(26)
         .onChange(of: kind) { _, _ in selected = nil }
         .onChange(of: days) { _, _ in selected = nil }
+        .onChange(of: person) { _, _ in selected = nil }
         .onChange(of: meal) { _, _ in selected = nil }
     }
 
