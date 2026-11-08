@@ -915,8 +915,7 @@ struct TicketCheckSheet: View {
                 if h.floating > 0 {
                     Text("另有 \(h.floating) 期中了浮动大奖（一、二等奖），奖金见下面").font(.footnote.weight(.semibold)).foregroundStyle(.orange)
                 }
-                Text("如果每期都买（每期 " + LotteryFormat.money(h.costPerDraw) + "），一共要花 " + LotteryFormat.money(cost)
-                     + "，" + (net >= 0 ? "净赚 " : "净亏 ") + LotteryFormat.money(abs(net)) + (h.floating > 0 ? "（不含浮动大奖）" : ""))
+                Text(costText(h, cost: cost, net: net))
                     .font(.caption).foregroundStyle(.secondary)
                 if !h.byPrize.isEmpty {
                     Text(h.byPrize.map { "\($0.0) × \($0.1)" }.joined(separator: "   "))
@@ -944,9 +943,7 @@ struct TicketCheckSheet: View {
                     }
                     LotteryBalls(game: g, front: p.draw.front, back: p.draw.back, size: g == .kl8 ? 22 : 24,
                                  hitFront: drawHits(p, back: false), hitBack: drawHits(p, back: true))
-                    Text(p.hits.map { h in
-                        h.name + " × \(h.count)" + (h.each.map { "（" + LotteryFormat.money($0) + "）" } ?? floatingAmount(p.draw, h.name).map { "（" + $0 + "/注）" } ?? "")
-                    }.joined(separator: "、"))
+                    Text(hitsText(p))
                     .font(.caption).foregroundStyle(.secondary)
                 }
                 .padding(14)
@@ -957,6 +954,23 @@ struct TicketCheckSheet: View {
                 Text("只列出前 300 期").font(.caption).foregroundStyle(.secondary)
             }
         }
+    }
+
+    private func hitsText(_ p: PeriodResult) -> String {
+        p.hits.map { (h: PrizeHit) -> String in
+            var t: String = h.name + " × \(h.count)"
+            if let e = h.each { t += "（" + LotteryFormat.money(e) + "）" }
+            else if let f = floatingAmount(p.draw, h.name) { t += "（" + f + "/注）" }
+            return t
+        }.joined(separator: "、")
+    }
+
+    private func costText(_ h: HistoryResult, cost: Double, net: Double) -> String {
+        let per: String = LotteryFormat.money(h.costPerDraw)
+        let total: String = LotteryFormat.money(cost)
+        let diff: String = (net >= 0 ? "净赚 " : "净亏 ") + LotteryFormat.money(abs(net))
+        let tail: String = h.floating > 0 ? "（不含浮动大奖）" : ""
+        return "如果每期都买（每期 \(per)），一共要花 \(total)，\(diff)\(tail)"
     }
 
     /// 开奖号码里哪些位置被这几注号码中了

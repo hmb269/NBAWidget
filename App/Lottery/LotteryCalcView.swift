@@ -6,13 +6,21 @@ struct LotteryCalcView: View {
     @State private var dantuo = false
 
     // 双色球
-    @State private var ssqRed = 7, ssqBlue = 1, ssqDan = 2, ssqTuo = 6
+    @State private var ssqRed = 7
+    @State private var ssqBlue = 1
+    @State private var ssqDan = 2
+    @State private var ssqTuo = 6
     // 大乐透
-    @State private var dltFront = 6, dltBack = 2
-    @State private var dltFDan = 1, dltFTuo = 5, dltBDan = 0, dltBTuo = 3
+    @State private var dltFront = 6
+    @State private var dltBack = 2
+    @State private var dltFDan = 1
+    @State private var dltFTuo = 5
+    @State private var dltBDan = 0
+    @State private var dltBTuo = 3
     @State private var added = false
     // 快乐8
-    @State private var kl8Pick = 10, kl8Count = 11
+    @State private var kl8Pick = 10
+    @State private var kl8Count = 11
     // 七星彩：每一位选了几个数字
     @State private var qxc = [1, 1, 1, 1, 1, 1, 1]
 
