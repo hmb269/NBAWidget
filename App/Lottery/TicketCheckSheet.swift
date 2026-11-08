@@ -9,6 +9,11 @@ struct TicketCheckSheet: View {
     var favMode = false
     /// 识别失败时「重新拍照」
     var onRetake: (() -> Void)? = nil
+    /// 查一注号码历史上中过什么奖（不选期号，查很多期）
+    var historyMode = false
+    @State private var historyRange = 500
+    @State private var history: HistoryResult?
+    @State private var historyProgress = 0
     /// 拍照进来默认只看结果；号码认错了点「手动修改」才显示选号面板
     @State private var editing = false
     @State private var multi = false
@@ -54,7 +59,7 @@ struct TicketCheckSheet: View {
                     if failed {
                         failedCard
                     } else {
-                    settingsCard
+                    if historyMode { historySettingsCard } else { settingsCard }
                     if readOnly {
                         favBetsCard
                     } else {
@@ -68,7 +73,8 @@ struct TicketCheckSheet: View {
                     } label: {
                         HStack {
                             if checking { ProgressView() }
-                            Text(scan.issueTo.isEmpty ? "对奖" : "对奖（多期）").font(.headline)
+                            Text(historyMode ? (checking && historyProgress > 0 ? "已取 \(historyProgress) 期开奖…" : "查历史中奖")
+                                 : scan.issueTo.isEmpty ? "对奖" : "对奖（多期）").font(.headline)
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 4)
@@ -80,6 +86,7 @@ struct TicketCheckSheet: View {
                         Text(message).font(.footnote).foregroundStyle(.orange)
                     }
 
+                    if historyMode, let history { historyView(history) }
                     if !periods.isEmpty || pending > 0 { resultView }
 
                     // 对完一张接着拍下一张
@@ -112,7 +119,7 @@ struct TicketCheckSheet: View {
                 }
                 .padding(16)
             }
-            .navigationTitle("对奖")
+            .navigationTitle(historyMode ? "历史中奖查询" : "对奖")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() } }
@@ -125,7 +132,7 @@ struct TicketCheckSheet: View {
             }
             .onChange(of: scan.game) { old, new in
                 if old != new {
-                    clearPicker(); scan.bets = []; periods = []; pending = 0
+                    clearPicker(); scan.bets = []; periods = []; pending = 0; history = nil
                     scan.issue = ""; scan.issueTo = ""
                     Task { await loadIssues() }
                 }
@@ -431,7 +438,7 @@ struct TicketCheckSheet: View {
                     Button {
                         Task { await checkFavorites() }
                     } label: {
-                        Label("全部对奖", systemImage: "checkmark.seal").font(.caption.weight(.semibold))
+                        Label(historyMode ? "全部查" : "全部对奖", systemImage: "checkmark.seal").font(.caption.weight(.semibold))
                     }
                     .glassButton()
                 }
@@ -448,7 +455,7 @@ struct TicketCheckSheet: View {
                     Button {
                         Task { await checkOne(b) }
                     } label: {
-                        Text("对奖").font(.caption.weight(.semibold))
+                        Text(historyMode ? "查历史" : "对奖").font(.caption.weight(.semibold))
                     }
                     .glassButton()
                     Button {
@@ -812,6 +819,163 @@ struct TicketCheckSheet: View {
         }
     }
 
+    // MARK: 历史中奖查询
+
+    struct HistoryResult {
+        let scanned: Int
+        let firstDate: String
+        let lastDate: String
+        let wins: [PeriodResult]
+        let costPerDraw: Double
+        var fixedMoney: Double { wins.map(\.money).reduce(0, +) }
+        var floating: Int { wins.filter(\.floating).count }
+        /// 各奖级中了几次（注数）
+        var byPrize: [(String, Int)] {
+            var m: [String: Int] = [:]
+            for w in wins { for h in w.hits { m[h.name, default: 0] += h.count } }
+            return m.sorted { $0.value < $1.value }
+        }
+    }
+
+    private var historySettingsCard: some View {
+        CardSection {
+            Picker("玩法", selection: $scan.game) {
+                ForEach(LotteryGame.checkableGames) { Text($0.shortName).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .padding(.vertical, 10)
+            RowDivider()
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("查多少期")
+                    Text("第一次查「全部」要多等一会儿，之后只补新开的").font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Picker("", selection: $historyRange) {
+                    Text("近 100 期").tag(100)
+                    Text("近 500 期").tag(500)
+                    Text("近 1000 期").tag(1000)
+                    Text("全部").tag(0)
+                }
+                .pickerStyle(.menu).tint(.secondary)
+            }
+            .padding(.vertical, 8)
+            if g == .dlt {
+                RowDivider()
+                Toggle("追加投注", isOn: $scan.added).padding(.vertical, 6)
+            }
+        }
+    }
+
+    private func queryHistory() async {
+        message = nil
+        history = nil
+        guard !scan.bets.isEmpty else { message = "先在上面点选号码，添加至少一注。"; return }
+        checking = true
+        historyProgress = 0
+        defer { checking = false }
+        do {
+            let list = try await LotteryAPI.longHistory(g, limit: historyRange) { n in
+                Task { @MainActor in historyProgress = n }
+            }
+            guard !list.isEmpty else { message = "没取到开奖数据，稍后再试。"; return }
+            let res = list.map { d in
+                PeriodResult(draw: d, results: scan.bets.map { PrizeCalc.check(withAdded($0), draw: d, game: g, multiple: max(1, $0.multiple)) })
+            }
+            let per = (res.first?.results ?? []).enumerated().reduce(0.0) { sum, e in
+                let b = withAdded(scan.bets[e.offset])
+                return sum + Double(e.element.combos) * (g == .dlt && b.added ? 3 : 2) * Double(max(1, b.multiple))
+            }
+            let wins = res.filter { !$0.hits.isEmpty }.sorted {
+                if $0.floating != $1.floating { return $0.floating }
+                if $0.money != $1.money { return $0.money > $1.money }
+                return (LotteryAPI.issueNumber($0.draw.issue) ?? 0) > (LotteryAPI.issueNumber($1.draw.issue) ?? 0)
+            }
+            withAnimation {
+                history = HistoryResult(scanned: list.count, firstDate: String(list.last?.date.prefix(10) ?? ""),
+                                        lastDate: String(list.first?.date.prefix(10) ?? ""), wins: wins, costPerDraw: per)
+            }
+        } catch {
+            message = "获取历史开奖失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func historyView(_ h: HistoryResult) -> some View {
+        let cost = h.costPerDraw * Double(h.scanned)
+        let net = h.fixedMoney - cost
+        return VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("查了 \(h.scanned) 期").font(.headline)
+                Text(h.firstDate + " ~ " + h.lastDate).font(.caption).foregroundStyle(.secondary)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("中奖 \(h.wins.count) 期").font(.title3.weight(.bold))
+                    Text("合计 " + LotteryFormat.money(h.fixedMoney)).font(.title3.weight(.bold))
+                        .foregroundStyle(Color(red: 1, green: 0.75, blue: 0.3))
+                }
+                if h.floating > 0 {
+                    Text("另有 \(h.floating) 期中了浮动大奖（一、二等奖），奖金见下面").font(.footnote.weight(.semibold)).foregroundStyle(.orange)
+                }
+                Text("如果每期都买（每期 " + LotteryFormat.money(h.costPerDraw) + "），一共要花 " + LotteryFormat.money(cost)
+                     + "，" + (net >= 0 ? "净赚 " : "净亏 ") + LotteryFormat.money(abs(net)) + (h.floating > 0 ? "（不含浮动大奖）" : ""))
+                    .font(.caption).foregroundStyle(.secondary)
+                if !h.byPrize.isEmpty {
+                    Text(h.byPrize.map { "\($0.0) × \($0.1)" }.joined(separator: "   "))
+                        .font(.caption.weight(.semibold))
+                }
+                Text("固定奖金按现在的规则算，早年规则不同的期可能有出入；浮动奖金是那一期官方公布的。")
+                    .font(.caption2).foregroundStyle(.tertiary)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .glassCard(22)
+
+            if h.wins.isEmpty {
+                Text("这些期里一次都没中过。").font(.subheadline).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity).padding(24).glassCard(20)
+            }
+            ForEach(h.wins.prefix(300)) { p in
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("第\(p.draw.issue)期").font(.subheadline.weight(.bold))
+                        Text(String(p.draw.date.prefix(10))).font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Text(p.floating && p.money == 0 ? "浮动奖" : LotteryFormat.money(p.money))
+                            .font(.subheadline.weight(.bold)).foregroundStyle(Color(red: 1, green: 0.75, blue: 0.3))
+                    }
+                    LotteryBalls(game: g, front: p.draw.front, back: p.draw.back, size: g == .kl8 ? 22 : 24,
+                                 hitFront: drawHits(p, back: false), hitBack: drawHits(p, back: true))
+                    Text(p.hits.map { h in
+                        h.name + " × \(h.count)" + (h.each.map { "（" + LotteryFormat.money($0) + "）" } ?? floatingAmount(p.draw, h.name).map { "（" + $0 + "/注）" } ?? "")
+                    }.joined(separator: "、"))
+                    .font(.caption).foregroundStyle(.secondary)
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .glassCard(18)
+            }
+            if h.wins.count > 300 {
+                Text("只列出前 300 期").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// 开奖号码里哪些位置被这几注号码中了
+    private func drawHits(_ p: PeriodResult, back: Bool) -> Set<Int> {
+        if g == .qxc {
+            return back ? (p.results.contains { !$0.backHitIdx.isEmpty } ? [0] : [])
+                        : p.results.reduce(Set<Int>()) { $0.union($1.frontHitIdx) }
+        }
+        let mine = Set(scan.bets.flatMap { back ? $0.back : $0.front })
+        let nums = back ? p.draw.back : p.draw.front
+        return Set(nums.indices.filter { Int(nums[$0]).map(mine.contains) ?? false })
+    }
+
+    /// 浮动奖那一期官方公布的单注奖金
+    private func floatingAmount(_ d: LotteryDraw, _ name: String) -> String? {
+        guard let p = d.prizes.first(where: { $0.name == name || $0.name.hasPrefix(name) }), !p.amount.isEmpty else { return nil }
+        return LotteryFormat.yuan(p.amount)
+    }
+
     /// 票上勾了追加，就每注都算追加
     private func withAdded(_ b: LotteryBet) -> LotteryBet {
         var b = b
@@ -854,6 +1018,7 @@ struct TicketCheckSheet: View {
     // MARK: 对奖
 
     private func check() async {
+        if historyMode { await queryHistory(); return }
         message = nil
         periods = []
         pending = 0

@@ -197,11 +197,11 @@ enum LotteryAPI {
 
     // MARK: 福彩
 
-    private static func welfare(_ g: LotteryGame, count: Int) async throws -> [LotteryDraw] {
+    private static func welfare(_ g: LotteryGame, count: Int, page: Int = 1) async throws -> [LotteryDraw] {
         var comp = URLComponents(string: "https://www.cwl.gov.cn/cwl_admin/front/cwlkj/search/kjxx/findDrawNotice")!
         comp.queryItems = [
             URLQueryItem(name: "name", value: g.rawValue),
-            URLQueryItem(name: "pageNo", value: "1"),
+            URLQueryItem(name: "pageNo", value: "\(page)"),
             URLQueryItem(name: "pageSize", value: "\(count)"),
             URLQueryItem(name: "systemType", value: "PC"),
         ]
@@ -265,14 +265,14 @@ enum LotteryAPI {
 
     // MARK: 体彩
 
-    private static func sports(_ g: LotteryGame, count: Int) async throws -> [LotteryDraw] {
+    private static func sports(_ g: LotteryGame, count: Int, page: Int = 1) async throws -> [LotteryDraw] {
         var comp = URLComponents(string: "https://webapi.sporttery.cn/gateway/lottery/getHistoryPageListV1.qry")!
         comp.queryItems = [
             URLQueryItem(name: "gameNo", value: g.sportteryNo),
             URLQueryItem(name: "provinceId", value: "0"),
             URLQueryItem(name: "pageSize", value: "\(count)"),
             URLQueryItem(name: "isVerify", value: "1"),
-            URLQueryItem(name: "pageNo", value: "1"),
+            URLQueryItem(name: "pageNo", value: "\(page)"),
         ]
         var req = URLRequest(url: comp.url!, timeoutInterval: 15)
         req.setValue(ua, forHTTPHeaderField: "User-Agent")
@@ -302,6 +302,41 @@ enum LotteryAPI {
                 prizes: prizes
             )
         }
+    }
+
+    // MARK: 很多期的历史（查一注号码历史上中过什么奖用）
+
+    private static func fullURL(_ g: LotteryGame) -> URL {
+        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        return dir.appendingPathComponent("lottery_full_\(g.rawValue).json")
+    }
+
+    /// 最近 limit 期（0 = 全部）。存在本机，下次只补新开的；progress 报告已拿到多少期
+    static func longHistory(_ g: LotteryGame, limit: Int, progress: @escaping (Int) -> Void = { _ in }) async throws -> [LotteryDraw] {
+        var byIssue: [String: LotteryDraw] = [:]
+        if let d = try? Data(contentsOf: fullURL(g)), let old = try? JSONDecoder().decode([LotteryDraw].self, from: d) {
+            for x in old { byIssue[x.issue] = x }
+        }
+        let size = 100
+        let doneKey = "lotteryFullDone_" + g.rawValue
+        let complete = UserDefaults.standard.bool(forKey: doneKey)   // 以前已经拉到过最早一期
+        var page = 1
+        while true {
+            let list = g.isWelfare ? try await welfare(g, count: size, page: page) : try await sports(g, count: size, page: page)
+            let fresh = list.filter { byIssue[$0.issue] == nil }
+            for x in list { byIssue[x.issue] = x }
+            progress(byIssue.count)
+            if list.count < size { UserDefaults.standard.set(true, forKey: doneKey); break }   // 到最早一期了
+            if limit > 0 && page * size >= limit { break }
+            // 这一页全是本机已有的：后面的也都有了
+            if fresh.isEmpty && (complete || (limit > 0 && byIssue.count >= limit)) { break }
+            page += 1
+            if page > 80 { break }
+            try await Task.sleep(for: .milliseconds(250))   // 别请求太快被官网拦
+        }
+        let all = byIssue.values.sorted { (issueNumber($0.issue) ?? 0) > (issueNumber($1.issue) ?? 0) }
+        if let d = try? JSONEncoder().encode(all) { try? d.write(to: fullURL(g), options: .atomic) }
+        return limit > 0 ? Array(all.prefix(limit)) : all
     }
 
     // MARK: 缓存（没网时也能看上次的）

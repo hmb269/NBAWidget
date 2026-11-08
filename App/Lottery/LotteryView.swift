@@ -24,6 +24,7 @@ struct LotteryView: View {
     @State private var scan: TicketScan?
     @State private var scanImage: UIImage?
     @State private var favCheck: TicketScan?
+    @State private var historyCheck: TicketScan?
 
     @State private var order: [String] = UserDefaults.standard.stringArray(forKey: "lotteryOrder") ?? LotteryGame.allCases.map(\.rawValue)
     @State private var dragging: LotteryGame?
@@ -44,6 +45,23 @@ struct LotteryView: View {
     var body: some View {
         PageScroll(title: "彩票", subtitle: todayText) {
             checkCard
+
+            // 小工具
+            HStack(spacing: 10) {
+                NavigationLink {
+                    LotteryCalcView()
+                } label: {
+                    Label("金额计算器", systemImage: "function").frame(maxWidth: .infinity)
+                }
+                .glassButton()
+                Button {
+                    historyCheck = TicketScan(game: segment == 1 ? .dlt : .ssq)
+                } label: {
+                    Label("历史中奖查询", systemImage: "clock.arrow.circlepath").frame(maxWidth: .infinity)
+                }
+                .glassButton()
+            }
+            .font(.subheadline.weight(.semibold))
 
             Picker("", selection: $segment) {
                 Text("福彩").tag(0)
@@ -117,6 +135,12 @@ struct LotteryView: View {
                     scan = nil
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { showCamera = true }
                 })
+                    .presentationBackground(.ultraThinMaterial)
+            }
+        }
+        .sheet(isPresented: Binding(get: { historyCheck != nil }, set: { if !$0 { historyCheck = nil } })) {
+            if let s = historyCheck {
+                TicketCheckSheet(scan: s, image: nil, historyMode: true)
                     .presentationBackground(.ultraThinMaterial)
             }
         }
