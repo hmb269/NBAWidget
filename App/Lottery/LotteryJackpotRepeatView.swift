@@ -124,8 +124,7 @@ struct LotteryJackpotRepeatView: View {
         let total = r.reduce(0) { $0 + $1.hits.count }
         return VStack(alignment: .leading, spacing: 6) {
             Text("查了 \(scanned) 期").font(.headline)
-            Text(r.isEmpty ? "没有找到符合条件的号码"
-                 : "有 \(r.count) 期的一等奖号码，在别的期里一共 \(total) 次中了 \(minHits) 个" + (minHits < hitRange.upperBound ? "及以上" : "") + (needBack ? "（含" + backName + "）" : ""))
+            Text(summaryText(r.count, total))
                 .font(.subheadline.weight(.semibold))
             Text("每期开奖号码都是独立随机的，这里只是看看历史巧合，不代表以后会不会再开。")
                 .font(.caption2).foregroundStyle(.tertiary)
@@ -133,6 +132,24 @@ struct LotteryJackpotRepeatView: View {
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard(22)
+    }
+
+    private func firstText(_ p: LotteryPrize) -> String {
+        let each: String = p.amount.isEmpty ? "" : "，每注 " + LotteryFormat.yuan(p.amount)
+        return "当期一等奖 \(p.count) 注\(each)"
+    }
+
+    private func hitTitle(_ h: Hit) -> String {
+        let day: String = String(h.draw.date.prefix(10))
+        let b: String = h.backIdx.isEmpty ? "" : " + " + backName
+        return "第\(h.draw.issue)期（\(day)）中了 \(h.frontIdx.count) 个\(b)"
+    }
+
+    private func summaryText(_ n: Int, _ total: Int) -> String {
+        if n == 0 { return "没有找到符合条件的号码" }
+        let more: String = minHits < hitRange.upperBound ? "及以上" : ""
+        let withBack: String = needBack ? "（含" + backName + "）" : ""
+        return "有 \(n) 期的一等奖号码，在别的期里一共 \(total) 次中了 \(minHits) 个\(more)\(withBack)"
     }
 
     private func matchCard(_ m: Match) -> some View {
@@ -145,13 +162,13 @@ struct LotteryJackpotRepeatView: View {
             }
             LotteryBalls(game: game, front: m.jackpot.front, back: m.jackpot.back, size: 26)
             if let first, !first.count.isEmpty {
-                Text("当期一等奖 \(first.count) 注" + (first.amount.isEmpty ? "" : "，每注 " + LotteryFormat.yuan(first.amount)))
+                Text(firstText(first))
                     .font(.caption).foregroundStyle(Color(red: 1, green: 0.75, blue: 0.3))
             }
             Divider().overlay(Color.white.opacity(0.08))
             ForEach(m.hits) { h in
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("第\(h.draw.issue)期（" + String(h.draw.date.prefix(10)) + "）中了 \(h.frontIdx.count) 个" + (h.backIdx.isEmpty ? "" : " + " + backName))
+                    Text(hitTitle(h))
                         .font(.caption.weight(.semibold))
                     LotteryBalls(game: game, front: h.draw.front, back: h.draw.back, size: 22,
                                  hitFront: h.frontIdx, hitBack: h.backIdx)
