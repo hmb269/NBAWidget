@@ -72,12 +72,18 @@ struct LotteryView: View {
                 Text("福彩").tag(0)
                 Text("体彩").tag(1)
                 Text("★ 收藏").tag(2)
+                Text("彩票").tag(4)
                 Text(winsBadge).tag(3)
             }
             .pickerStyle(.segmented)
             .onReceive(NotificationCenter.default.publisher(for: .lotteryWinsChanged)) { _ in pendingWins = Self.countPending() }
 
-            if segment == 3 {
+            if segment == 4 {
+                LotteryTicketsPane { t in
+                    scanImage = t.photo.flatMap(UIImage.init(data:))
+                    scan = t.scan
+                }
+            } else if segment == 3 {
                 LotteryWinsPane()
             } else if segment == 2 {
                 LotteryFavoritesPane(onAdd: { g in

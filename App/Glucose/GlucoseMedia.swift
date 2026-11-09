@@ -473,6 +473,7 @@ struct GlucoseBackupFile: Codable {
     var thumbs: [String: Data]
     var lotteryFavs: [String: [[[Int]]]]? = nil   // 彩票收藏：玩法 → [[前区],[后区]]
     var lotteryWins: Data? = nil                  // 彩票中奖记录
+    var lotteryTickets: Data? = nil               // 我的彩票
 }
 
 enum GlucoseBackup {
@@ -496,7 +497,8 @@ enum GlucoseBackup {
         for k in mealKeys where d.object(forKey: k) != nil { meals[k] = d.integer(forKey: k) }
         let file = GlucoseBackupFile(version: 1, exportedAt: Date(), records: records,
                                      tags: GlucoseTags.all, owners: GlucosePeople.owners, people: GlucosePeople.names,
-                                     meals: meals, thumbs: thumbs, lotteryFavs: LotteryFavorites.exportAll(), lotteryWins: LotteryWins.exportData())
+                                     meals: meals, thumbs: thumbs, lotteryFavs: LotteryFavorites.exportAll(), lotteryWins: LotteryWins.exportData(),
+                                     lotteryTickets: LotteryTickets.exportData())
         let enc = JSONEncoder()
         enc.dateEncodingStrategy = .iso8601
         return try? enc.encode(file)
@@ -543,9 +545,10 @@ enum GlucoseBackup {
 
         let favs = f.lotteryFavs.map(LotteryFavorites.importAll) ?? 0
         let wins = f.lotteryWins.map(LotteryWins.importData) ?? 0
+        let tickets = f.lotteryTickets.map(LotteryTickets.importData) ?? 0
 
         NotificationCenter.default.post(name: .glucoseDataChanged, object: nil)
-        return "导入完成：新增 \(added) 条记录，恢复 \(newThumbs) 张小图" + (favs > 0 ? "，\(favs) 注彩票收藏" : "") + (wins > 0 ? "，\(wins) 条中奖记录" : "")
+        return "导入完成：新增 \(added) 条记录，恢复 \(newThumbs) 张小图" + (favs > 0 ? "，\(favs) 注彩票收藏" : "") + (wins > 0 ? "，\(wins) 条中奖记录" : "") + (tickets > 0 ? "，\(tickets) 张彩票" : "")
     }
 }
 

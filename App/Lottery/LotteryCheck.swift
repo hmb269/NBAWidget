@@ -152,6 +152,7 @@ struct TicketScan {
     var amountOK = false     // 号码算出来的金额和票面金额对得上
     var engine = ""          // 用的哪种识别
     var amount: Double?      // 票面金额
+    var ticketNo = ""        // 票号（体彩 110450-294561-…，福彩 45A5-AC70-…）
     var aiNote = ""          // 大模型识别的说明（出错原因等）
 }
 
@@ -290,6 +291,7 @@ enum TicketReader {
             }
         }
         if out.amount == nil { out.amount = others.compactMap(\.amount).first }
+        if out.ticketNo.isEmpty { out.ticketNo = others.map(\.ticketNo).first { !$0.isEmpty } ?? "" }
         out.amountOK = amountMatches(out)
 
         // 大模型识别：设置里选了「总是用」，或者本地没认出 / 金额对不上时
@@ -304,6 +306,7 @@ enum TicketReader {
                         if ai.issue.isEmpty { ai.issue = out.issue }
                         if ai.drawDate.isEmpty { ai.drawDate = out.drawDate }
                         if ai.amount == nil { ai.amount = out.amount }
+                        ai.ticketNo = out.ticketNo
                         ai.amountOK = amountMatches(ai)
                         ai.rawText = out.rawText
                         // 本地金额对得上、大模型反而对不上：还是用本地的
@@ -548,6 +551,10 @@ enum TicketReader {
         // 号码算出来的金额和票面金额对不对得上（用来挑最好的识别结果）
         t.amount = amount(all)
         t.amountOK = amountMatches(t)
+        // 票号
+        for p in ["\\d{6}-\\d{6}-\\d{6}-\\d{6}", "[0-9A-F]{4}(?:-[0-9A-F]{3,4}){5,6}"] {
+            if let r = all.range(of: p, options: .regularExpression) { t.ticketNo = String(all[r]); break }
+        }
         return t
     }
 

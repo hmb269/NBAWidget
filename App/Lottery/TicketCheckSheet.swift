@@ -89,6 +89,19 @@ struct TicketCheckSheet: View {
                     if historyMode, let history { historyView(history) }
                     if !periods.isEmpty || pending > 0 { resultView }
 
+                    // 手输的号码也可以存到「我的彩票」
+                    if image == nil, !favMode, !historyMode, !periods.isEmpty || pending > 0 {
+                        Button {
+                            LotteryTickets.upsert(scan, photo: nil)
+                            message = "已存到「我的彩票」，以后开奖会自动对"
+                        } label: {
+                            Label("存到我的彩票", systemImage: "ticket")
+                                .font(.subheadline.weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                        }
+                        .glassButton()
+                    }
+
                     // 对完一张接着拍下一张
                     if image != nil, let onRetake {
                         Button {
@@ -1049,6 +1062,8 @@ struct TicketCheckSheet: View {
                 PeriodResult(draw: d, results: scan.bets.map { PrizeCalc.check(withAdded($0), draw: d, game: g, multiple: scan.multiple * max(1, $0.multiple)) })
             }
             pending = r.pending
+            // 拍照对奖的票自动存到「我的彩票」（多期票以后不用再扫）
+            if image != nil { LotteryTickets.upsert(scan, photo: image) }
             // 中了的自动记到「中奖」栏
             for p in periods where !p.hits.isEmpty {
                 LotteryWins.record(game: g, draw: p.draw, results: p.results, factor: scan.multiple, photo: image)
