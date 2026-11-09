@@ -552,8 +552,12 @@ enum TicketReader {
         t.amount = amount(all)
         t.amountOK = amountMatches(t)
         // 票号
-        for p in ["\\d{6}-\\d{6}-\\d{6}-\\d{6}", "[0-9A-F]{4}(?:-[0-9A-F]{3,4}){5,6}"] {
-            if let r = all.range(of: p, options: .regularExpression) { t.ticketNo = String(all[r]); break }
+        for p in ["\\d{6}\\s*[-—－]\\s*\\d{6}\\s*[-—－]\\s*\\d{6}\\s*[-—－]\\s*\\d{6}", "[0-9A-F]{4}(?:\\s*-\\s*[0-9A-F]{3,4}){5,6}"] {
+            if let r = all.range(of: p, options: .regularExpression) {
+                t.ticketNo = String(all[r]).replacingOccurrences(of: "[\\s—－]", with: "-", options: .regularExpression)
+                    .replacingOccurrences(of: "-+", with: "-", options: .regularExpression)
+                break
+            }
         }
         return t
     }

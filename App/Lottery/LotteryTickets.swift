@@ -79,23 +79,39 @@ enum LotteryTickets {
         NotificationCenter.default.post(name: .lotteryTicketsChanged, object: nil)
     }
 
-    /// 存一张票（已有的就更新照片）
-    static func upsert(_ s: TicketScan, photo: UIImage?) {
-        guard !s.bets.isEmpty, !s.issue.isEmpty else { return }
+    /// 存一张票，返回它的 id。
+    /// - replacing：同一张照片之前存过的那条（改了期号、号码就更新它，不会多出一张）
+    /// - 有票号的按票号认，同一张票扫几次都只有一条
+    @discardableResult
+    static func upsert(_ s: TicketScan, photo: UIImage?, replacing: String? = nil) -> String? {
+        guard !s.bets.isEmpty, !s.issue.isEmpty else { return replacing }
         let to = s.issueTo == s.issue ? "" : s.issueTo
-        let id = MyTicket.key(game: s.game, from: s.issue, to: to, multiple: s.multiple, added: s.added, bets: s.bets)
+        let no = s.ticketNo.replacingOccurrences(of: " ", with: "")
         var list = load()
         let thumb = photo.flatMap(small)
-        if let i = list.firstIndex(where: { $0.id == id }) {
+        let i = list.firstIndex { $0.id == replacing }
+            ?? (no.isEmpty ? nil : list.firstIndex { $0.ticketNo.replacingOccurrences(of: " ", with: "") == no && $0.game == s.game })
+            ?? list.firstIndex { $0.id == MyTicket.key(game: s.game, from: s.issue, to: to, multiple: s.multiple, added: s.added, bets: s.bets) }
+        let bets = s.bets.map { MyTicket.Bet(front: $0.front, back: $0.back, multiple: max(1, $0.multiple), pick: $0.pick, added: $0.added) }
+        let id: String
+        if let i {
+            id = list[i].id
+            list[i].game = s.game
+            list[i].issueFrom = s.issue
+            list[i].issueTo = to
+            list[i].multiple = max(1, s.multiple)
+            list[i].added = s.added
+            list[i].bets = bets
             if let thumb { list[i].photo = thumb }
-            if list[i].ticketNo.isEmpty { list[i].ticketNo = s.ticketNo }
-            if list[i].amount == nil { list[i].amount = s.amount }
+            if !no.isEmpty { list[i].ticketNo = no }
+            if let a = s.amount { list[i].amount = a }
         } else {
+            id = UUID().uuidString
             list.append(MyTicket(id: id, game: s.game, issueFrom: s.issue, issueTo: to, multiple: max(1, s.multiple), added: s.added,
-                                 bets: s.bets.map { .init(front: $0.front, back: $0.back, multiple: max(1, $0.multiple), pick: $0.pick, added: $0.added) },
-                                 photo: thumb, ticketNo: s.ticketNo, amount: s.amount))
+                                 bets: bets, photo: thumb, ticketNo: no, amount: s.amount))
         }
         save(list)
+        return id
     }
 
     static func delete(_ id: String) { save(load().filter { $0.id != id }) }

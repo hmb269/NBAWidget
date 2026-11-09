@@ -25,6 +25,7 @@ struct LotteryView: View {
     @State private var scanImage: UIImage?
     @State private var favCheck: TicketScan?
     @State private var historyCheck: TicketScan?
+    @State private var openTicket: MyTicket?
 
     @State private var order: [String] = UserDefaults.standard.stringArray(forKey: "lotteryOrder") ?? LotteryGame.allCases.map(\.rawValue)
     @State private var dragging: LotteryGame?
@@ -80,8 +81,7 @@ struct LotteryView: View {
 
             if segment == 4 {
                 LotteryTicketsPane { t in
-                    scanImage = t.photo.flatMap(UIImage.init(data:))
-                    scan = t.scan
+                    openTicket = t
                 }
             } else if segment == 3 {
                 LotteryWinsPane()
@@ -148,6 +148,10 @@ struct LotteryView: View {
                 })
                     .presentationBackground(.ultraThinMaterial)
             }
+        }
+        .sheet(item: $openTicket) { t in
+            TicketCheckSheet(scan: t.scan, image: t.photo.flatMap(UIImage.init(data:)), ticketID: t.id)
+                .presentationBackground(.ultraThinMaterial)
         }
         .sheet(isPresented: Binding(get: { historyCheck != nil }, set: { if !$0 { historyCheck = nil } })) {
             if let s = historyCheck {

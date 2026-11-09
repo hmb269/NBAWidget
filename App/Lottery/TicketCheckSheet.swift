@@ -11,6 +11,11 @@ struct TicketCheckSheet: View {
     var onRetake: (() -> Void)? = nil
     /// 查一注号码历史上中过什么奖（不选期号，查很多期）
     var historyMode = false
+    /// 从「我的彩票」打开：期号、倍数、号码都按票上的，不能改，也不会再存一张
+    var ticketID: String? = nil
+    private var locked: Bool { ticketID != nil }
+    /// 这张照片已经存到「我的彩票」的哪一条（之后改期号只更新这一条，不会多出一张）
+    @State private var savedID: String?
     @State private var historyRange = 500
     @State private var history: HistoryResult?
     @State private var historyProgress = 0
@@ -90,9 +95,9 @@ struct TicketCheckSheet: View {
                     if !periods.isEmpty || pending > 0 { resultView }
 
                     // 手输的号码也可以存到「我的彩票」
-                    if image == nil, !favMode, !historyMode, !periods.isEmpty || pending > 0 {
+                    if image == nil, !favMode, !historyMode, !locked, !periods.isEmpty || pending > 0 {
                         Button {
-                            LotteryTickets.upsert(scan, photo: nil)
+                            savedID = LotteryTickets.upsert(scan, photo: nil, replacing: savedID)
                             message = "已存到「我的彩票」，以后开奖会自动对"
                         } label: {
                             Label("存到我的彩票", systemImage: "ticket")
@@ -103,7 +108,7 @@ struct TicketCheckSheet: View {
                     }
 
                     // 对完一张接着拍下一张
-                    if image != nil, let onRetake {
+                    if image != nil, !locked, let onRetake {
                         Button {
                             dismiss()
                             onRetake()
@@ -243,6 +248,7 @@ struct TicketCheckSheet: View {
 
     private var settingsCard: some View {
         CardSection {
+            if locked { lockedSettings } else {
             if readOnly {
                 HStack {
                     Text(g.name).font(.headline)
@@ -311,7 +317,35 @@ struct TicketCheckSheet: View {
                 RowDivider()
                 Toggle("追加投注", isOn: $scan.added).padding(.vertical, 6)
             }
+            }
         }
+    }
+
+    /// 「我的彩票」里的票：只显示，不能改
+    @ViewBuilder
+    private var lockedSettings: some View {
+        HStack {
+            Text(g.name).font(.headline)
+            Spacer()
+            Image(systemName: "lock.fill").font(.caption).foregroundStyle(.secondary)
+            Text("按票面").font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 10)
+        RowDivider()
+        HStack {
+            Text("期号")
+            Spacer()
+            Text(scan.issueTo.isEmpty || scan.issueTo == scan.issue ? "第\(scan.issue)期" : "第\(scan.issue)~\(scan.issueTo)期")
+                .font(.body.weight(.semibold).monospacedDigit())
+        }
+        .padding(.vertical, 10)
+        RowDivider()
+        HStack {
+            Text("倍数")
+            Spacer()
+            Text("\(scan.multiple) 倍" + (g == .dlt && scan.added ? " · 追加" : "")).font(.body.weight(.semibold))
+        }
+        .padding(.vertical, 10)
     }
 
     /// 滚轮里的期号：接下来没开的 5 期 + 最近开奖的 100 期（新的在上），拍照认出的期号不在里面就加进去
@@ -407,7 +441,7 @@ struct TicketCheckSheet: View {
                     .font(.subheadline.weight(.semibold)).foregroundStyle(favMode ? Color.yellow : Color.primary)
                 Spacer()
                 if !favMode {
-                    Button("号码不对？手动改") { withAnimation { editing = true } }
+                    if !locked { Button("号码不对？手动改") { withAnimation { editing = true } } }
                         .font(.caption.weight(.semibold))
                 }
             }
@@ -1063,7 +1097,7 @@ struct TicketCheckSheet: View {
             }
             pending = r.pending
             // 拍照对奖的票自动存到「我的彩票」（多期票以后不用再扫）
-            if image != nil { LotteryTickets.upsert(scan, photo: image) }
+            if image != nil && !locked { savedID = LotteryTickets.upsert(scan, photo: image, replacing: savedID) }
             // 中了的自动记到「中奖」栏
             for p in periods where !p.hits.isEmpty {
                 LotteryWins.record(game: g, draw: p.draw, results: p.results, factor: scan.multiple, photo: image)
