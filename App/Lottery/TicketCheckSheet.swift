@@ -440,8 +440,8 @@ struct TicketCheckSheet: View {
                       systemImage: favMode ? "star.fill" : "text.viewfinder")
                     .font(.subheadline.weight(.semibold)).foregroundStyle(favMode ? Color.yellow : Color.primary)
                 Spacer()
-                if !favMode {
-                    if !locked { Button("号码不对？手动改") { withAnimation { editing = true } } }
+                if !favMode && !locked {
+                    Button("号码不对？手动改") { withAnimation { editing = true } }
                         .font(.caption.weight(.semibold))
                 }
             }
