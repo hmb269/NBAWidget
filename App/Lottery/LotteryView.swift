@@ -51,17 +51,22 @@ struct LotteryView: View {
                 NavigationLink {
                     LotteryCalcView()
                 } label: {
-                    Label("金额计算器", systemImage: "function").frame(maxWidth: .infinity)
+                    toolLabel("计算器", "function")
                 }
                 .glassButton()
                 Button {
                     historyCheck = TicketScan(game: segment == 1 ? .dlt : .ssq)
                 } label: {
-                    Label("历史中奖查询", systemImage: "clock.arrow.circlepath").frame(maxWidth: .infinity)
+                    toolLabel("历史中奖", "clock.arrow.circlepath")
+                }
+                .glassButton()
+                NavigationLink {
+                    LotteryJackpotRepeatView()
+                } label: {
+                    toolLabel("头奖回看", "crown")
                 }
                 .glassButton()
             }
-            .font(.subheadline.weight(.semibold))
 
             Picker("", selection: $segment) {
                 Text("福彩").tag(0)
@@ -150,6 +155,14 @@ struct LotteryView: View {
                     .presentationBackground(.ultraThinMaterial)
             }
         }
+    }
+
+    private func toolLabel(_ t: String, _ icon: String) -> some View {
+        VStack(spacing: 4) {
+            Image(systemName: icon).font(.system(size: 17, weight: .semibold))
+            Text(t).font(.caption.weight(.semibold))
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private var checkCard: some View {
