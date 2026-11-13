@@ -166,7 +166,24 @@ struct HealthCompareView: View {
                     }
                 }
 
-                selectedPanel
+
+                // 关系分析入口
+                NavigationLink { HealthRelationView() } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "point.3.connected.trianglepath.dotted")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(Color(red: 1, green: 0.8, blue: 0.4))
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("关系分析").font(.subheadline.weight(.bold))
+                            Text("算一算哪几项之间真的有关系").font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(.secondary)
+                    }
+                    .padding(14)
+                    .glassCard(18)
+                }
+                .buttonStyle(.plain)
 
                 if loading && data.isEmpty {
                     ProgressView().frame(maxWidth: .infinity).padding(40)
@@ -429,7 +446,14 @@ struct HealthCompareView: View {
         loading = true
         defer { loading = false }
         selected = nil
-        let n = days
+        let out = await Self.loadData(days: days)
+        withAnimation { data = out }
+    }
+
+    /// 读最近 n 天每天的各项数据（趋势对比和关系分析共用）
+    static func loadData(days n: Int) async -> [CompareMetric: [DayValue]] {
+        let cal = Calendar.current
+        let from = cal.date(byAdding: .day, value: -(n - 1), to: cal.startOfDay(for: Date()))!
         async let steps = (try? HealthService.daily(.steps, days: n)) ?? []
         async let hrv = (try? HealthService.daily(.hrv, days: n)) ?? []
         async let weight = (try? HealthService.weightHistory(days: n)) ?? []
@@ -443,7 +467,6 @@ struct HealthCompareView: View {
         out[.steps] = await steps
         out[.hrv] = await hrv
         // 体重：一天多次取当天最后一次
-        let cal = Calendar.current
         var w: [Date: Double] = [:]
         for p in await weight.sorted(by: { $0.date < $1.date }) { w[cal.startOfDay(for: p.date)] = p.kg }
         out[.weight] = w.map { DayValue(date: $0.key, value: $0.value) }.sorted { $0.date < $1.date }
@@ -454,12 +477,11 @@ struct HealthCompareView: View {
         out[.sleep] = await nights.compactMap { d, s in SleepScore.score(s).map { DayValue(date: d, value: $0) } }
         // 血糖：自己的记录，当天平均
         let owners = GlucosePeople.owners
-        let from = start
         var g: [Date: [Double]] = [:]
         for r in GlucoseLocal.load() where r.date >= from && (owners[r.id] ?? GlucosePeople.me) == GlucosePeople.me {
             g[cal.startOfDay(for: r.date), default: []].append(r.mmol)
         }
         out[.glucose] = g.map { DayValue(date: $0.key, value: $0.value.reduce(0, +) / Double($0.value.count)) }.sorted { $0.date < $1.date }
-        withAnimation { data = out }
+        return out
     }
 }

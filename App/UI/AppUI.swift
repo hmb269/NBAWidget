@@ -233,13 +233,12 @@ extension View {
 
 /// 首页卡片（顺序可以自己调）
 enum HomeCard: String, CaseIterable, Identifiable {
-    case sleep, fitness, weight, bmi, hrv, resting, steps, compare
+    case sleep, weight, bmi, hrv, resting, steps, compare
     var id: String { rawValue }
-    var wide: Bool { self == .sleep || self == .fitness }
+    var wide: Bool { self == .sleep }
     var title: String {
         switch self {
         case .sleep: return "睡眠"
-        case .fitness: return "健身"
         case .weight: return "体重"
         case .bmi: return "BMI"
         case .hrv: return "恢复 HRV"
@@ -251,7 +250,6 @@ enum HomeCard: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .sleep: return "bed.double.fill"
-        case .fitness: return "flame.fill"
         case .weight: return "figure"
         case .bmi: return "person.fill"
         case .hrv: return "waveform.path.ecg"
@@ -298,7 +296,6 @@ struct HealthHomeView: View {
     private func homeCard(_ c: HomeCard) -> some View {
         switch c {
         case .sleep: detailLink(.sleep) { sleepCard }
-        case .fitness: FitnessCard()
         case .weight: detailLink(.weight) { weightCard }
         case .bmi:
             NavigationLink { BMIView() } label: { bmiCard.overlay(alignment: .topTrailing) { chevron } }
@@ -315,7 +312,7 @@ struct HealthHomeView: View {
     private var arrangeSheet: some View {
         NavigationStack {
             List {
-                Section(footer: Text("按住右边的 ≡ 上下拖动。「睡眠」「健身」是大卡片，占一整行；其他小卡片两个一行。")) {
+                Section(footer: Text("按住右边的 ≡ 上下拖动。「睡眠」是大卡片，占一整行；其他小卡片两个一行。")) {
                     ForEach(cardOrder) { c in
                         Label(c.title, systemImage: c.icon)
                     }
