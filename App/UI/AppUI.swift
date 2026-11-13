@@ -231,6 +231,42 @@ extension View {
 
 // MARK: - 健康首页
 
+/// 首页卡片（顺序可以自己调）
+enum HomeCard: String, CaseIterable, Identifiable {
+    case sleep, fitness, weight, bmi, hrv, resting, steps, compare
+    var id: String { rawValue }
+    var wide: Bool { self == .sleep || self == .fitness }
+    var title: String {
+        switch self {
+        case .sleep: return "睡眠"
+        case .fitness: return "健身"
+        case .weight: return "体重"
+        case .bmi: return "BMI"
+        case .hrv: return "恢复 HRV"
+        case .resting: return "静息心率"
+        case .steps: return "今日步数"
+        case .compare: return "趋势对比"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .sleep: return "bed.double.fill"
+        case .fitness: return "flame.fill"
+        case .weight: return "figure"
+        case .bmi: return "person.fill"
+        case .hrv: return "waveform.path.ecg"
+        case .resting: return "heart.fill"
+        case .steps: return "figure.walk"
+        case .compare: return "chart.xyaxis.line"
+        }
+    }
+    static var saved: [HomeCard] {
+        let s = (UserDefaults.standard.stringArray(forKey: "homeCardOrder") ?? []).compactMap(HomeCard.init(rawValue:))
+        return s + allCases.filter { !s.contains($0) }
+    }
+    static func save(_ list: [HomeCard]) { UserDefaults.standard.set(list.map(\.rawValue), forKey: "homeCardOrder") }
+}
+
 struct HealthHomeView: View {
     @State private var health = HealthSnapshot()
     @State private var prevSleep: HealthService.SleepData?
@@ -238,45 +274,84 @@ struct HealthHomeView: View {
     @State private var photo: UIImage?
     @State private var bmi: Double?
     @State private var resting: Double?
+    @State private var cardOrder: [HomeCard] = HomeCard.saved
+    @State private var arranging = false
+
+    /// 把卡片排成一行一行
+    private var homeRows: [[HomeCard]] {
+        var rows: [[HomeCard]] = []
+        var pending: [HomeCard] = []
+        for c in cardOrder {
+            if c.wide {
+                if !pending.isEmpty { rows.append(pending); pending = [] }
+                rows.append([c])
+            } else {
+                pending.append(c)
+                if pending.count == 2 { rows.append(pending); pending = [] }
+            }
+        }
+        if !pending.isEmpty { rows.append(pending) }
+        return rows
+    }
+
+    @ViewBuilder
+    private func homeCard(_ c: HomeCard) -> some View {
+        switch c {
+        case .sleep: detailLink(.sleep) { sleepCard }
+        case .fitness: FitnessCard()
+        case .weight: detailLink(.weight) { weightCard }
+        case .bmi:
+            NavigationLink { BMIView() } label: { bmiCard.overlay(alignment: .topTrailing) { chevron } }
+                .buttonStyle(.plain)
+        case .hrv: detailLink(.hrv) { hrvCard }
+        case .resting: restingCard
+        case .steps: detailLink(.steps) { stepsCard }
+        case .compare:
+            NavigationLink { HealthCompareView() } label: { compareCard.overlay(alignment: .topTrailing) { chevron } }
+                .buttonStyle(.plain)
+        }
+    }
+
+    private var arrangeSheet: some View {
+        NavigationStack {
+            List {
+                Section(footer: Text("按住右边的 ≡ 上下拖动。「睡眠」「健身」是大卡片，占一整行；其他小卡片两个一行。")) {
+                    ForEach(cardOrder) { c in
+                        Label(c.title, systemImage: c.icon)
+                    }
+                    .onMove { from, to in
+                        cardOrder.move(fromOffsets: from, toOffset: to)
+                        HomeCard.save(cardOrder)
+                    }
+                }
+                Section {
+                    Button("恢复默认顺序") {
+                        cardOrder = HomeCard.allCases
+                        HomeCard.save(cardOrder)
+                    }
+                }
+            }
+            .environment(\.editMode, .constant(.active))
+            .navigationTitle("调整卡片顺序")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { arranging = false } } }
+        }
+        .presentationDetents([.medium, .large])
+    }
 
     var body: some View {
         PageScroll(title: "阿波", subtitle: todayText) {
-                detailLink(.sleep) { sleepCard }
-
-                FitnessCard()
-
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible())], spacing: 14) {
-                    detailLink(.weight) { weightCard }
-                    NavigationLink { BMIView() } label: { bmiCard.overlay(alignment: .topTrailing) { chevron } }
-                        .buttonStyle(.plain)
-                    detailLink(.hrv) { hrvCard }
-                    restingCard
-                    detailLink(.steps) { stepsCard }
-                    sunCard
-                }
-
-                // 几项数据放一起对比
-                NavigationLink {
-                    HealthCompareView()
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "chart.xyaxis.line")
-                            .font(.system(size: 20, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .frame(width: 42, height: 42)
-                            .background(Circle().fill(LinearGradient(colors: [Color(red: 0.42, green: 0.86, blue: 1.0), Color(red: 1.0, green: 0.45, blue: 0.55)],
-                                                                     startPoint: .topLeading, endPoint: .bottomTrailing)))
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("趋势对比").font(.headline)
-                            Text("睡眠评分 · HRV · 步数 · 体重 · 血糖 放一起看").font(.caption).foregroundStyle(.secondary)
+                // 卡片按自己排的顺序：大卡片占一整行，小卡片两个一行
+                ForEach(Array(homeRows.enumerated()), id: \.offset) { _, row in
+                    if row.count == 1, row[0].wide {
+                        homeCard(row[0])
+                    } else {
+                        HStack(alignment: .top, spacing: 14) {
+                            ForEach(row) { c in homeCard(c).frame(maxWidth: .infinity) }
+                            if row.count == 1 { Color.clear.frame(maxWidth: .infinity) }
                         }
-                        Spacer()
-                        Image(systemName: "chevron.right").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                     }
-                    .padding(16)
-                    .glassCard(22)
                 }
-                .buttonStyle(.plain)
 
                 if let message {
                     Text(message)
@@ -297,7 +372,16 @@ struct HealthHomeView: View {
                 }
                 .glassButton()
                 .padding(.top, 4)
+
+                Button {
+                    arranging = true
+                } label: {
+                    Label("调整卡片顺序", systemImage: "arrow.up.arrow.down")
+                        .font(.footnote.weight(.semibold))
+                }
+                .padding(.top, 2)
         }
+        .sheet(isPresented: $arranging) { arrangeSheet }
         .refreshable { await load() }
         .task { await authorizeAndLoad() }
     }
@@ -426,6 +510,12 @@ struct HealthHomeView: View {
         MetricCard(icon: "heart.fill", colors: (Color(red: 1.0, green: 0.40, blue: 0.40), Color(red: 0.85, green: 0.18, blue: 0.30)),
                    title: "静息心率", value: resting.map { String(Int($0.rounded())) } ?? "--", unit: "次/分",
                    delta: nil, deltaText: nil, threshold: 0, sub: "正常 60～100")
+    }
+
+    private var compareCard: some View {
+        MetricCard(icon: "chart.xyaxis.line", colors: (Color(red: 0.42, green: 0.86, blue: 1.0), Color(red: 1.0, green: 0.45, blue: 0.55)),
+                   title: "趋势对比", value: "9", unit: "项",
+                   delta: nil, deltaText: nil, threshold: 0, sub: "睡眠·HRV·血糖…一起看")
     }
 
     private var sunCard: some View {

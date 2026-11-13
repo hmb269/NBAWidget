@@ -391,6 +391,7 @@ struct BMIView: View {
     @State private var points: [DayValue] = []
     @State private var heightText = ""
     @State private var days = 90
+    @State private var selected: Date?
 
     var body: some View {
         ScrollView {
@@ -435,9 +436,25 @@ struct BMIView: View {
                                     .foregroundStyle(BMI.category(p.value).1)
                                     .symbolSize(20)
                             }
+                            // 点某一天：标出当天的 BMI 和体重档位
+                            if let sd = selected, let p = points.first(where: { Calendar.current.isDate($0.date, inSameDayAs: sd) }) {
+                                RuleMark(x: .value("选中", p.date, unit: .day)).foregroundStyle(.white.opacity(0.35))
+                                PointMark(x: .value("日期", p.date, unit: .day), y: .value("BMI", p.value))
+                                    .foregroundStyle(.white).symbolSize(70)
+                                    .annotation(position: .top, spacing: 4, overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
+                                        VStack(spacing: 0) {
+                                            Text(String(format: "%.1f", p.value)).font(.system(size: 13, weight: .bold, design: .rounded))
+                                            Text(selectedDay(p.date)).font(.system(size: 9))
+                                        }
+                                        .foregroundStyle(.white)
+                                        .padding(.horizontal, 7).padding(.vertical, 3)
+                                        .background(RoundedRectangle(cornerRadius: 7).fill(BMI.category(p.value).1.opacity(0.85)))
+                                    }
+                            }
                         }
                         .chartYScale(domain: (lo - 0.5)...(hi + 0.5))
                         .frame(height: 200)
+                        .tapToSelect($selected, dates: points.map(\.date), byDay: true)
                         Text("绿色区域是健康范围").font(.caption2).foregroundStyle(.secondary)
                     }
                     .padding(16)
@@ -472,6 +489,11 @@ struct BMIView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .task(id: days) { await load() }
+    }
+
+    private func selectedDay(_ d: Date) -> String {
+        let f = DateFormatter(); f.dateFormat = "M/d"
+        return f.string(from: d)
     }
 
     /// 横向刻度条：偏瘦 / 正常 / 超重 / 肥胖，标出当前位置

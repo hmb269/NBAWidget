@@ -61,6 +61,12 @@ enum MealFilter: String, CaseIterable, Identifiable {
 }
 
 /// 血糖页最上面的趋势卡片：选空腹 / 餐后1h / 餐后2h 和时间范围，按住曲线看每个点
+/// 低血糖：低于 3.9 mmol/L（糖尿病指南的低血糖警戒值）
+enum GlucoseLow {
+    static let line = 3.9
+    static let color = Color(red: 0.35, green: 0.65, blue: 1.0)
+}
+
 struct GlucoseTrendCard: View {
     /// (时间, 数值, 标签)
     let points: [GPoint]
@@ -150,6 +156,13 @@ struct GlucoseTrendCard: View {
                     Text("安全线 " + String(format: "%.1f", kind.safeLine))
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(Color(red: 1.0, green: 0.32, blue: 0.32))
+                    Path { p in p.move(to: CGPoint(x: 0, y: 1)); p.addLine(to: CGPoint(x: 16, y: 1)) }
+                        .stroke(GlucoseLow.color, style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                        .frame(width: 16, height: 2)
+                        .padding(.leading, 6)
+                    Text("低血糖 3.9")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(GlucoseLow.color)
                 }
                 .padding(.bottom, -6)
                 chart(data)
@@ -171,6 +184,7 @@ struct GlucoseTrendCard: View {
                 stat("最高", values.max().map { String(format: "%.1f", $0) }, jump: data.max { $0.1 < $1.1 }?.0)
                 stat("最低", values.min().map { String(format: "%.1f", $0) }, jump: data.min { $0.1 < $1.1 }?.0)
                 stat("超线", values.isEmpty ? nil : "\(values.filter { $0 > kind.safeLine }.count)/\(values.count)")
+                stat("偏低", values.isEmpty ? nil : "\(values.filter { $0 < GlucoseLow.line }.count)", jump: data.first { $0.1 < GlucoseLow.line }?.0)
             }
         }
         .padding(18)
@@ -204,7 +218,7 @@ struct GlucoseTrendCard: View {
                     HStack(alignment: .firstTextBaseline, spacing: 4) {
                         Text(String(format: "%.1f", p.1))
                             .font(.system(size: 18, weight: .bold, design: .rounded).monospacedDigit())
-                            .foregroundStyle(p.1 > kind.safeLine ? Color(red: 1.0, green: 0.32, blue: 0.32) : .primary)
+                            .foregroundStyle(p.1 > kind.safeLine ? Color(red: 1.0, green: 0.32, blue: 0.32) : p.1 < GlucoseLow.line ? GlucoseLow.color : .primary)
                         Text(label(p.0) + " · " + p.2).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }
                     Text(p.3.flatMap { $0.isEmpty ? nil : $0 } ?? (p.4 == nil ? "点这里加照片和备注" : "点这里查看照片和备注"))
@@ -224,12 +238,16 @@ struct GlucoseTrendCard: View {
 
     private func chart(_ data: [GPoint]) -> some View {
         let line = kind.safeLine
-        let lo = max(0, min(data.map(\.1).min() ?? 4, line) - 1)
+        let lo = max(0, min(data.map(\.1).min() ?? 4, GlucoseLow.line) - 1)
         let hi = max(data.map(\.1).max() ?? 8, line) + 1
         let danger = Color(red: 1.0, green: 0.32, blue: 0.32)
         return Chart {
             RuleMark(y: .value("安全线", line))
                 .foregroundStyle(danger.opacity(0.7))
+                .lineStyle(StrokeStyle(lineWidth: 1.2, dash: [5, 4]))
+            // 低血糖线 3.9
+            RuleMark(y: .value("低血糖", GlucoseLow.line))
+                .foregroundStyle(GlucoseLow.color.opacity(0.7))
                 .lineStyle(StrokeStyle(lineWidth: 1.2, dash: [5, 4]))
             ForEach(Array(data.enumerated()), id: \.offset) { _, p in
                 AreaMark(x: .value("时间", p.0), yStart: .value("下限", lo), yEnd: .value("血糖", p.1))
@@ -241,8 +259,8 @@ struct GlucoseTrendCard: View {
                     .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round))
                     .foregroundStyle(kind.color)
                 PointMark(x: .value("时间", p.0), y: .value("血糖", p.1))
-                    .symbolSize(p.1 > line ? 46 : 28)
-                    .foregroundStyle(p.1 > line ? danger : kind.color)
+                    .symbolSize(p.1 > line || p.1 < GlucoseLow.line ? 46 : 28)
+                    .foregroundStyle(p.1 > line ? danger : p.1 < GlucoseLow.line ? GlucoseLow.color : kind.color)
             }
             if let p = picked {
                 RuleMark(x: .value("时间", p.0))
@@ -255,7 +273,7 @@ struct GlucoseTrendCard: View {
                         // 只显示数值，详情在图下面
                         Text(String(format: "%.1f", p.1))
                             .font(.system(size: 14, weight: .bold, design: .rounded).monospacedDigit())
-                            .foregroundStyle(p.1 > line ? danger : Color.white)
+                            .foregroundStyle(p.1 > line ? danger : p.1 < GlucoseLow.line ? GlucoseLow.color : Color.white)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 5)
                         .glassCard(10)
@@ -282,6 +300,15 @@ struct GlucoseTrendCard: View {
                         .background(Capsule().fill(danger.opacity(0.85)))
                 }
             }
+            AxisMarks(position: .trailing, values: [GlucoseLow.line]) { _ in
+                AxisValueLabel {
+                    Text("3.9")
+                        .font(.system(size: 10, weight: .bold).monospacedDigit())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 4).padding(.vertical, 1)
+                        .background(Capsule().fill(GlucoseLow.color.opacity(0.85)))
+                }
+            }
         }
         .chartXAxis {
             AxisMarks(values: .automatic(desiredCount: 4)) { v in
@@ -297,7 +324,7 @@ struct GlucoseTrendCard: View {
         let step: Double = hi - lo > 6 ? 2 : 1
         var v = (lo / step).rounded(.up) * step
         var out: [Double] = []
-        while v <= hi { if abs(v - avoid) > step * 0.45 { out.append(v) }; v += step }
+        while v <= hi { if abs(v - avoid) > step * 0.45 && abs(v - GlucoseLow.line) > step * 0.45 { out.append(v) }; v += step }
         return out
     }
 
