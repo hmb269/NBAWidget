@@ -451,7 +451,17 @@ struct HealthCompareView: View {
     }
 
     /// 读最近 n 天每天的各项数据（趋势对比和关系分析共用）
+    /// 10 分钟内重复打开不再重新读（读 90 晚睡眠要查很多次健康数据）
+    @MainActor private static var memo: [Int: (Date, [CompareMetric: [DayValue]])] = [:]
+
     static func loadData(days n: Int) async -> [CompareMetric: [DayValue]] {
+        if let m = await MainActor.run(body: { memo[n] }), Date().timeIntervalSince(m.0) < 600 { return m.1 }
+        let out = await fetchData(days: n)
+        await MainActor.run { memo[n] = (Date(), out) }
+        return out
+    }
+
+    private static func fetchData(days n: Int) async -> [CompareMetric: [DayValue]] {
         let cal = Calendar.current
         let from = cal.date(byAdding: .day, value: -(n - 1), to: cal.startOfDay(for: Date()))!
         async let steps = (try? HealthService.daily(.steps, days: n)) ?? []
