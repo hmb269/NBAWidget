@@ -8,6 +8,10 @@ enum CompareMetric: String, CaseIterable, Identifiable {
     case steps = "步数"
     case weight = "体重"
     case glucose = "血糖"
+    case activeEnergy = "活动卡路里"
+    case exercise = "锻炼"
+    case restingHR = "静息心率"
+    case bmi = "BMI"
     var id: String { rawValue }
 
     var unit: String {
@@ -17,6 +21,10 @@ enum CompareMetric: String, CaseIterable, Identifiable {
         case .steps: return "步"
         case .weight: return "公斤"
         case .glucose: return "mmol/L"
+        case .activeEnergy: return "千卡"
+        case .exercise: return "分钟"
+        case .restingHR: return "次/分"
+        case .bmi: return ""
         }
     }
 
@@ -27,6 +35,10 @@ enum CompareMetric: String, CaseIterable, Identifiable {
         case .steps: return Color(red: 1.0, green: 0.68, blue: 0.25)
         case .weight: return Color(red: 0.80, green: 0.55, blue: 1.0)
         case .glucose: return Color(red: 0.35, green: 0.90, blue: 0.65)
+        case .activeEnergy: return Color(red: 0.98, green: 0.20, blue: 0.40)
+        case .exercise: return Color(red: 0.62, green: 1.0, blue: 0.0)
+        case .restingHR: return Color(red: 1.0, green: 0.55, blue: 0.45)
+        case .bmi: return Color(red: 0.45, green: 0.90, blue: 0.80)
         }
     }
 
@@ -37,12 +49,17 @@ enum CompareMetric: String, CaseIterable, Identifiable {
         case .steps: return "figure.walk"
         case .weight: return "scalemass.fill"
         case .glucose: return "drop.fill"
+        case .activeEnergy: return "flame.fill"
+        case .exercise: return "figure.run"
+        case .restingHR: return "heart.fill"
+        case .bmi: return "person.fill"
         }
     }
 
     func format(_ v: Double) -> String {
         switch self {
-        case .sleep, .hrv: return String(Int(v.rounded()))
+        case .sleep, .hrv, .activeEnergy, .exercise, .restingHR: return String(Int(v.rounded()))
+        case .bmi: return String(format: "%.1f", v)
         case .steps: return Int(v.rounded()).formatted()
         case .weight: return String(format: "%.1f", v)
         case .glucose: return String(format: "%.1f", v)
@@ -159,7 +176,7 @@ struct HealthCompareView: View {
                     ForEach(metrics) { m in chartCard(m) }
                 }
 
-                Text("点图上任意一天，所有图都会标出那一天，上面显示当天各项数值。「叠在一起」把每项按自己的最低到最高缩放到同一高度，只看涨跌趋势。血糖是你自己的记录、当天平均。睡眠评分是阿波自己的算法（满分 100）：时长 40、深睡占比 20、快速眼动占比 20、夜里清醒少 10、0:30 前入睡 10，不是苹果官方的评分。")
+                Text("点图上任意一天，所有图都会标出那一天，上面显示当天各项数值。「叠在一起」把每项按自己的最低到最高缩放到同一高度，只看涨跌趋势。BMI 绿色区域是健康范围 18.5～23.9（中国成人标准）；静息心率正常 60～100。血糖是你自己的记录、当天平均。睡眠评分是阿波自己的算法（满分 100）：时长 40、深睡占比 20、快速眼动占比 20、夜里清醒少 10、0:30 前入睡 10，不是苹果官方的评分。")
                     .font(.caption2).foregroundStyle(.tertiary)
             }
             .padding(16)
@@ -227,7 +244,11 @@ struct HealthCompareView: View {
                         HStack(alignment: .firstTextBaseline, spacing: 2) {
                             Text(value(m, on: day).map(m.format) ?? "—")
                                 .font(.system(size: 19, weight: .bold, design: .rounded).monospacedDigit())
-                            Text(m.unit).font(.system(size: 9)).foregroundStyle(.secondary)
+                            if m == .bmi, let v = value(m, on: day) {
+                                Text(BMI.category(v).0).font(.system(size: 10, weight: .bold)).foregroundStyle(BMI.category(v).1)
+                            } else {
+                                Text(m.unit).font(.system(size: 9)).foregroundStyle(.secondary)
+                            }
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -248,7 +269,8 @@ struct HealthCompareView: View {
         let from = start
         let pts = (data[m] ?? []).filter { $0.date >= from }    // 范围外的点不画，免得伸出图表
         let vals = pts.map(\.value)
-        let lo = vals.min() ?? 0, hi = vals.max() ?? 1
+        var lo = vals.min() ?? 0, hi = vals.max() ?? 1
+        if m == .bmi { lo = min(lo, 18); hi = max(hi, 24.4) }   // 健康范围要看得到
         let pad = max((hi - lo) * 0.15, m == .steps ? 500 : m == .weight ? 0.3 : 0.5)
         return VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -271,6 +293,10 @@ struct HealthCompareView: View {
                         PointMark(x: .value("日期", p.date, unit: .day), y: .value(m.rawValue, p.value))
                             .foregroundStyle(m.color)
                             .symbolSize(days > 30 ? 10 : 22)
+                    }
+                    if m == .bmi {
+                        RectangleMark(yStart: .value("下限", 18.5), yEnd: .value("上限", 23.9))
+                            .foregroundStyle(Color.green.opacity(0.12))
                     }
                     if m == .glucose {
                         RuleMark(y: .value("参考", 7.8))
@@ -408,6 +434,10 @@ struct HealthCompareView: View {
         async let hrv = (try? HealthService.daily(.hrv, days: n)) ?? []
         async let weight = (try? HealthService.weightHistory(days: n)) ?? []
         async let nights = HealthService.nightlySleep(days: n)
+        async let kcal = (try? HealthService.daily(.activeEnergy, days: n)) ?? []
+        async let exercise = (try? HealthService.daily(.exercise, days: n)) ?? []
+        async let resting = (try? HealthService.daily(.restingHR, days: n)) ?? []
+        async let height = BMI.height()
 
         var out: [CompareMetric: [DayValue]] = [:]
         out[.steps] = await steps
@@ -417,6 +447,10 @@ struct HealthCompareView: View {
         var w: [Date: Double] = [:]
         for p in await weight.sorted(by: { $0.date < $1.date }) { w[cal.startOfDay(for: p.date)] = p.kg }
         out[.weight] = w.map { DayValue(date: $0.key, value: $0.value) }.sorted { $0.date < $1.date }
+        if let cm = await height { out[.bmi] = out[.weight]?.map { DayValue(date: $0.date, value: BMI.value(kg: $0.value, cm: cm)) } }
+        out[.activeEnergy] = await kcal
+        out[.exercise] = await exercise
+        out[.restingHR] = await resting
         out[.sleep] = await nights.compactMap { d, s in SleepScore.score(s).map { DayValue(date: d, value: $0) } }
         // 血糖：自己的记录，当天平均
         let owners = GlucosePeople.owners

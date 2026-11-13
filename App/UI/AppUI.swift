@@ -236,14 +236,21 @@ struct HealthHomeView: View {
     @State private var prevSleep: HealthService.SleepData?
     @State private var message: String?
     @State private var photo: UIImage?
+    @State private var bmi: Double?
+    @State private var resting: Double?
 
     var body: some View {
         PageScroll(title: "阿波", subtitle: todayText) {
                 detailLink(.sleep) { sleepCard }
 
+                FitnessCard()
+
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible())], spacing: 14) {
                     detailLink(.weight) { weightCard }
+                    NavigationLink { BMIView() } label: { bmiCard.overlay(alignment: .topTrailing) { chevron } }
+                        .buttonStyle(.plain)
                     detailLink(.hrv) { hrvCard }
+                    restingCard
                     detailLink(.steps) { stepsCard }
                     sunCard
                 }
@@ -400,6 +407,27 @@ struct HealthHomeView: View {
                    delta: nil, deltaText: nil, threshold: 0, sub: "iPhone + 手表")
     }
 
+    private var chevron: some View {
+        Image(systemName: "chevron.right")
+            .font(.caption.weight(.bold))
+            .foregroundStyle(.white.opacity(0.35))
+            .padding(14)
+    }
+
+    private var bmiCard: some View {
+        let c = bmi.map(BMI.category)
+        return MetricCard(icon: "person.fill", colors: (Color(red: 0.35, green: 0.88, blue: 0.55), Color(red: 0.15, green: 0.65, blue: 0.45)),
+                          title: "BMI", value: bmi.map { String(format: "%.1f", $0) } ?? "--", unit: c?.0 ?? "",
+                          delta: nil, deltaText: nil, threshold: 0,
+                          sub: bmi == nil ? "点进去填身高" : "正常 18.5～23.9")
+    }
+
+    private var restingCard: some View {
+        MetricCard(icon: "heart.fill", colors: (Color(red: 1.0, green: 0.40, blue: 0.40), Color(red: 0.85, green: 0.18, blue: 0.30)),
+                   title: "静息心率", value: resting.map { String(Int($0.rounded())) } ?? "--", unit: "次/分",
+                   delta: nil, deltaText: nil, threshold: 0, sub: "正常 60～100")
+    }
+
     private var sunCard: some View {
         let t = SunTimes.times()
         return MetricCard(icon: "sun.horizon.fill", colors: (Color(red: 1.0, green: 0.86, blue: 0.30), Color(red: 1.0, green: 0.55, blue: 0.15)),
@@ -432,6 +460,8 @@ struct HealthHomeView: View {
         do { h.steps = try await HealthService.todaySteps() } catch { errors.append("步数：" + HealthService.describe(error)) }
         health = h
         photo = IconStore.image(for: .sleep)
+        if let w = h.weight, let cm = await BMI.height() { bmi = BMI.value(kg: w.kg, cm: cm) }
+        resting = await FitnessData.latest(.restingHeartRate, unit: .count().unitDivided(by: .minute()), days: 3)?.0
         if message == nil, !errors.isEmpty { message = errors.joined(separator: "\n") }
         WidgetCenter.shared.reloadAllTimelines()
     }

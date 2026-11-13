@@ -21,7 +21,15 @@ enum HealthService {
     static func requestAccess() async -> String? {
         guard isAvailable else { return "这台设备不支持健康数据" }
         do {
-            try await store.requestAuthorization(toShare: [], read: Set([stepType, massType, sdnnType, sleepType] + (rmssdType.map { [$0] } ?? [])))
+            // 健身：活动/静息卡路里、锻炼、站立、心率、静息心率、最大摄氧量、身高、体能训练、圆环
+            let fitness: [HKObjectType] = [
+                HKQuantityType(.activeEnergyBurned), HKQuantityType(.basalEnergyBurned), HKQuantityType(.appleExerciseTime),
+                HKQuantityType(.appleStandTime), HKQuantityType(.heartRate), HKQuantityType(.restingHeartRate),
+                HKQuantityType(.vo2Max), HKQuantityType(.height), HKQuantityType(.distanceWalkingRunning),
+                HKObjectType.workoutType(), HKObjectType.activitySummaryType(),
+            ]
+            let base: [HKObjectType] = [stepType, massType, sdnnType, sleepType] + (rmssdType.map { [$0] } ?? [])
+            try await store.requestAuthorization(toShare: [], read: Set(base + fitness))
             return nil
         } catch {
             return "授权失败：\(error.localizedDescription)"
@@ -425,6 +433,12 @@ extension HealthService {
             type = HKQuantityType(.stepCount); unit = .count(); cumulative = true
         case .hrv:
             type = hrvTypeForDaily; unit = .secondUnit(with: .milli); cumulative = false
+        case .activeEnergy:
+            type = HKQuantityType(.activeEnergyBurned); unit = .kilocalorie(); cumulative = true
+        case .exercise:
+            type = HKQuantityType(.appleExerciseTime); unit = .minute(); cumulative = true
+        case .restingHR:
+            type = HKQuantityType(.restingHeartRate); unit = .count().unitDivided(by: .minute()); cumulative = false
         }
         let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
         return try await withCheckedThrowingContinuation { cont in
@@ -448,7 +462,7 @@ extension HealthService {
         }
     }
 
-    enum DailyKind { case steps, hrv }
+    enum DailyKind { case steps, hrv, activeEnergy, exercise, restingHR }
 
     /// 每晚的睡眠（最近 days 晚，从早到晚）
     static func nightlySleep(days: Int) async -> [(Date, SleepData)] {
