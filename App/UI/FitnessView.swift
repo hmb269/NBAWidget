@@ -205,12 +205,11 @@ struct FitnessCard: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Label("健身", systemImage: "flame.fill").font(.subheadline.weight(.semibold))
                         .foregroundStyle(ActivityRings.moveColor)
-                    ringLine("活动", rings.map { "\(Int($0.move))/\(Int($0.moveGoal)) 千卡" }, ActivityRings.moveColor)
-                    ringLine("锻炼", rings.map { "\(Int($0.exercise))/\(Int($0.exerciseGoal)) 分钟" }, ActivityRings.exerciseColor)
-                    ringLine("站立", rings.map { "\(Int($0.stand))/\(Int($0.standGoal)) 小时" }, ActivityRings.standColor)
+                    ringLine("活动", ringText(0), ActivityRings.moveColor)
+                    ringLine("锻炼", ringText(1), ActivityRings.exerciseColor)
+                    ringLine("站立", ringText(2), ActivityRings.standColor)
                     if let w = last {
-                        Text("最近：" + w.type + " · " + HealthFormat.duration(w.duration) + (w.kcal.map { " · \(Int($0)) 千卡" } ?? ""))
-                            .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                        Text(lastText(w)).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                     }
                 }
                 Spacer(minLength: 0)
@@ -224,6 +223,21 @@ struct FitnessCard: View {
             rings = await FitnessData.rings()
             last = await FitnessData.workouts(days: 14, limit: 1).first
         }
+    }
+
+    private func ringText(_ i: Int) -> String? {
+        guard let r = rings else { return nil }
+        switch i {
+        case 0: return "\(Int(r.move))/\(Int(r.moveGoal)) 千卡"
+        case 1: return "\(Int(r.exercise))/\(Int(r.exerciseGoal)) 分钟"
+        default: return "\(Int(r.stand))/\(Int(r.standGoal)) 小时"
+        }
+    }
+
+    private func lastText(_ w: WorkoutItem) -> String {
+        let d: String = HealthFormat.duration(w.duration)
+        let k: String = w.kcal.map { " · \(Int($0)) 千卡" } ?? ""
+        return "最近：\(w.type) · \(d)\(k)"
     }
 
     private func ringLine(_ t: String, _ v: String?, _ c: Color) -> some View {
@@ -249,9 +263,9 @@ struct FitnessView: View {
                 HStack(spacing: 18) {
                     ActivityRings(r: rings ?? RingsData(), size: 130)
                     VStack(alignment: .leading, spacing: 10) {
-                        big("活动", rings.map { "\(Int($0.move))" }, "/\(Int(rings?.moveGoal ?? 0)) 千卡", ActivityRings.moveColor)
-                        big("锻炼", rings.map { "\(Int($0.exercise))" }, "/\(Int(rings?.exerciseGoal ?? 30)) 分钟", ActivityRings.exerciseColor)
-                        big("站立", rings.map { "\(Int($0.stand))" }, "/\(Int(rings?.standGoal ?? 12)) 小时", ActivityRings.standColor)
+                        big("活动", 0, ActivityRings.moveColor)
+                        big("锻炼", 1, ActivityRings.exerciseColor)
+                        big("站立", 2, ActivityRings.standColor)
                     }
                 }
                 .padding(18)
@@ -312,8 +326,12 @@ struct FitnessView: View {
         }
     }
 
-    private func big(_ t: String, _ v: String?, _ goal: String, _ c: Color) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+    private func big(_ t: String, _ i: Int, _ c: Color) -> some View {
+        let r = rings
+        let v: String? = r.map { i == 0 ? "\(Int($0.move))" : i == 1 ? "\(Int($0.exercise))" : "\(Int($0.stand))" }
+        let g: Int = i == 0 ? Int(r?.moveGoal ?? 0) : i == 1 ? Int(r?.exerciseGoal ?? 30) : Int(r?.standGoal ?? 12)
+        let goal: String = "/\(g) " + (i == 0 ? "千卡" : i == 1 ? "分钟" : "小时")
+        return VStack(alignment: .leading, spacing: 0) {
             Text(t).font(.caption).foregroundStyle(.secondary)
             HStack(alignment: .firstTextBaseline, spacing: 2) {
                 Text(v ?? "--").font(.system(size: 24, weight: .bold, design: .rounded).monospacedDigit()).foregroundStyle(c)
@@ -351,9 +369,9 @@ struct FitnessView: View {
                 }
                 HStack(spacing: 12) {
                     tag(HealthFormat.duration(w.duration), "clock")
-                    if let k = w.kcal { tag("\(Int(k)) 千卡", "flame") }
-                    if let d = w.km, d > 0.05 { tag(String(format: "%.2f 公里", d), "point.topleft.down.to.point.bottomright.curvepath") }
-                    if let h = w.avgHR { tag("\(Int(h)) 次/分", "heart") }
+                    if let k = w.kcal { tag(String(Int(k)) + " 千卡", "flame") }
+                    if let d = w.km, d > 0.05 { tag(String(format: "%.2f 公里", d), "location") }
+                    if let h = w.avgHR { tag(String(Int(h)) + " 次/分", "heart") }
                 }
             }
         }
