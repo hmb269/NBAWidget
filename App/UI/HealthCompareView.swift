@@ -83,7 +83,9 @@ enum SleepScore {
 
 struct HealthCompareView: View {
     @State private var days = 30
-    @State private var shown: Set<CompareMetric> = Set(CompareMetric.allCases)
+    @State private var shown: Set<CompareMetric> = HealthCompareView.savedShown
+    @State private var order: [CompareMetric] = HealthCompareView.savedOrder
+    @State private var arranging = false        // 调整顺序
     @State private var overlay = false           // 叠在一张图上
     @State private var data: [CompareMetric: [DayValue]] = [:]
     @State private var loading = false
@@ -93,7 +95,21 @@ struct HealthCompareView: View {
         Calendar.current.date(byAdding: .day, value: -(days - 1), to: Calendar.current.startOfDay(for: Date()))!
     }
     private var end: Date { Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: Date()))! }
-    private var metrics: [CompareMetric] { CompareMetric.allCases.filter { shown.contains($0) } }
+    private var metrics: [CompareMetric] { order.filter { shown.contains($0) } }
+
+    // 顺序和显示哪几项记在本机
+    static var savedOrder: [CompareMetric] {
+        let saved = (UserDefaults.standard.stringArray(forKey: "compareOrder") ?? []).compactMap(CompareMetric.init(rawValue:))
+        return saved + CompareMetric.allCases.filter { !saved.contains($0) }
+    }
+    static var savedShown: Set<CompareMetric> {
+        guard let hidden = UserDefaults.standard.stringArray(forKey: "compareHidden") else { return Set(CompareMetric.allCases) }
+        return Set(CompareMetric.allCases.filter { !hidden.contains($0.rawValue) })
+    }
+    private func persist() {
+        UserDefaults.standard.set(order.map(\.rawValue), forKey: "compareOrder")
+        UserDefaults.standard.set(CompareMetric.allCases.filter { !shown.contains($0) }.map(\.rawValue), forKey: "compareHidden")
+    }
 
     var body: some View {
         ScrollView {
@@ -117,7 +133,7 @@ struct HealthCompareView: View {
                 // 选哪几项
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        ForEach(CompareMetric.allCases) { m in
+                        ForEach(order) { m in
                             let on = shown.contains(m)
                             Button {
                                 withAnimation { if on { shown.remove(m) } else { shown.insert(m) } }
@@ -154,6 +170,41 @@ struct HealthCompareView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .task(id: days) { await load() }
+        .onChange(of: shown) { _, _ in persist() }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { arranging = true } label: { Image(systemName: "arrow.up.arrow.down") }
+            }
+        }
+        .sheet(isPresented: $arranging) { arrangeSheet }
+    }
+
+    // MARK: 调整顺序（按住右边的三条线拖动）
+
+    private var arrangeSheet: some View {
+        NavigationStack {
+            List {
+                Section(footer: Text("按住右边的 ≡ 上下拖动调整顺序，开关决定显示哪几项。")) {
+                    ForEach(order) { m in
+                        Toggle(isOn: Binding(get: { shown.contains(m) },
+                                             set: { on in if on { shown.insert(m) } else { shown.remove(m) } })) {
+                            Label(m.rawValue, systemImage: m.icon).foregroundStyle(m.color)
+                        }
+                    }
+                    .onMove { from, to in
+                        order.move(fromOffsets: from, toOffset: to)
+                        persist()
+                    }
+                }
+            }
+            .environment(\.editMode, .constant(.active))
+            .navigationTitle("调整顺序")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("完成") { arranging = false } }
+            }
+        }
+        .presentationDetents([.medium])
     }
 
     // MARK: 选中那天的数值
@@ -194,7 +245,8 @@ struct HealthCompareView: View {
     // MARK: 分开看
 
     private func chartCard(_ m: CompareMetric) -> some View {
-        let pts = data[m] ?? []
+        let from = start
+        let pts = (data[m] ?? []).filter { $0.date >= from }    // 范围外的点不画，免得伸出图表
         let vals = pts.map(\.value)
         let lo = vals.min() ?? 0, hi = vals.max() ?? 1
         let pad = max((hi - lo) * 0.15, m == .steps ? 500 : m == .weight ? 0.3 : 0.5)
@@ -213,7 +265,7 @@ struct HealthCompareView: View {
                 Chart {
                     ForEach(pts) { p in
                         LineMark(x: .value("日期", p.date, unit: .day), y: .value(m.rawValue, p.value))
-                            .interpolationMethod(.catmullRom)
+                            .interpolationMethod(.monotone)   // 不会冲出最高/最低点
                             .foregroundStyle(m.color)
                             .lineStyle(StrokeStyle(lineWidth: 2.2, lineCap: .round))
                         PointMark(x: .value("日期", p.date, unit: .day), y: .value(m.rawValue, p.value))
@@ -227,6 +279,19 @@ struct HealthCompareView: View {
                     }
                     if let s = selected {
                         RuleMark(x: .value("选中", s, unit: .day)).foregroundStyle(.white.opacity(0.35))
+                        // 选中那天：在这条曲线上标出数值
+                        if let p = pts.first(where: { Calendar.current.isDate($0.date, inSameDayAs: s) }) {
+                            PointMark(x: .value("日期", p.date, unit: .day), y: .value(m.rawValue, p.value))
+                                .foregroundStyle(.white)
+                                .symbolSize(70)
+                                .annotation(position: .top, spacing: 4, overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
+                                    Text(m.format(p.value))
+                                        .font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit())
+                                        .foregroundStyle(.white)
+                                        .padding(.horizontal, 6).padding(.vertical, 2)
+                                        .background(Capsule().fill(m.color.opacity(0.85)))
+                                }
+                        }
                     }
                 }
                 .chartXScale(domain: start...end)
@@ -259,17 +324,18 @@ struct HealthCompareView: View {
         let metric: CompareMetric
         let date: Date
         let v: Double
+        let raw: Double
         var id: String { metric.rawValue + "\(date.timeIntervalSince1970)" }
     }
 
     private var overlayChart: some View {
         var pts: [NormPoint] = []
         for m in metrics {
-            let list = data[m] ?? []
+            let list = (data[m] ?? []).filter { $0.date >= start }
             let vals = list.map(\.value)
             guard let lo = vals.min(), let hi = vals.max() else { continue }
             for p in list {
-                pts.append(NormPoint(metric: m, date: p.date, v: hi > lo ? (p.value - lo) / (hi - lo) * 100 : 50))
+                pts.append(NormPoint(metric: m, date: p.date, v: hi > lo ? (p.value - lo) / (hi - lo) * 100 : 50, raw: p.value))
             }
         }
         let dates = Array(Set(pts.map(\.date))).sorted()
@@ -278,12 +344,25 @@ struct HealthCompareView: View {
                 ForEach(pts) { p in
                     LineMark(x: .value("日期", p.date, unit: .day), y: .value("相对", p.v),
                              series: .value("项目", p.metric.rawValue))
-                        .interpolationMethod(.catmullRom)
+                        .interpolationMethod(.monotone)
                         .foregroundStyle(p.metric.color)
                         .lineStyle(StrokeStyle(lineWidth: 2.2, lineCap: .round))
                 }
                 if let s = selected {
                     RuleMark(x: .value("选中", s, unit: .day)).foregroundStyle(.white.opacity(0.35))
+                    // 每条线在选中那天标出实际数值
+                    ForEach(pts.filter { Calendar.current.isDate($0.date, inSameDayAs: s) }) { p in
+                        PointMark(x: .value("日期", p.date, unit: .day), y: .value("相对", p.v))
+                            .foregroundStyle(p.metric.color)
+                            .symbolSize(60)
+                            .annotation(position: .trailing, spacing: 4, overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
+                                Text(p.metric.format(p.raw))
+                                    .font(.system(size: 11, weight: .bold, design: .rounded).monospacedDigit())
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 5).padding(.vertical, 1)
+                                    .background(Capsule().fill(p.metric.color.opacity(0.85)))
+                            }
+                    }
                 }
             }
             .chartXScale(domain: start...end)
