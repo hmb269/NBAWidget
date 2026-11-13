@@ -193,7 +193,7 @@ struct HealthCompareView: View {
                     ForEach(metrics) { m in chartCard(m) }
                 }
 
-                Text("点图上任意一天，所有图都会标出那一天，上面显示当天各项数值。「叠在一起」把每项按自己的最低到最高缩放到同一高度，只看涨跌趋势。BMI 绿色区域是健康范围 18.5～23.9（中国成人标准）；静息心率正常 60～100。血糖是你自己的记录、当天平均。睡眠评分是阿波自己的算法（满分 100）：时长 40、深睡占比 20、快速眼动占比 20、夜里清醒少 10、0:30 前入睡 10，不是苹果官方的评分。")
+                Text("点图上任意一天，所有图都会标出那一天，上面显示当天各项数值。「叠在一起」把每项按自己的最低到最高缩放到同一高度，只看涨跌趋势。BMI 绿色区域是健康范围 18.5～23.9（中国成人标准）；静息心率正常 60～100。血糖用你自己的餐后 2 小时记录，一天测了几次就取平均。睡眠评分是阿波自己的算法（满分 100）：时长 40、深睡占比 20、快速眼动占比 20、夜里清醒少 10、0:30 前入睡 10，不是苹果官方的评分。")
                     .font(.caption2).foregroundStyle(.tertiary)
             }
             .padding(16)
@@ -291,7 +291,7 @@ struct HealthCompareView: View {
         let pad = max((hi - lo) * 0.15, m == .steps ? 500 : m == .weight ? 0.3 : 0.5)
         return VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Label(m.rawValue, systemImage: m.icon).font(.subheadline.weight(.semibold)).foregroundStyle(m.color)
+                Label(m == .glucose ? "血糖（餐后2h）" : m.rawValue, systemImage: m.icon).font(.subheadline.weight(.semibold)).foregroundStyle(m.color)
                 Spacer()
                 if !vals.isEmpty {
                     Text("平均 " + m.format(vals.reduce(0, +) / Double(vals.count)) + " " + m.unit)
@@ -475,10 +475,12 @@ struct HealthCompareView: View {
         out[.exercise] = await exercise
         out[.restingHR] = await resting
         out[.sleep] = await nights.compactMap { d, s in SleepScore.score(s).map { DayValue(date: d, value: $0) } }
-        // 血糖：自己的记录，当天平均
+        // 血糖：自己的餐后 2 小时记录，同一天多次取平均
         let owners = GlucosePeople.owners
+        let tags = GlucoseTags.all
         var g: [Date: [Double]] = [:]
-        for r in GlucoseLocal.load() where r.date >= from && (owners[r.id] ?? GlucosePeople.me) == GlucosePeople.me {
+        for r in GlucoseLocal.load() where r.date >= from && (owners[r.id] ?? GlucosePeople.me) == GlucosePeople.me
+            && GlucoseKind.of(tags[r.id] ?? GlucoseTags.auto(r)) == .after2 {
             g[cal.startOfDay(for: r.date), default: []].append(r.mmol)
         }
         out[.glucose] = g.map { DayValue(date: $0.key, value: $0.value.reduce(0, +) / Double($0.value.count)) }.sorted { $0.date < $1.date }
