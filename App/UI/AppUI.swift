@@ -248,6 +248,29 @@ struct HealthHomeView: View {
                     sunCard
                 }
 
+                // 几项数据放一起对比
+                NavigationLink {
+                    HealthCompareView()
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "chart.xyaxis.line")
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 42, height: 42)
+                            .background(Circle().fill(LinearGradient(colors: [Color(red: 0.42, green: 0.86, blue: 1.0), Color(red: 1.0, green: 0.45, blue: 0.55)],
+                                                                     startPoint: .topLeading, endPoint: .bottomTrailing)))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("趋势对比").font(.headline)
+                            Text("睡眠评分 · HRV · 步数 · 体重 · 血糖 放一起看").font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                    }
+                    .padding(16)
+                    .glassCard(22)
+                }
+                .buttonStyle(.plain)
+
                 if let message {
                     Text(message)
                         .font(.footnote)
