@@ -107,6 +107,14 @@ enum GlucoseReport {
 
 // MARK: - 第一页：汇总
 
+extension View {
+    static func fmt(_ f: String) -> DateFormatter {
+        let d = DateFormatter()
+        d.dateFormat = f
+        return d
+    }
+}
+
 private struct ReportSummaryPage: View {
     let d: ReportData
 
@@ -115,7 +123,7 @@ private struct ReportSummaryPage: View {
     }
 
     var body: some View {
-        let df = DateFormatter(); df.dateFormat = "yyyy年M月d日"
+        let df = Self.fmt("yyyy年M月d日")
         VStack(alignment: .leading, spacing: 12) {
             Text("血糖记录报告").font(.system(size: 22, weight: .bold))
             Text("时间：\(df.string(from: d.from)) – \(df.string(from: d.to))    共 \(d.rows.count) 次测量")
@@ -201,7 +209,7 @@ private struct ReportTablePage: View {
     let rows: [ReportRow]
 
     var body: some View {
-        let df = DateFormatter(); df.dateFormat = "M/d HH:mm"
+        let df = Self.fmt("M/d HH:mm")
         VStack(alignment: .leading, spacing: 8) {
             Text(title).font(.system(size: 15, weight: .bold))
             VStack(spacing: 0) {
@@ -250,7 +258,7 @@ private struct ReportPhotoPage: View {
     let rows: [ReportRow]
 
     var body: some View {
-        let df = DateFormatter(); df.dateFormat = "M/d HH:mm"
+        let df = Self.fmt("M/d HH:mm")
         VStack(alignment: .leading, spacing: 10) {
             Text("餐食照片（超标、偏低的优先）").font(.system(size: 15, weight: .bold))
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
