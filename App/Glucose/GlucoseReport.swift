@@ -67,7 +67,8 @@ enum GlucoseReport {
         var chunks: [(String, [ReportRow])] = []
         if !marked.isEmpty {
             for i in stride(from: 0, to: marked.count, by: perPage) {
-                chunks.append(("超标和偏低的记录", Array(marked.reversed()[i..<min(i + perPage, marked.count)])))
+                let rev: [ReportRow] = Array(marked.reversed())
+                chunks.append(("超标和偏低的记录", Array(rev[i..<min(i + perPage, rev.count)])))
             }
         }
         for i in stride(from: 0, to: all.count, by: perPage) {
@@ -76,7 +77,9 @@ enum GlucoseReport {
         for c in chunks { pages.append(AnyView(ReportTablePage(title: c.0, rows: c.1))) }
         // 照片：超标、偏低优先，最多 12 张
         let withPhoto = d.rows.filter { $0.photo != nil }
-        let pick = Array((withPhoto.filter { $0.over || $0.low }.reversed() + withPhoto.filter { !$0.over && !$0.low }.reversed()).prefix(12))
+        let bad: [ReportRow] = Array(withPhoto.filter { $0.over || $0.low }.reversed())
+        let good: [ReportRow] = Array(withPhoto.filter { !$0.over && !$0.low }.reversed())
+        let pick: [ReportRow] = Array((bad + good).prefix(12))
         if !pick.isEmpty { pages.append(AnyView(ReportPhotoPage(rows: pick))) }
 
         for (i, p) in pages.enumerated() {
