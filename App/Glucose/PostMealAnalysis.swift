@@ -39,12 +39,14 @@ struct PostMealAnalysisView: View {
         let label: String
         let act: PostMealActivity
         let foods: [String]
+        let rec: GlucoseRecord
     }
 
     @State private var kind: Kind = .steps
     @State private var meals: [Meal] = []
     @State private var loading = true
     @State private var showList = false
+    @State private var viewing: Int?
 
     var body: some View {
         ScrollView {
@@ -78,6 +80,10 @@ struct PostMealAnalysisView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .task { await load() }
+        .fullScreenCover(isPresented: Binding(get: { viewing != nil }, set: { if !$0 { viewing = nil } })) {
+            GlucoseOverViewer(items: sortedMeals.map { GlucoseOverGallery.Item(record: $0.rec, label: $0.label, line: glucoseSafeLine($0.label)) },
+                              start: viewing ?? 0, missing: []) { _ in viewing = nil }
+        }
     }
 
     // MARK: 结论
@@ -194,7 +200,7 @@ struct PostMealAnalysisView: View {
             }
             .buttonStyle(.plain)
             if showList {
-                ForEach(meals.sorted { $0.date > $1.date }) { m in
+                ForEach(Array(sortedMeals.enumerated()), id: \.element.id) { i, m in
                     VStack(alignment: .leading, spacing: 2) {
                         HStack {
                             Text(day(m.date) + " " + m.label).font(.caption).foregroundStyle(.secondary)
@@ -206,12 +212,16 @@ struct PostMealAnalysisView: View {
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                     .padding(.vertical, 4)
+                    .contentShape(Rectangle())
+                    .onTapGesture { viewing = i }    // 点一顿看那顿饭的照片
                     Divider().overlay(Color.white.opacity(0.06))
                 }
             }
         }
         .padding(16).glassCard(22)
     }
+
+    private var sortedMeals: [Meal] { meals.sorted { $0.date > $1.date } }
 
     private func day(_ d: Date) -> String {
         let f = DateFormatter(); f.dateFormat = "M/d HH:mm"
@@ -227,7 +237,7 @@ struct PostMealAnalysisView: View {
             let label = tags[r.id] ?? GlucoseTags.auto(r)
             guard GlucoseKind.of(label) == .after2 else { continue }
             let a = await PostMeal.activity(before: r.date)
-            out.append(Meal(id: r.id, date: r.date, mmol: r.mmol, label: label ?? "", act: a, foods: foods[r.id] ?? []))
+            out.append(Meal(id: r.id, date: r.date, mmol: r.mmol, label: label ?? "", act: a, foods: foods[r.id] ?? [], rec: r))
         }
         meals = out
         loading = false

@@ -201,6 +201,7 @@ struct GlucoseFoodAnalysisView: View {
         let avgWithout: Double
         let overRate: Double    // 吃了时超标的比例
         let records: [(Date, Double, [String])]
+        let recs: [GlucoseRecord]   // 和 records 一一对应，点开看照片用
         var id: String { food }
         var diff: Double { avgWith - avgWithout }
     }
@@ -209,6 +210,13 @@ struct GlucoseFoodAnalysisView: View {
     @State private var total = 0
     @State private var tagged = 0
     @State private var open: String?
+    @State private var viewing: ViewerTarget?
+
+    struct ViewerTarget: Identifiable {
+        let items: [GlucoseOverGallery.Item]
+        let start: Int
+        var id: String { items.map(\.id).joined() + "\(start)" }
+    }
 
     var body: some View {
         ScrollView {
@@ -244,6 +252,9 @@ struct GlucoseFoodAnalysisView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .task { compute() }
+        .fullScreenCover(item: $viewing) { v in
+            GlucoseOverViewer(items: v.items, start: v.start, missing: []) { _ in viewing = nil }
+        }
     }
 
     private func section(_ title: String, _ list: [Row], _ color: Color) -> some View {
@@ -261,14 +272,21 @@ struct GlucoseFoodAnalysisView: View {
                     }
                     Text(detailText(r)).font(.caption).foregroundStyle(.secondary)
                     if open == r.id {
-                        ForEach(Array(r.records.enumerated()), id: \.offset) { _, x in
+                        ForEach(Array(r.records.enumerated()), id: \.offset) { i, x in
                             HStack(alignment: .top) {
                                 Text(day(x.0)).font(.caption2.monospacedDigit()).foregroundStyle(.secondary).frame(width: 74, alignment: .leading)
                                 Text(String(format: "%.1f", x.1)).font(.caption.weight(.bold).monospacedDigit())
                                     .foregroundStyle(x.1 > 7.8 ? Color.red : x.1 < 3.9 ? Color.blue : Color.primary)
                                     .frame(width: 30, alignment: .leading)
                                 Text(x.2.joined(separator: "、")).font(.caption2).foregroundStyle(.secondary)
+                                Spacer(minLength: 0)
+                                if r.recs[i].photos?.isEmpty == false {
+                                    Image(systemName: "photo").font(.caption2).foregroundStyle(.secondary)
+                                }
                             }
+                            .contentShape(Rectangle())
+                            // 点一顿：看那顿饭的照片（可以左右滑看同一种食材的其他几顿）
+                            .onTapGesture { viewing = ViewerTarget(items: viewerItems(r.recs), start: i) }
                         }
                     }
                 }
@@ -278,6 +296,14 @@ struct GlucoseFoodAnalysisView: View {
                 .contentShape(Rectangle())
                 .onTapGesture { withAnimation { open = open == r.id ? nil : r.id } }
             }
+        }
+    }
+
+    private func viewerItems(_ recs: [GlucoseRecord]) -> [GlucoseOverGallery.Item] {
+        let tags = GlucoseTags.all
+        return recs.map { r in
+            let l = tags[r.id] ?? GlucoseTags.auto(r)
+            return GlucoseOverGallery.Item(record: r, label: l ?? "", line: glucoseSafeLine(l))
         }
     }
 
@@ -319,7 +345,8 @@ struct GlucoseFoodAnalysisView: View {
             let ao = without.map(\.mmol).reduce(0, +) / Double(without.count)
             let over = Double(with.filter { $0.mmol > 7.8 }.count) / Double(with.count)
             out.append(Row(food: name, n: with.count, avgWith: aw, avgWithout: ao, overRate: over,
-                           records: with.sorted { $0.date > $1.date }.map { ($0.date, $0.mmol, foods[$0.id] ?? []) }))
+                           records: with.sorted { $0.date > $1.date }.map { ($0.date, $0.mmol, foods[$0.id] ?? []) },
+                           recs: with.sorted { $0.date > $1.date }))
         }
         rows = out.sorted { ($0.n >= 3 ? 1 : 0, $0.diff) > ($1.n >= 3 ? 1 : 0, $1.diff) }
     }
