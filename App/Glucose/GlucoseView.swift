@@ -302,8 +302,6 @@ struct GlucoseView: View {
 
             overAlbumCard
 
-            GlucoseReportCard()
-
             GlucoseFoodCard()
 
             PostMealAnalysisCard()
