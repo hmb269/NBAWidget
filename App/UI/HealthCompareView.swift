@@ -197,6 +197,22 @@ struct HealthCompareView: View {
     static let loadDays = 90
     @State private var scrollX: Date = Calendar.current.date(byAdding: .day, value: -29, to: Calendar.current.startOfDay(for: Date()))!
     private var visible: TimeInterval { Double(days) * 86400 }
+    private var winStart: Date { scrollX }
+    private var winEnd: Date { scrollX.addingTimeInterval(visible) }
+    @State private var dragFrom: Date?
+
+    /// 在图上左右拖：所有图一起平移（自己算，不用系统的图表滚动，免得和页面手势抢）
+    private var pan: some Gesture {
+        DragGesture(minimumDistance: 8)
+            .onChanged { v in
+                guard abs(v.translation.width) > abs(v.translation.height) else { return }
+                if dragFrom == nil { dragFrom = scrollX }
+                let w = max(200, UIScreen.main.bounds.width - 90)
+                let t = dragFrom!.addingTimeInterval(-Double(v.translation.width / w) * visible)
+                scrollX = min(max(t, start), end.addingTimeInterval(-visible))
+            }
+            .onEnded { _ in dragFrom = nil }
+    }
     private var start: Date {
         Calendar.current.date(byAdding: .day, value: -(Self.loadDays - 1), to: Calendar.current.startOfDay(for: Date()))!
     }
@@ -390,6 +406,7 @@ struct HealthCompareView: View {
         var lo = vals.min() ?? 0, hi = vals.max() ?? 1
         if m == .bmi { lo = min(lo, 18); hi = max(hi, 24.4) }   // 健康范围要看得到
         let pad = max((hi - lo) * 0.15, m == .steps ? 500 : m == .weight ? 0.3 : 0.5)
+        let win = pts.filter { $0.date >= winStart.addingTimeInterval(-2 * 86400) && $0.date <= winEnd.addingTimeInterval(86400) }
         return VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Label(m == .glucose ? "血糖（餐后2h）" : m.rawValue, systemImage: m.icon).font(.subheadline.weight(.semibold)).foregroundStyle(m.color)
@@ -406,7 +423,7 @@ struct HealthCompareView: View {
                 Text("这段时间没有数据").font(.caption).foregroundStyle(.secondary).frame(height: 90)
             } else {
                 Chart {
-                    ForEach(pts) { p in
+                    ForEach(win) { p in
                         LineMark(x: .value("日期", p.date, unit: .day), y: .value(m.rawValue, p.value))
                             .interpolationMethod(.monotone)   // 不会冲出最高/最低点
                             .foregroundStyle(m.color)
@@ -441,10 +458,8 @@ struct HealthCompareView: View {
                         }
                     }
                 }
-                .chartXScale(domain: start...end)
-                .chartScrollableAxes(.horizontal)
-                .chartXVisibleDomain(length: visible)
-                .chartScrollPosition(x: $scrollX)
+                .chartXScale(domain: winStart...winEnd)
+                .chartPlotStyle { $0.clipped() }
                 .chartYScale(domain: (lo - pad)...(hi + pad))
                 .chartXAxis {
                     AxisMarks(values: .automatic(desiredCount: 5)) { v in
@@ -461,7 +476,8 @@ struct HealthCompareView: View {
                     }
                 }
                 .frame(height: 110)
-                .tapToSelect($selected, dates: pts.map(\.date), byDay: true)
+                .tapToSelect($selected, dates: win.map(\.date), byDay: true)
+                .simultaneousGesture(pan)
             }
         }
         .padding(14)
@@ -488,10 +504,11 @@ struct HealthCompareView: View {
                 pts.append(NormPoint(metric: m, date: p.date, v: hi > lo ? (p.value - lo) / (hi - lo) * 100 : 50, raw: p.value))
             }
         }
-        let dates = Array(Set(pts.map(\.date))).sorted()
+        let shownPts = pts.filter { $0.date >= winStart.addingTimeInterval(-2 * 86400) && $0.date <= winEnd.addingTimeInterval(86400) }
+        let dates = Array(Set(shownPts.map(\.date))).sorted()
         return VStack(alignment: .leading, spacing: 8) {
             Chart {
-                ForEach(pts) { p in
+                ForEach(shownPts) { p in
                     LineMark(x: .value("日期", p.date, unit: .day), y: .value("相对", p.v),
                              series: .value("项目", p.metric.rawValue))
                         .interpolationMethod(.monotone)
@@ -515,10 +532,8 @@ struct HealthCompareView: View {
                     }
                 }
             }
-            .chartXScale(domain: start...end)
-            .chartScrollableAxes(.horizontal)
-            .chartXVisibleDomain(length: visible)
-            .chartScrollPosition(x: $scrollX)
+            .chartXScale(domain: winStart...winEnd)
+            .chartPlotStyle { $0.clipped() }
             .chartYScale(domain: -5...105)
             .chartYAxis {
                 AxisMarks(position: .trailing, values: [0, 50, 100]) { v in
@@ -535,6 +550,7 @@ struct HealthCompareView: View {
             }
             .frame(height: 260)
             .tapToSelect($selected, dates: dates, byDay: true)
+            .simultaneousGesture(pan)
 
             // 图例
             HStack(spacing: 12) {
