@@ -25,12 +25,15 @@ extension View {
     /// 玻璃卡片：iOS 26 起用系统的液态玻璃，旧系统用毛玻璃
     @ViewBuilder
     func glassCard(_ radius: CGFloat = 24) -> some View {
+        // contentShape：卡片里空白的地方也能点到（不然点在文字之间的空白处没反应，要点好几次）
         if #available(iOS 26.0, *) {
             self.glassEffect(.regular, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
         } else {
             self
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).stroke(.white.opacity(0.14), lineWidth: 0.8))
+                .contentShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
         }
     }
 
