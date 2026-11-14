@@ -828,8 +828,13 @@ struct PostMealLine: View {
     @State private var a: PostMealActivity?
 
     var body: some View {
+        // 注意：没读到之前也要放一个看得见的占位，不然空视图不会触发 .task，永远不去读
         Group {
-            if let a {
+            if a == nil {
+                Text(compact ? "…" : "正在读取饭后活动…")
+                    .font(compact ? .caption2 : .footnote)
+                    .foregroundStyle(.secondary)
+            } else if let a {
                 if compact {
                     if let st = a.steps {
                         Label(Int(st.rounded()).formatted(), systemImage: "figure.walk")
