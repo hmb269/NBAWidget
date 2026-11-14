@@ -152,7 +152,13 @@ private struct ReportSummaryPage: View {
             Text("血糖曲线").font(.system(size: 13, weight: .bold)).padding(.top, 4)
             Chart {
                 RuleMark(y: .value("7.8", 7.8)).foregroundStyle(.red.opacity(0.6)).lineStyle(StrokeStyle(lineWidth: 0.8, dash: [4, 3]))
+                    .annotation(position: .top, alignment: .leading, spacing: 1) {
+                        Text("7.8 餐后2小时上限").font(.system(size: 7, weight: .semibold)).foregroundStyle(.red)
+                    }
                 RuleMark(y: .value("3.9", 3.9)).foregroundStyle(.blue.opacity(0.6)).lineStyle(StrokeStyle(lineWidth: 0.8, dash: [4, 3]))
+                    .annotation(position: .bottom, alignment: .leading, spacing: 1) {
+                        Text("3.9 低血糖").font(.system(size: 7, weight: .semibold)).foregroundStyle(.blue)
+                    }
                 // 每种时段连成一条曲线，再画点；超标、偏低的点大一点
                 ForEach(d.rows) { r in
                     LineMark(x: .value("时间", r.date), y: .value("血糖", r.mmol),
@@ -167,6 +173,18 @@ private struct ReportSummaryPage: View {
             }
             .chartForegroundStyleScale(["空腹": Color.orange, "餐后1h": Color.purple, "餐后2h": Color.red, "其他": Color.gray])
             .chartLegend(position: .top, alignment: .leading)
+            .chartYAxis {
+                AxisMarks(position: .trailing, values: [0, 2, 3.9, 6, 7.8, 10, 12]) { v in
+                    AxisGridLine().foregroundStyle(Color.gray.opacity(0.15))
+                    AxisValueLabel {
+                        if let d = v.as(Double.self) {
+                            Text(d == 3.9 || d == 7.8 ? String(format: "%.1f", d) : String(Int(d)))
+                                .font(.system(size: 8, weight: d == 3.9 || d == 7.8 ? .bold : .regular))
+                                .foregroundStyle(d == 7.8 ? Color.red : d == 3.9 ? Color.blue : Color.gray)
+                        }
+                    }
+                }
+            }
             .frame(height: 230)
             Text("红色虚线 7.8（餐后2小时上限），蓝色虚线 3.9（低血糖）。").font(.system(size: 8)).foregroundStyle(.gray)
 
