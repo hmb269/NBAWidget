@@ -117,6 +117,22 @@ struct PostMealAnalysisView: View {
         return more + less + tail
     }
 
+    private static func avg(_ ms: [Meal]) -> Double? {
+        if ms.isEmpty { return nil }
+        var t: Double = 0
+        for m in ms { t += m.mmol }
+        return t / Double(ms.count)
+    }
+
+    private static func bestIndex(_ counts: [Int], _ avgs: [Double?]) -> Int? {
+        var bi: Int? = nil
+        var bv: Double = .infinity
+        for i in counts.indices where counts[i] >= 3 {
+            if let a = avgs[i], a < bv { bv = a; bi = i }
+        }
+        return bi
+    }
+
     // MARK: 分档
 
     private var binsCard: some View {
@@ -126,8 +142,8 @@ struct PostMealAnalysisView: View {
             let hi = i == e.count ? Double.infinity : e[i]
             return (kind.label(i), meals.filter { m in kind.value(m.act).map { $0 >= lo && $0 < hi } ?? false })
         }
-        let avgs: [Double?] = rows.map { $0.1.isEmpty ? nil : $0.1.map(\.mmol).reduce(0, +) / Double($0.1.count) }
-        let best = rows.indices.filter { rows[$0].1.count >= 3 && avgs[$0] != nil }.min { avgs[$0]! < avgs[$1]! }
+        let avgs: [Double?] = rows.map { Self.avg($0.1) }
+        let best: Int? = Self.bestIndex(rows.map { $0.1.count }, avgs)
         return VStack(alignment: .leading, spacing: 8) {
             Label("饭后动多少，餐后血糖最低", systemImage: "target").font(.headline)
                 .foregroundStyle(Color(red: 0.5, green: 0.95, blue: 0.6))
