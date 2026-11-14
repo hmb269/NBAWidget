@@ -67,34 +67,47 @@ enum CompareMetric: String, CaseIterable, Identifiable {
     }
 }
 
-/// 睡眠评分（阿波自己的算法，满分 100）：
-/// 时长 40 + 深睡占比 20 + 快速眼动占比 20 + 清醒少 10 + 入睡时间 10
+/// 睡眠评分：仿照苹果手表的睡眠评分（watchOS 26）三项结构，满分 100：
+/// 时长 50 + 入睡时间 30（和你平时几点睡比，越规律越高）+ 睡眠中断 20（夜里清醒越少越高）
+/// 苹果每项的具体扣分没有公开，这里的曲线是按你的手表分数校准的近似
 enum SleepScore {
-    static func score(_ s: HealthService.SleepData) -> Double? {
+    /// 入睡时刻换成「从中午 12 点起的分钟数」，过了零点的不会被当成更早
+    static func bedMinutes(_ d: Date?) -> Double? {
+        guard let d else { return nil }
+        let c = Calendar.current.dateComponents([.hour, .minute], from: d)
+        var m = Double((c.hour ?? 0) * 60 + (c.minute ?? 0))
+        if m < 12 * 60 { m += 24 * 60 }
+        return m
+    }
+
+    /// - usualBed：平时的入睡时刻（前 14 晚的中位数，bedMinutes 的单位）
+    static func score(_ s: HealthService.SleepData, usualBed: Double? = nil) -> Double? {
         let h = s.asleep / 3600
         guard h > 0.5 else { return nil }
-        // 时长：7~9 小时满分；少于 7 小时到 4 小时线性降到 0；超过 9 小时到 11 小时降到 30
-        let dur: Double = h >= 7 && h <= 9 ? 40 : h < 7 ? max(0, (h - 4) / 3 * 40) : max(30, 40 - (h - 9) / 2 * 10)
-        let staged = s.deep + s.rem + s.core > 0
-        // 深睡占 13% 以上满分
-        let deepPct = s.deep / s.asleep
-        let deep: Double = staged ? min(20, deepPct / 0.13 * 20) : 14
-        // 快速眼动占 20% 以上满分
-        let remPct = s.rem / s.asleep
-        let rem: Double = staged ? min(20, remPct / 0.20 * 20) : 14
-        // 清醒 20 分钟以内满分，60 分钟以上 0
-        let awakeMin = s.awake / 60
-        let awake: Double = awakeMin <= 20 ? 10 : max(0, 10 - (awakeMin - 20) / 40 * 10)
-        // 入睡：0:30 前满分，到 3:00 降到 0
-        var bed: Double = 7
-        if let b = s.bedtime {
-            let c = Calendar.current.dateComponents([.hour, .minute], from: b)
-            var m = Double((c.hour ?? 0) * 60 + (c.minute ?? 0))
-            if m < 12 * 60 { m += 24 * 60 }          // 过了零点算第二天
-            let late = m - (24 * 60 + 30)            // 比 0:30 晚了多少分钟
-            bed = late <= 0 ? 10 : max(0, 10 - late / 150 * 10)
+        // 时长：8～9.5 小时满分；4 小时以下 0；超过 9.5 小时最多扣到 45
+        let dur: Double = h >= 8 ? (h <= 9.5 ? 50 : max(45, 50 - (h - 9.5) * 3)) : max(0, (h - 4) / 4 * 50)
+        // 入睡时间：和平时差 30 分钟以内满分，差 3 小时以上 0；没有平时的数据就按 23:30 前算满分
+        var bed: Double = 24
+        if let m = bedMinutes(s.bedtime) {
+            let ref = usualBed ?? (23 * 60 + 30)
+            let dev = usualBed == nil ? max(0, m - ref) : abs(m - ref)
+            bed = dev <= 30 ? 30 : max(0, 30 - (dev - 30) / 150 * 30)
         }
-        return (dur + deep + rem + awake + bed).rounded()
+        // 中断：夜里清醒 10 分钟以内满分，90 分钟以上 0
+        let awakeMin = s.awake / 60
+        let inter: Double = awakeMin <= 10 ? 20 : max(0, 20 - (awakeMin - 10) / 80 * 20)
+        return (dur + bed + inter).rounded()
+    }
+
+    /// 一串按日期排好的夜晚，每晚用前 14 晚的中位入睡时刻来评分
+    static func scores(_ nights: [(Date, HealthService.SleepData)]) -> [DayValue] {
+        var out: [DayValue] = []
+        for (i, n) in nights.enumerated() {
+            let prev = nights[max(0, i - 14)..<i].compactMap { bedMinutes($0.1.bedtime) }.sorted()
+            let usual: Double? = prev.count >= 3 ? prev[prev.count / 2] : nil
+            if let v = score(n.1, usualBed: usual) { out.append(DayValue(date: n.0, value: v)) }
+        }
+        return out
     }
 }
 
@@ -193,7 +206,7 @@ struct HealthCompareView: View {
                     ForEach(metrics) { m in chartCard(m) }
                 }
 
-                Text("点图上任意一天，所有图都会标出那一天，上面显示当天各项数值。「叠在一起」把每项按自己的最低到最高缩放到同一高度，只看涨跌趋势。BMI 绿色区域是健康范围 18.5～23.9（中国成人标准）；静息心率正常 60～100。血糖用你自己的餐后 2 小时记录，一天测了几次就取平均。睡眠评分是阿波自己的算法（满分 100）：时长 40、深睡占比 20、快速眼动占比 20、夜里清醒少 10、0:30 前入睡 10，不是苹果官方的评分。")
+                Text("点图上任意一天，所有图都会标出那一天，上面显示当天各项数值。「叠在一起」把每项按自己的最低到最高缩放到同一高度，只看涨跌趋势。BMI 绿色区域是健康范围 18.5～23.9（中国成人标准）；静息心率正常 60～100。血糖用你自己的餐后 2 小时记录，一天测了几次就取平均。睡眠评分仿照苹果手表的评分（满分 100）：时长 50（8 小时以上满分）、入睡时间 30（和平时几点睡差 30 分钟以内满分）、睡眠中断 20（夜里清醒 10 分钟以内满分）。苹果的具体算法没公开，和手表上的分可能差几分。")
                     .font(.caption2).foregroundStyle(.tertiary)
             }
             .padding(16)
@@ -467,7 +480,6 @@ struct HealthCompareView: View {
         async let steps = (try? HealthService.daily(.steps, days: n)) ?? []
         async let hrv = (try? HealthService.daily(.hrv, days: n)) ?? []
         async let weight = (try? HealthService.weightHistory(days: n)) ?? []
-        async let nights = HealthService.nightlySleep(days: n)
         async let kcal = (try? HealthService.daily(.activeEnergy, days: n)) ?? []
         async let exercise = (try? HealthService.daily(.exercise, days: n)) ?? []
         async let resting = (try? HealthService.daily(.restingHR, days: n)) ?? []
@@ -484,7 +496,9 @@ struct HealthCompareView: View {
         out[.activeEnergy] = await kcal
         out[.exercise] = await exercise
         out[.restingHR] = await resting
-        out[.sleep] = await nights.compactMap { d, s in SleepScore.score(s).map { DayValue(date: d, value: $0) } }
+        // 多读 14 晚，用来算「平时几点睡」
+        let all = await HealthService.nightlySleep(days: n + 14)
+        out[.sleep] = SleepScore.scores(all).filter { $0.date >= from }
         // 血糖：自己的餐后 2 小时记录，同一天多次取平均
         let owners = GlucosePeople.owners
         let tags = GlucoseTags.all

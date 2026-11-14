@@ -153,10 +153,16 @@ private struct ReportSummaryPage: View {
             Chart {
                 RuleMark(y: .value("7.8", 7.8)).foregroundStyle(.red.opacity(0.6)).lineStyle(StrokeStyle(lineWidth: 0.8, dash: [4, 3]))
                 RuleMark(y: .value("3.9", 3.9)).foregroundStyle(.blue.opacity(0.6)).lineStyle(StrokeStyle(lineWidth: 0.8, dash: [4, 3]))
+                // 每种时段连成一条曲线，再画点；超标、偏低的点大一点
                 ForEach(d.rows) { r in
+                    LineMark(x: .value("时间", r.date), y: .value("血糖", r.mmol),
+                             series: .value("类型", GlucoseKind.of(r.label)?.rawValue ?? "其他"))
+                        .foregroundStyle(by: .value("类型", GlucoseKind.of(r.label)?.rawValue ?? "其他"))
+                        .lineStyle(StrokeStyle(lineWidth: 1.2))
+                        .interpolationMethod(.monotone)
                     PointMark(x: .value("时间", r.date), y: .value("血糖", r.mmol))
                         .foregroundStyle(by: .value("类型", GlucoseKind.of(r.label)?.rawValue ?? "其他"))
-                        .symbolSize(r.over || r.low ? 40 : 18)
+                        .symbolSize(r.over || r.low ? 40 : 14)
                 }
             }
             .chartForegroundStyleScale(["空腹": Color.orange, "餐后1h": Color.purple, "餐后2h": Color.red, "其他": Color.gray])
