@@ -577,7 +577,10 @@ struct GlucoseOverGallery: View {
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
 
-            Text(f.string(from: r.date)).font(.caption2).foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                Text(f.string(from: r.date)).font(.caption2).foregroundStyle(.secondary)
+                if PostMeal.isAfterMeal(it.label) { PostMealLine(date: r.date, compact: true) }
+            }
             Text(r.note?.isEmpty == false ? r.note! : "没有备注")
                 .font(.caption)
                 .foregroundStyle(r.note?.isEmpty == false ? Color.primary : Color.secondary.opacity(0.6))
@@ -793,6 +796,9 @@ struct GlucoseOverViewer: View {
                     }
                 }
                 Text(it.label + " · " + f.string(from: r.date)).font(.subheadline).foregroundStyle(.white.opacity(0.75))
+                if PostMeal.isAfterMeal(it.label) {
+                    PostMealLine(date: r.date, compact: false)
+                }
                 if let n = r.note, !n.isEmpty {
                     // 备注全部显示，太长就在这块里上下滑
                     ScrollView {
@@ -811,5 +817,33 @@ struct GlucoseOverViewer: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(LinearGradient(colors: [.clear, .white.opacity(0.06)], startPoint: .top, endPoint: .bottom))
         }
+    }
+}
+
+
+/// 相册里显示饭后 2 小时内的活动（步数、卡路里、锻炼）
+struct PostMealLine: View {
+    let date: Date
+    var compact = false
+    @State private var a: PostMealActivity?
+
+    var body: some View {
+        Group {
+            if let a {
+                if compact {
+                    if let st = a.steps {
+                        Label(Int(st.rounded()).formatted(), systemImage: "figure.walk")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(Color(red: 1.0, green: 0.85, blue: 0.35))
+                            .labelStyle(.titleAndIcon)
+                    }
+                } else {
+                    Label(a.text, systemImage: "figure.walk")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(Color(red: 1.0, green: 0.85, blue: 0.35))
+                }
+            }
+        }
+        .task(id: date) { a = await PostMeal.activity(before: date) }
     }
 }

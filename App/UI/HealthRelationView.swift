@@ -8,12 +8,14 @@ import HealthKit
 /// 参与分析的一项（在趋势对比的基础上，血糖拆成空腹和餐后 2 小时）
 enum RelMetric: String, CaseIterable, Identifiable {
     case steps = "步数", exercise = "锻炼", kcal = "活动卡路里", sleep = "睡眠评分", hrv = "HRV",
-         resting = "静息心率", weight = "体重", fasting = "空腹血糖", after2 = "餐后2h血糖", postSteps = "饭后步数"
+         resting = "静息心率", weight = "体重", fasting = "空腹血糖", after2 = "餐后2h血糖", postSteps = "饭后步数",
+         postKcal = "饭后卡路里", postExercise = "饭后锻炼"
     var id: String { rawValue }
     var unit: String {
         switch self {
         case .steps, .postSteps: return "步"
-        case .exercise: return "分钟"
+        case .exercise, .postExercise: return "分钟"
+        case .postKcal: return "千卡"
         case .kcal: return "千卡"
         case .sleep: return "分"
         case .hrv: return "毫秒"
@@ -33,6 +35,8 @@ enum RelMetric: String, CaseIterable, Identifiable {
         case .weight: return CompareMetric.weight.color
         case .fasting, .after2: return CompareMetric.glucose.color
         case .postSteps: return Color(red: 1.0, green: 0.85, blue: 0.35)
+        case .postKcal: return Color(red: 1.0, green: 0.5, blue: 0.6)
+        case .postExercise: return Color(red: 0.75, green: 1.0, blue: 0.4)
         }
     }
     func format(_ v: Double) -> String {
@@ -55,6 +59,8 @@ enum RelMetric: String, CaseIterable, Identifiable {
         case .fasting: return "空腹糖"
         case .after2: return "餐后糖"
         case .postSteps: return "饭后走"
+        case .postKcal: return "饭后卡"
+        case .postExercise: return "饭后练"
         }
     }
 }
@@ -103,7 +109,7 @@ enum Relation {
         (.steps, .sleep, 1), (.exercise, .sleep, 1),
         (.sleep, .hrv, 0), (.sleep, .fasting, 0), (.sleep, .after2, 0), (.hrv, .fasting, 0),
         (.steps, .after2, 0), (.exercise, .after2, 0), (.kcal, .after2, 0),
-        (.hrv, .resting, 0), (.sleep, .steps, 0), (.after2, .hrv, 1), (.postSteps, .after2, 0),
+        (.hrv, .resting, 0), (.sleep, .steps, 0), (.after2, .hrv, 1), (.postSteps, .after2, 0), (.postKcal, .after2, 0), (.postExercise, .after2, 0),
     ]
 
     static func compute(_ data: [RelMetric: [Date: Double]], x: RelMetric, y: RelMetric, lag: Int) -> RelResult {
@@ -368,7 +374,8 @@ struct HealthRelationView: View {
     // MARK: 最佳区间：按活动量分档，看每档的各项结果
 
     enum DoseKind: String, CaseIterable, Identifiable {
-        case steps = "每天步数", exercise = "锻炼分钟", kcal = "活动卡路里", postSteps = "饭后走动"
+        case steps = "每天步数", exercise = "锻炼分钟", kcal = "活动卡路里",
+             postSteps = "饭后走动", postKcal = "饭后卡路里", postExercise = "饭后锻炼"
         var id: String { rawValue }
         var metric: RelMetric {
             switch self {
@@ -376,6 +383,8 @@ struct HealthRelationView: View {
             case .exercise: return .exercise
             case .kcal: return .kcal
             case .postSteps: return .postSteps
+            case .postKcal: return .postKcal
+            case .postExercise: return .postExercise
             }
         }
         /// 分档边界
@@ -385,12 +394,14 @@ struct HealthRelationView: View {
             case .exercise: return [10, 20, 40, 60]
             case .kcal: return [100, 200, 300, 450]
             case .postSteps: return [300, 800, 1500, 2500]
+            case .postKcal: return [20, 50, 90, 140]
+            case .postExercise: return [3, 10, 20, 30]
             }
         }
         func label(_ i: Int) -> String {
             let e = edges
-            let u = metric == .exercise ? "分钟" : metric == .kcal ? "千卡" : "步"
-            func f(_ v: Double) -> String { v >= 1000 && metric != .kcal ? String(format: "%g千", v / 1000) : String(Int(v)) }
+            let u = metric.unit
+            func f(_ v: Double) -> String { v >= 1000 && metric.unit == "步" ? String(format: "%g千", v / 1000) : String(Int(v)) }
             if i == 0 { return "\(f(e[0]))\(u)以下" }
             if i == e.count { return "\(f(e[e.count - 1]))\(u)以上" }
             return "\(f(e[i - 1]))～\(f(e[i]))"
@@ -404,7 +415,7 @@ struct HealthRelationView: View {
             ("次日HRV", .hrv, 1, true), ("次日睡眠", .sleep, 1, true), ("次日静息心率", .resting, 1, false),
             ("餐后血糖", .after2, 0, false),
         ]
-        if dose == .postSteps { list = [("餐后血糖", .after2, 0, false)] }
+        if [.postSteps, .postKcal, .postExercise].contains(dose) { list = [("餐后血糖", .after2, 0, false)] }
         return list
     }
 
@@ -557,15 +568,19 @@ struct HealthRelationView: View {
         }
         data[.fasting] = fast.mapValues { $0.reduce(0, +) / Double($0.count) }
         data[.after2] = post.mapValues { $0.reduce(0, +) / Double($0.count) }
-        // 饭后走动：每条餐后 2 小时记录，往前 2 小时内走了多少步（同一天多条取平均）
-        var walk: [Date: [Double]] = [:]
+        // 饭后活动：每条餐后 2 小时记录，往前 2 小时内走了多少步、消耗多少卡路里、锻炼几分钟（同一天多条取平均）
+        var walk: [Date: [Double]] = [:], burn: [Date: [Double]] = [:], train: [Date: [Double]] = [:]
         for r in GlucoseLocal.load() where r.date >= from && (owners[r.id] ?? GlucosePeople.me) == GlucosePeople.me
             && GlucoseKind.of(tags[r.id] ?? GlucoseTags.auto(r)) == .after2 {
-            if let n = await Self.steps(from: r.date.addingTimeInterval(-2 * 3600), to: r.date) {
-                walk[cal.startOfDay(for: r.date), default: []].append(n)
-            }
+            let a = await PostMeal.activity(before: r.date)
+            let d = cal.startOfDay(for: r.date)
+            if let v = a.steps { walk[d, default: []].append(v) }
+            if let v = a.kcal { burn[d, default: []].append(v) }
+            train[d, default: []].append(a.exercise ?? 0)
         }
         data[.postSteps] = walk.mapValues { $0.reduce(0, +) / Double($0.count) }
+        data[.postKcal] = burn.mapValues { $0.reduce(0, +) / Double($0.count) }
+        data[.postExercise] = train.mapValues { $0.reduce(0, +) / Double($0.count) }
         self.data = data
         dayCount = Set(data.values.flatMap(\.keys)).count
 

@@ -302,6 +302,8 @@ struct GlucoseView: View {
 
             overAlbumCard
 
+            GlucoseReportCard()
+
             if !people.isEmpty {
                 Picker("显示", selection: $filter) {
                     Text("全部").tag("全部")
