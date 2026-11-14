@@ -274,6 +274,7 @@ struct GlucoseRecordSheet: View {
     @State private var showCamera = false
     @State private var adding = false
     @State private var viewing: GlucosePhoto?
+    @State private var foods: [String] = []
 
     init(record: GlucoseRecord, tag: String?, owner: String, missing: Set<String>,
          onSave: @escaping (String?, [GlucosePhoto]) -> Void) {
@@ -284,6 +285,7 @@ struct GlucoseRecordSheet: View {
         self.onSave = onSave
         _note = State(initialValue: record.note ?? "")
         _photos = State(initialValue: record.photos ?? [])
+        _foods = State(initialValue: GlucoseFoods.get(record.id))
     }
 
     var body: some View {
@@ -292,6 +294,7 @@ struct GlucoseRecordSheet: View {
                 VStack(spacing: 14) {
                     header
                     photoCard
+                    FoodTagsCard(foods: $foods, photo: photos.first)
                     noteCard
                 }
                 .padding(16)
@@ -310,6 +313,7 @@ struct GlucoseRecordSheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("完成") {
                         removed.forEach(GlucoseMedia.deleteThumb)
+                        GlucoseFoods.set(foods, for: record.id)
                         let n = note.trimmingCharacters(in: .whitespacesAndNewlines)
                         onSave(n.isEmpty ? nil : n, photos)
                         dismiss()
@@ -474,6 +478,7 @@ struct GlucoseBackupFile: Codable {
     var lotteryFavs: [String: [[[Int]]]]? = nil   // 彩票收藏：玩法 → [[前区],[后区]]
     var lotteryWins: Data? = nil                  // 彩票中奖记录
     var lotteryTickets: Data? = nil               // 我的彩票
+    var foods: [String: [String]]? = nil          // 三餐食材
 }
 
 enum GlucoseBackup {
@@ -498,7 +503,7 @@ enum GlucoseBackup {
         let file = GlucoseBackupFile(version: 1, exportedAt: Date(), records: records,
                                      tags: GlucoseTags.all, owners: GlucosePeople.owners, people: GlucosePeople.names,
                                      meals: meals, thumbs: thumbs, lotteryFavs: LotteryFavorites.exportAll(), lotteryWins: LotteryWins.exportData(),
-                                     lotteryTickets: LotteryTickets.exportData())
+                                     lotteryTickets: LotteryTickets.exportData(), foods: GlucoseFoods.all)
         let enc = JSONEncoder()
         enc.dateEncodingStrategy = .iso8601
         return try? enc.encode(file)
@@ -546,6 +551,7 @@ enum GlucoseBackup {
         let favs = f.lotteryFavs.map(LotteryFavorites.importAll) ?? 0
         let wins = f.lotteryWins.map(LotteryWins.importData) ?? 0
         let tickets = f.lotteryTickets.map(LotteryTickets.importData) ?? 0
+        if let fd = f.foods { GlucoseFoods.importAll(fd) }
 
         NotificationCenter.default.post(name: .glucoseDataChanged, object: nil)
         return "导入完成：新增 \(added) 条记录，恢复 \(newThumbs) 张小图" + (favs > 0 ? "，\(favs) 注彩票收藏" : "") + (wins > 0 ? "，\(wins) 条中奖记录" : "") + (tickets > 0 ? "，\(tickets) 张彩票" : "")

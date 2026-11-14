@@ -41,7 +41,9 @@ enum GlucoseReport {
         where r.date >= from && (owners[r.id] ?? GlucosePeople.me) == GlucosePeople.me {
             let label = tags[r.id] ?? GlucoseTags.auto(r) ?? "未标记"
             let post = PostMeal.isAfterMeal(label) ? await PostMeal.activity(before: r.date) : nil
-            rows.append(ReportRow(id: r.id, date: r.date, mmol: r.mmol, label: label, note: r.note ?? "",
+            let foods = GlucoseFoods.get(r.id)
+            let note = (foods.isEmpty ? "" : "【" + foods.joined(separator: "、") + "】") + (r.note ?? "")
+            rows.append(ReportRow(id: r.id, date: r.date, mmol: r.mmol, label: label, note: note,
                                   line: glucoseSafeLine(label), post: post,
                                   photo: r.photos?.first.flatMap(GlucoseMedia.thumb)))
         }

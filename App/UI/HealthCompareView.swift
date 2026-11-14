@@ -292,6 +292,8 @@ struct HealthCompareView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .task { await load() }
+        .onAppear { PagingLock.shared.count += 1 }
+        .onDisappear { PagingLock.shared.count = max(0, PagingLock.shared.count - 1) }
         .onChange(of: days) { _, d in
             scrollX = Calendar.current.date(byAdding: .day, value: -(d - 1), to: Calendar.current.startOfDay(for: Date()))!
         }

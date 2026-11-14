@@ -153,6 +153,8 @@ struct RootView: View {
         ("健康", "heart.fill"), ("血糖", "drop.fill"), ("彩票", "ticket.fill"), ("NBA", "basketball.fill"), ("设置", "gearshape.fill")
     ]
 
+    @ObservedObject private var paging = PagingLock.shared
+
     var body: some View {
         // 左右滑动翻页；底部是自己画的玻璃标签栏，点图标也能切换
         TabView(selection: $tab) {
@@ -164,6 +166,8 @@ struct RootView: View {
             NavigationStack { SettingsView() }.tag(4)
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
+        // 有的页面（比如趋势对比的图表要左右拖）需要暂时关掉左右翻页
+        .scrollDisabled(paging.count > 0)
         .background(AppBackground())
         .ignoresSafeArea(.container, edges: .bottom)
         .safeAreaInset(edge: .bottom) { tabBar }
@@ -227,6 +231,12 @@ extension View {
                 .overlay(Capsule().stroke(.white.opacity(0.14), lineWidth: 0.8))
         }
     }
+}
+
+/// 暂时关掉主页面的左右翻页（图表要左右拖动时）
+final class PagingLock: ObservableObject {
+    static let shared = PagingLock()
+    @Published var count = 0
 }
 
 // MARK: - 健康首页

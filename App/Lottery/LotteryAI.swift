@@ -172,7 +172,7 @@ enum LotteryAI {
 
     /// 发请求，返回模型回复的文字
     static func ask(image: UIImage, provider: LotteryAIProvider, model: String, key: String, base: String,
-                    hint: LotteryGame? = nil) async throws -> String {
+                    hint: LotteryGame? = nil, customPrompt: String? = nil) async throws -> String {
         guard let data = jpeg(image) else { throw AIError(msg: "照片处理失败") }
         var b = base.trimmingCharacters(in: .whitespaces)
         while b.hasSuffix("/") { b.removeLast() }
@@ -184,7 +184,7 @@ enum LotteryAI {
                 "role": "user",
                 "content": [
                     ["type": "image_url", "image_url": ["url": "data:image/jpeg;base64," + data.base64EncodedString()]],
-                    ["type": "text", "text": prompt + (hint.map { "\n这张票已确认是「\($0.name)」，game 填 \($0.rawValue)。" } ?? "")],
+                    ["type": "text", "text": customPrompt ?? (prompt + (hint.map { "\n这张票已确认是「\($0.name)」，game 填 \($0.rawValue)。" } ?? ""))],
                 ],
             ]],
         ]
