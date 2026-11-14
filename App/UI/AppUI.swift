@@ -249,7 +249,18 @@ struct DisableTabPaging: UIViewRepresentable {
             }
             apply()
         }
-        func apply() { pager?.isScrollEnabled = !(active && window != nil) }
+        func apply() {
+            let on = active && window != nil
+            pager?.isScrollEnabled = !on
+            // iOS 26 起整个页面任何位置往右滑都会返回上一页，这里也先关掉（屏幕最左边缘往右滑返回还保留）
+            if #available(iOS 26.0, *) {
+                var r: UIResponder? = self
+                while let x = r, !(x is UIViewController) { r = x.next }
+                if let nav = (r as? UIViewController)?.navigationController {
+                    nav.interactiveContentPopGestureRecognizer?.isEnabled = !on
+                }
+            }
+        }
         deinit { let p = pager; DispatchQueue.main.async { p?.isScrollEnabled = true } }
     }
     func makeUIView(context: Context) -> Finder {

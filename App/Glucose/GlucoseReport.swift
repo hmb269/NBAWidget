@@ -24,6 +24,7 @@ struct ReportData {
     var weightStart: Double?
     var weightEnd: Double?
     var heightCm: Double?
+    var chartKinds: Set<String> = ["空腹", "餐后2h"]   // 曲线图里画哪几种
 }
 
 enum GlucoseReport {
@@ -162,7 +163,7 @@ private struct ReportSummaryPage: View {
                         Text("3.9 低血糖").font(.system(size: 7, weight: .semibold)).foregroundStyle(.blue)
                     }
                 // 每种时段连成一条曲线，再画点；超标、偏低的点大一点
-                ForEach(d.rows) { r in
+                ForEach(d.rows.filter { d.chartKinds.contains(GlucoseKind.of($0.label)?.rawValue ?? "其他") }) { r in
                     LineMark(x: .value("时间", r.date), y: .value("血糖", r.mmol),
                              series: .value("类型", GlucoseKind.of(r.label)?.rawValue ?? "其他"))
                         .foregroundStyle(by: .value("类型", GlucoseKind.of(r.label)?.rawValue ?? "其他"))
@@ -316,8 +317,11 @@ private struct ReportPhotoPage: View {
 
 struct GlucoseReportCard: View {
     @State private var days = 90
+    @AppStorage("reportKinds") private var kindsRaw = "空腹,餐后2h"
     @State private var working = false
     @State private var file: URL?
+
+    private var kinds: Set<String> { Set(kindsRaw.split(separator: ",").map(String.init)) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -334,11 +338,31 @@ struct GlucoseReportCard: View {
             }
             Text("生成 PDF 给医生看：统计、曲线、超标和偏低记录、饭后活动、餐食照片、体重变化。")
                 .font(.caption).foregroundStyle(.secondary)
+            // 曲线图里画哪几种
+            HStack(spacing: 6) {
+                Text("曲线：").font(.caption).foregroundStyle(.secondary)
+                ForEach(["空腹", "餐后1h", "餐后2h", "其他"], id: \.self) { k in
+                    let on = kinds.contains(k)
+                    Button {
+                        var s = kinds
+                        if on { s.remove(k) } else { s.insert(k) }
+                        kindsRaw = s.sorted().joined(separator: ",")
+                        file = nil
+                    } label: {
+                        Text(k).font(.caption.weight(.semibold))
+                            .foregroundStyle(on ? Color.white : Color.secondary)
+                            .padding(.horizontal, 9).padding(.vertical, 4)
+                            .background(Capsule().fill(on ? Color(red: 0.45, green: 0.8, blue: 1).opacity(0.6) : Color.white.opacity(0.08)))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
             HStack(spacing: 10) {
                 Button {
                     Task {
                         working = true
-                        let d = await GlucoseReport.collect(days: days)
+                        var d = await GlucoseReport.collect(days: days)
+                        d.chartKinds = kinds
                         file = GlucoseReport.makePDF(d)
                         working = false
                     }
