@@ -153,8 +153,6 @@ struct RootView: View {
         ("健康", "heart.fill"), ("血糖", "drop.fill"), ("彩票", "ticket.fill"), ("NBA", "basketball.fill"), ("设置", "gearshape.fill")
     ]
 
-    @ObservedObject private var paging = PagingLock.shared
-
     var body: some View {
         // 左右滑动翻页；底部是自己画的玻璃标签栏，点图标也能切换
         TabView(selection: $tab) {
@@ -166,8 +164,6 @@ struct RootView: View {
             NavigationStack { SettingsView() }.tag(4)
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
-        // 有的页面（比如趋势对比的图表要左右拖）需要暂时关掉左右翻页
-        .scrollDisabled(paging.count > 0)
         .background(AppBackground())
         .ignoresSafeArea(.container, edges: .bottom)
         .safeAreaInset(edge: .bottom) { tabBar }
@@ -233,10 +229,35 @@ extension View {
     }
 }
 
-/// 暂时关掉主页面的左右翻页（图表要左右拖动时）
-final class PagingLock: ObservableObject {
-    static let shared = PagingLock()
-    @Published var count = 0
+/// 暂时关掉主页面的左右翻页（图表要左右拖动时）：
+/// 放在页面背景里，往上找到主页面那个左右翻页的滚动视图，关掉它的滑动；离开页面时恢复。
+/// （不能用 .scrollDisabled，它会把页面里的上下滚动也一起关掉）
+struct DisableTabPaging: UIViewRepresentable {
+    var active: Bool
+
+    final class Finder: UIView {
+        weak var pager: UIScrollView?
+        var active = false { didSet { apply() } }
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            if pager == nil {
+                var v = superview
+                while let s = v {
+                    if let sv = s as? UIScrollView, sv.isPagingEnabled { pager = sv; break }
+                    v = s.superview
+                }
+            }
+            apply()
+        }
+        func apply() { pager?.isScrollEnabled = !(active && window != nil) }
+        deinit { let p = pager; DispatchQueue.main.async { p?.isScrollEnabled = true } }
+    }
+    func makeUIView(context: Context) -> Finder {
+        let v = Finder()
+        v.isUserInteractionEnabled = false
+        return v
+    }
+    func updateUIView(_ uiView: Finder, context: Context) { uiView.active = active }
 }
 
 // MARK: - 健康首页

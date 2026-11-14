@@ -187,6 +187,7 @@ struct HealthCompareView: View {
     @State private var order: [CompareMetric] = HealthCompareView.savedOrder
     @State private var arranging = false        // 调整顺序
     @State private var calibrating = false      // 填苹果睡眠评分
+    @State private var onScreen = false
     @State private var overlay = false           // 叠在一张图上
     @State private var data: [CompareMetric: [DayValue]] = [:]
     @State private var loading = false
@@ -292,8 +293,10 @@ struct HealthCompareView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .task { await load() }
-        .onAppear { PagingLock.shared.count += 1 }
-        .onDisappear { PagingLock.shared.count = max(0, PagingLock.shared.count - 1) }
+        // 图表要左右拖，这个页面里关掉主页面的左右翻页
+        .background(DisableTabPaging(active: onScreen).frame(width: 0, height: 0))
+        .onAppear { onScreen = true }
+        .onDisappear { onScreen = false }
         .onChange(of: days) { _, d in
             scrollX = Calendar.current.date(byAdding: .day, value: -(d - 1), to: Calendar.current.startOfDay(for: Date()))!
         }
