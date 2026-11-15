@@ -252,12 +252,20 @@ final class AccuChekSync: NSObject, ObservableObject, CBCentralManagerDelegate, 
         guard flags & 0x02 != 0, d.count >= i + 2 else { return nil } // 没有浓度的记录（比如质控液）跳过
         guard let conc = sfloat(UInt16(d[i]) | UInt16(d[i + 1]) << 8) else { return nil }
         // 单位：位 2 为 1 是 mol/L，为 0 是 kg/L
-        let mmol = flags & 0x04 != 0 ? conc * 1000 : conc * 100_000 / 18.016
+        // 血糖仪蓝牙传的是 mg/dL，屏幕上的 mmol/L 是「除以 18 再去掉第二位小数」（不四舍五入），
+        // 比如 109 mg/dL = 6.05 → 屏幕显示 6.0。这里照同样的算法，和屏幕一致
+        let mmol: Double
+        if flags & 0x04 != 0 {
+            mmol = ((conc * 1000) * 10).rounded() / 10
+        } else {
+            let mg = (conc * 100_000).rounded()
+            mmol = (mg / 18.0 * 10 + 0.0001).rounded(.down) / 10
+        }
         var cal = Calendar(identifier: .gregorian)
         cal.timeZone = .current
         guard let base = cal.date(from: c) else { return nil }
         let date = base.addingTimeInterval(TimeInterval(offsetMinutes * 60))
-        return MeterReading(seq: seq, date: date, mmol: (mmol * 10).rounded() / 10, meal: nil)
+        return MeterReading(seq: seq, date: date, mmol: mmol, meal: nil)
     }
 
     /// 测量补充信息里的「餐点」

@@ -13,7 +13,7 @@ import WidgetKit
 struct GlucoseRecord: Identifiable, Codable, Equatable {
     let id: String          // 血糖仪导入的用「accuchek-序列号-序号-时间」，健康读进来的用样本 UUID
     let date: Date
-    let mmol: Double
+    var mmol: Double
     var meterMeal: String?  // 血糖仪自带的餐点标记（或健康里存的标签）
     var source: String
     var mine: Bool          // 是不是阿波自己写进健康的（只有这种能改、能删）
@@ -52,6 +52,8 @@ enum GlucoseLocal {
         var added = 0
         for r in incoming {
             if var old = byId[r.id] {
+                // 血糖仪重新读到的数值以血糖仪为准（修正以前换算差 0.1 的记录）
+                if r.id.hasPrefix("accuchek-"), r.source == "罗氏智航" { old.mmol = r.mmol }
                 if old.meterMeal == nil { old.meterMeal = r.meterMeal }
                 if old.note == nil { old.note = r.note }
                 if (old.photos ?? []).isEmpty, let p = r.photos, !p.isEmpty { old.photos = p }
