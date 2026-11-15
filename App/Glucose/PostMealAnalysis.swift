@@ -133,6 +133,27 @@ struct PostMealAnalysisView: View {
         return bi
     }
 
+    private func binRow(_ label: String, _ list: [Meal], _ avg: Double?, _ isBest: Bool) -> some View {
+        let avgText: String = avg.map { String(format: "%.1f", $0) } ?? "—"
+        let over: Int = list.filter { $0.mmol > 7.8 }.count
+        let pctText: String = list.isEmpty ? "—" : "\(over * 100 / list.count)%"
+        let avgColor: Color = (avg ?? 0) > 7.8 ? .red : .primary
+        let bg: Color = isBest ? Color.green.opacity(0.12) : Color.clear
+        return HStack {
+            HStack(spacing: 3) {
+                if isBest { Image(systemName: "star.fill").font(.system(size: 9)).foregroundStyle(.yellow) }
+                Text(label)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Text("\(list.count)").frame(width: 40)
+            Text(avgText).frame(width: 44).foregroundStyle(avgColor)
+            Text(pctText).frame(width: 44)
+        }
+        .font(.system(size: 13, weight: isBest ? .bold : .regular).monospacedDigit())
+        .padding(.vertical, 4)
+        .background(RoundedRectangle(cornerRadius: 6).fill(bg))
+    }
+
     // MARK: 分档
 
     private var binsCard: some View {
@@ -155,21 +176,7 @@ struct PostMealAnalysisView: View {
             }
             .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
             ForEach(rows.indices, id: \.self) { i in
-                let list = rows[i].1
-                HStack {
-                    HStack(spacing: 3) {
-                        if i == best { Image(systemName: "star.fill").font(.system(size: 9)).foregroundStyle(.yellow) }
-                        Text(rows[i].0)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    Text("\(list.count)").frame(width: 40)
-                    Text(avgs[i].map { String(format: "%.1f", $0) } ?? "—").frame(width: 44)
-                        .foregroundStyle((avgs[i] ?? 0) > 7.8 ? Color.red : Color.primary)
-                    Text(list.isEmpty ? "—" : "\(Int(Double(list.filter { $0.mmol > 7.8 }.count) / Double(list.count) * 100))%").frame(width: 44)
-                }
-                .font(.system(size: 13, weight: i == best ? .bold : .regular).monospacedDigit())
-                .padding(.vertical, 4)
-                .background(RoundedRectangle(cornerRadius: 6).fill(i == best ? Color.green.opacity(0.12) : Color.clear))
+                binRow(rows[i].0, rows[i].1, avgs[i], i == best)
             }
             Text("⭐ 是餐后血糖平均最低的一档（至少 3 顿才参与）。").font(.caption2).foregroundStyle(.tertiary)
         }
