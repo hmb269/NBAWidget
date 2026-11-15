@@ -197,7 +197,31 @@ struct HealthCompareView: View {
     /// 读 90 天，屏幕上一次看 days 天，左右拖动看别的天
     static let loadDays = 90
     @State private var scrollX: Date = Calendar.current.date(byAdding: .day, value: -29, to: Calendar.current.startOfDay(for: Date()))!
-    private var visible: TimeInterval { Double(days) * 86400 }
+    /// 屏幕上能看到几天（双指缩放会改它）
+    @State private var zoomDays: Double = 30
+    @State private var pinchFrom: Double?
+    private var visible: TimeInterval { zoomDays * 86400 }
+    /// 日期刻度：放得越大刻得越密，放到 10 天以内一天一个
+    private var xStride: Int {
+        if zoomDays <= 10 { return 1 }
+        if zoomDays <= 20 { return 2 }
+        if zoomDays <= 45 { return 7 }
+        return 14
+    }
+    private func pinchChanged(_ scale: CGFloat) {
+        if pinchFrom == nil { pinchFrom = zoomDays }
+        let center = scrollX.addingTimeInterval(visible / 2)
+        let nd = min(max(pinchFrom! / Double(max(scale, 0.05)), 5), Double(Self.loadDays))
+        zoomDays = nd
+        let t = center.addingTimeInterval(-nd * 86400 / 2)
+        scrollX = min(max(t, start), end.addingTimeInterval(-nd * 86400))
+    }
+    private func pinchEnded() { pinchFrom = nil }
+    private var pinch: some Gesture {
+        MagnifyGesture()
+            .onChanged { v in pinchChanged(v.magnification) }
+            .onEnded { _ in pinchEnded() }
+    }
     private var winStart: Date { scrollX }
     private var winEnd: Date { scrollX.addingTimeInterval(visible) }
     @State private var dragFrom: Date?
@@ -247,6 +271,15 @@ struct HealthCompareView: View {
                         Text("90天").tag(90)
                     }
                     .pickerStyle(.menu).tint(.secondary)
+                }
+                if abs(zoomDays - Double(days)) > 0.5 {
+                    Button {
+                        withAnimation { zoomDays = Double(days); scrollX = Calendar.current.date(byAdding: .day, value: -(days - 1), to: Calendar.current.startOfDay(for: Date()))! }
+                    } label: {
+                        Label("已缩放到 \(Int(zoomDays.rounded())) 天 · 点这里还原", systemImage: "arrow.uturn.backward")
+                            .font(.caption)
+                    }
+                    .tint(.secondary)
                 }
 
                 // 选哪几项
@@ -311,6 +344,7 @@ struct HealthCompareView: View {
         .onAppear { onScreen = true }
         .onDisappear { onScreen = false }
         .onChange(of: days) { _, d in
+            zoomDays = Double(d)
             scrollX = Calendar.current.date(byAdding: .day, value: -(d - 1), to: Calendar.current.startOfDay(for: Date()))!
         }
         .onChange(of: shown) { _, _ in persist() }
@@ -427,7 +461,7 @@ struct HealthCompareView: View {
                             .lineStyle(StrokeStyle(lineWidth: 2.2, lineCap: .round))
                         PointMark(x: .value("日期", p.date, unit: .day), y: .value(m.rawValue, p.value))
                             .foregroundStyle(m.color)
-                            .symbolSize(days > 30 ? 10 : 22)
+                            .symbolSize(zoomDays > 30 ? 10 : 22)
                     }
                     if m == .bmi {
                         RectangleMark(yStart: .value("下限", 18.5), yEnd: .value("上限", 23.9))
@@ -459,7 +493,7 @@ struct HealthCompareView: View {
                 .chartPlotStyle { $0.clipped() }
                 .chartYScale(domain: (lo - pad)...(hi + pad))
                 .chartXAxis {
-                    AxisMarks(values: .automatic(desiredCount: 5)) { v in
+                    AxisMarks(values: .stride(by: .day, count: xStride)) { v in
                         AxisGridLine().foregroundStyle(.white.opacity(0.05))
                         AxisValueLabel(format: .dateTime.month(.defaultDigits).day(), centered: false)
                     }
@@ -475,6 +509,7 @@ struct HealthCompareView: View {
                 .frame(height: 110)
                 .tapToSelect($selected, dates: win.map(\.date), byDay: true)
                 .horizontalPan(changed: panChanged, ended: panEnded)
+                .simultaneousGesture(pinch)
             }
         }
         .padding(14)
@@ -541,13 +576,14 @@ struct HealthCompareView: View {
                 }
             }
             .chartXAxis {
-                AxisMarks(values: .automatic(desiredCount: 5)) { _ in
+                AxisMarks(values: .stride(by: .day, count: xStride)) { _ in
                     AxisValueLabel(format: .dateTime.month(.defaultDigits).day(), centered: false)
                 }
             }
             .frame(height: 260)
             .tapToSelect($selected, dates: dates, byDay: true)
             .horizontalPan(changed: panChanged, ended: panEnded)
+                .simultaneousGesture(pinch)
 
             // 图例
             HStack(spacing: 12) {
@@ -706,6 +742,7 @@ struct HorizontalPan: UIGestureRecognizerRepresentable {
 
     func makeUIGestureRecognizer(context: Context) -> UIPanGestureRecognizer {
         let g = UIPanGestureRecognizer()
+        g.maximumNumberOfTouches = 1
         g.delegate = context.coordinator
         return g
     }
