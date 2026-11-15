@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import Charts
 
 /// 趋势对比：步数、HRV、体重、血糖、睡眠评分放在一个页面，同一条时间轴，点一天所有图一起标出来
@@ -202,17 +203,13 @@ struct HealthCompareView: View {
     @State private var dragFrom: Date?
 
     /// 在图上左右拖：所有图一起平移（自己算，不用系统的图表滚动，免得和页面手势抢）
-    private var pan: some Gesture {
-        DragGesture(minimumDistance: 8)
-            .onChanged { v in
-                guard abs(v.translation.width) > abs(v.translation.height) else { return }
-                if dragFrom == nil { dragFrom = scrollX }
-                let w = max(200, UIScreen.main.bounds.width - 90)
-                let t = dragFrom!.addingTimeInterval(-Double(v.translation.width / w) * visible)
-                scrollX = min(max(t, start), end.addingTimeInterval(-visible))
-            }
-            .onEnded { _ in dragFrom = nil }
+    private func panChanged(_ dx: CGFloat) {
+        if dragFrom == nil { dragFrom = scrollX }
+        let w = max(200, UIScreen.main.bounds.width - 90)
+        let t = dragFrom!.addingTimeInterval(-Double(dx / w) * visible)
+        scrollX = min(max(t, start), end.addingTimeInterval(-visible))
     }
+    private func panEnded() { dragFrom = nil }
     private var start: Date {
         Calendar.current.date(byAdding: .day, value: -(Self.loadDays - 1), to: Calendar.current.startOfDay(for: Date()))!
     }
@@ -477,7 +474,7 @@ struct HealthCompareView: View {
                 }
                 .frame(height: 110)
                 .tapToSelect($selected, dates: win.map(\.date), byDay: true)
-                .simultaneousGesture(pan)
+                .horizontalPan(changed: panChanged, ended: panEnded)
             }
         }
         .padding(14)
@@ -550,7 +547,7 @@ struct HealthCompareView: View {
             }
             .frame(height: 260)
             .tapToSelect($selected, dates: dates, byDay: true)
-            .simultaneousGesture(pan)
+            .horizontalPan(changed: panChanged, ended: panEnded)
 
             // 图例
             HStack(spacing: 12) {
@@ -683,5 +680,57 @@ struct SleepCalibrationSheet: View {
     private func label(_ d: Date) -> String {
         let f = DateFormatter(); f.locale = Locale(identifier: "zh_CN"); f.dateFormat = "M月d日 EEE"
         return f.string(from: d)
+    }
+}
+
+
+// MARK: 只认横向拖动的手势（竖着拖直接让给页面滚动）
+
+@available(iOS 18.0, *)
+struct HorizontalPan: UIGestureRecognizerRepresentable {
+    var changed: (CGFloat) -> Void
+    var ended: () -> Void
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+            guard let p = g as? UIPanGestureRecognizer else { return true }
+            let v = p.velocity(in: p.view)
+            let t = p.translation(in: p.view)
+            let dx: CGFloat = abs(v.x) + abs(t.x) * 10
+            let dy: CGFloat = abs(v.y) + abs(t.y) * 10
+            return dx > dy * 1.2
+        }
+    }
+
+    func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator { Coordinator() }
+
+    func makeUIGestureRecognizer(context: Context) -> UIPanGestureRecognizer {
+        let g = UIPanGestureRecognizer()
+        g.delegate = context.coordinator
+        return g
+    }
+
+    func handleUIGestureRecognizerAction(_ g: UIPanGestureRecognizer, context: Context) {
+        switch g.state {
+        case .began, .changed: changed(g.translation(in: g.view).x)
+        default: ended()
+        }
+    }
+}
+
+extension View {
+    @ViewBuilder
+    func horizontalPan(changed: @escaping (CGFloat) -> Void, ended: @escaping () -> Void) -> some View {
+        if #available(iOS 18.0, *) {
+            self.gesture(HorizontalPan(changed: changed, ended: ended))
+        } else {
+            self.simultaneousGesture(
+                DragGesture(minimumDistance: 12)
+                    .onChanged { v in
+                        if abs(v.translation.width) > abs(v.translation.height) { changed(v.translation.width) }
+                    }
+                    .onEnded { _ in ended() }
+            )
+        }
     }
 }
