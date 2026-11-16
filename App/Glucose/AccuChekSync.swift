@@ -7,6 +7,7 @@ struct MeterReading {
     var date: Date
     var mmol: Double
     var meal: UInt8?   // 1 餐前 2 餐后 3 空腹 4 随机 5 睡前（蓝牙标准的编号）
+    var mg: Int? = nil // 血糖仪原始 mg/dL（用来核对换算）
 }
 
 /// 通过蓝牙标准「血糖服务」（Glucose Profile，0x1808）读取罗氏智航里存的全部记录。
@@ -233,6 +234,9 @@ final class AccuChekSync: NSObject, ObservableObject, CBCentralManagerDelegate, 
         return Double(mantissa) * pow(10, Double(exponent))
     }
 
+    /// mg/dL → mmol/L 的换算系数（按阿波的血糖仪屏幕校准）
+    static let meterFactor = 18.08
+
     static func parseMeasurement(_ data: Data) -> MeterReading? {
         let d = [UInt8](data)
         guard d.count >= 10 else { return nil }
@@ -252,20 +256,23 @@ final class AccuChekSync: NSObject, ObservableObject, CBCentralManagerDelegate, 
         guard flags & 0x02 != 0, d.count >= i + 2 else { return nil } // 没有浓度的记录（比如质控液）跳过
         guard let conc = sfloat(UInt16(d[i]) | UInt16(d[i + 1]) << 8) else { return nil }
         // 单位：位 2 为 1 是 mol/L，为 0 是 kg/L
-        // 血糖仪蓝牙传的是 mg/dL，屏幕上的 mmol/L 是 mg/dL × 0.0555 再四舍五入到一位小数（罗氏的换算系数）。
-        // 核对过：109→6.0、88→4.9、139→7.7，都和屏幕一致（用 ÷18 或 ÷18.016 会差 0.1）
+        // 血糖仪蓝牙传的是整数 mg/dL，屏幕上的 mmol/L 由它换算。用阿波实测的 8 条读数反推：
+        // 88→4.9、91→5.0、100→5.5、109→6.0、139→7.7 等，全对上的系数在 18.02～18.14 之间，取 18.08。
+        // （÷18.016 会把 91、100、109 算高 0.1；×0.0555 也一样）
         let mmol: Double
+        var mg: Int? = nil
         if flags & 0x04 != 0 {
             mmol = ((conc * 1000) * 10).rounded() / 10
         } else {
-            let mg = Int((conc * 100_000).rounded())
-            mmol = Double((mg * 555 + 500) / 1000) / 10
+            let v = Int((conc * 100_000).rounded())
+            mg = v
+            mmol = (Double(v) / meterFactor * 10).rounded() / 10
         }
         var cal = Calendar(identifier: .gregorian)
         cal.timeZone = .current
         guard let base = cal.date(from: c) else { return nil }
         let date = base.addingTimeInterval(TimeInterval(offsetMinutes * 60))
-        return MeterReading(seq: seq, date: date, mmol: mmol, meal: nil)
+        return MeterReading(seq: seq, date: date, mmol: mmol, meal: nil, mg: mg)
     }
 
     /// 测量补充信息里的「餐点」

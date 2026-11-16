@@ -348,7 +348,10 @@ struct GlucoseRecordSheet: View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(String(format: "%.1f", record.mmol))
                 .font(.system(size: 40, weight: .bold, design: .rounded).monospacedDigit())
-            Text("mmol/L").font(.subheadline).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 0) {
+                Text("mmol/L").font(.subheadline).foregroundStyle(.secondary)
+                if let mg = record.mg { Text("血糖仪原始 \(mg) mg/dL").font(.caption2).foregroundStyle(.tertiary) }
+            }
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
                 Text(tag ?? "未标记").font(.subheadline.weight(.semibold))

@@ -19,6 +19,7 @@ struct GlucoseRecord: Identifiable, Codable, Equatable {
     var mine: Bool          // 是不是阿波自己写进健康的（只有这种能改、能删）
     var note: String? = nil           // 备注，比如「饭后散步」
     var photos: [GlucosePhoto]? = nil // 照片（相册编号 + 小图）
+    var mg: Int? = nil                // 血糖仪原始 mg/dL（核对换算用）
 }
 
 /// 本地存储：Application Support/glucose.json
@@ -53,7 +54,7 @@ enum GlucoseLocal {
         for r in incoming {
             if var old = byId[r.id] {
                 // 血糖仪重新读到的数值以血糖仪为准（修正以前换算差 0.1 的记录）
-                if r.id.hasPrefix("accuchek-"), r.source == "罗氏智航" { old.mmol = r.mmol }
+                if r.id.hasPrefix("accuchek-"), r.source == "罗氏智航" { old.mmol = r.mmol; old.mg = r.mg ?? old.mg }
                 if old.meterMeal == nil { old.meterMeal = r.meterMeal }
                 if old.note == nil { old.note = r.note }
                 if (old.photos ?? []).isEmpty, let p = r.photos, !p.isEmpty { old.photos = p }
@@ -125,7 +126,7 @@ enum GlucoseStore {
     static func records(from readings: [MeterReading], serial: String) -> [GlucoseRecord] {
         readings.map {
             GlucoseRecord(id: "accuchek-\(serial)-\($0.seq)-\(Int($0.date.timeIntervalSince1970))",
-                          date: $0.date, mmol: $0.mmol, meterMeal: mealName($0.meal), source: "罗氏智航", mine: true)
+                          date: $0.date, mmol: $0.mmol, meterMeal: mealName($0.meal), source: "罗氏智航", mine: true, mg: $0.mg)
         }
     }
 
