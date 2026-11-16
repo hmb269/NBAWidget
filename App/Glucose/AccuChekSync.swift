@@ -235,7 +235,7 @@ final class AccuChekSync: NSObject, ObservableObject, CBCentralManagerDelegate, 
     }
 
     /// mg/dL → mmol/L 的换算系数（按阿波的血糖仪屏幕校准）
-    static let meterFactor = 18.08
+    static let meterFactor = 18.03
 
     static func parseMeasurement(_ data: Data) -> MeterReading? {
         let d = [UInt8](data)
@@ -256,9 +256,9 @@ final class AccuChekSync: NSObject, ObservableObject, CBCentralManagerDelegate, 
         guard flags & 0x02 != 0, d.count >= i + 2 else { return nil } // 没有浓度的记录（比如质控液）跳过
         guard let conc = sfloat(UInt16(d[i]) | UInt16(d[i + 1]) << 8) else { return nil }
         // 单位：位 2 为 1 是 mol/L，为 0 是 kg/L
-        // 血糖仪蓝牙传的是整数 mg/dL，屏幕上的 mmol/L 由它换算。用阿波实测的 8 条读数反推：
-        // 88→4.9、91→5.0、100→5.5、109→6.0、139→7.7 等，全对上的系数在 18.02～18.14 之间，取 18.08。
-        // （÷18.016 会把 91、100、109 算高 0.1；×0.0555 也一样）
+        // 血糖仪蓝牙传的是整数 mg/dL，屏幕上的 mmol/L 由它换算。用阿波实测的 10 条读数反推
+        // （84→4.7、88→4.9、91→5.0、100→5.5、109→6.0、120→6.7、122→6.8、131→7.3、138→7.7、139→7.7），
+        // 能全部对上的系数只在 18.020～18.039 之间，取 18.03
         let mmol: Double
         var mg: Int? = nil
         if flags & 0x04 != 0 {
