@@ -724,6 +724,7 @@ struct SleepCalibrationSheet: View {
 
 @available(iOS 18.0, *)
 struct HorizontalPan: UIGestureRecognizerRepresentable {
+    var enabled: Bool = true
     var changed: (CGFloat) -> Void
     var ended: () -> Void
 
@@ -744,7 +745,12 @@ struct HorizontalPan: UIGestureRecognizerRepresentable {
         let g = UIPanGestureRecognizer()
         g.maximumNumberOfTouches = 1
         g.delegate = context.coordinator
+        g.isEnabled = enabled
         return g
+    }
+
+    func updateUIGestureRecognizer(_ g: UIPanGestureRecognizer, context: Context) {
+        g.isEnabled = enabled
     }
 
     func handleUIGestureRecognizerAction(_ g: UIPanGestureRecognizer, context: Context) {
@@ -757,16 +763,17 @@ struct HorizontalPan: UIGestureRecognizerRepresentable {
 
 extension View {
     @ViewBuilder
-    func horizontalPan(changed: @escaping (CGFloat) -> Void, ended: @escaping () -> Void) -> some View {
+    func horizontalPan(enabled: Bool = true, changed: @escaping (CGFloat) -> Void, ended: @escaping () -> Void) -> some View {
         if #available(iOS 18.0, *) {
-            self.gesture(HorizontalPan(changed: changed, ended: ended))
+            self.gesture(HorizontalPan(enabled: enabled, changed: changed, ended: ended))
         } else {
             self.simultaneousGesture(
                 DragGesture(minimumDistance: 12)
                     .onChanged { v in
                         if abs(v.translation.width) > abs(v.translation.height) { changed(v.translation.width) }
                     }
-                    .onEnded { _ in ended() }
+                    .onEnded { _ in ended() },
+                including: enabled ? .all : .subviews
             )
         }
     }

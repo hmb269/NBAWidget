@@ -81,6 +81,49 @@ struct GlucoseTrendCard: View {
     @State private var days = 30
     @State private var meal: MealFilter = .all
     @State private var selected: Date?
+    // 双指缩放：zoomDays 为 nil 时显示整段；放大后显示 zoomDays 天，到 zoomEnd 为止，单指左右拖动看前后
+    @State private var zoomDays: Double?
+    @State private var zoomEnd = Date()
+    @State private var pinchFrom: Double?
+    @State private var dragFrom: Date?
+
+    private var rangeStart: Date { Calendar.current.date(byAdding: .day, value: -days, to: Date())! }
+    private var zoomed: Bool { zoomDays != nil }
+    private var shownDays: Double { zoomDays ?? Double(days) }
+
+    private func pinchChanged(_ scale: CGFloat) {
+        if pinchFrom == nil {
+            pinchFrom = shownDays
+            if zoomDays == nil { zoomEnd = Date() }
+        }
+        let center = zoomEnd.addingTimeInterval(-shownDays * 86400 / 2)
+        let nd = min(max(pinchFrom! / Double(max(scale, 0.05)), 3), Double(days))
+        if nd >= Double(days) - 0.3 { zoomDays = nil; zoomEnd = Date(); return }
+        zoomDays = nd
+        let e = center.addingTimeInterval(nd * 86400 / 2)
+        zoomEnd = min(max(e, rangeStart.addingTimeInterval(nd * 86400)), Date())
+    }
+    private func pinchEnded() { pinchFrom = nil }
+    private func panChanged(_ dx: CGFloat) {
+        guard let z = zoomDays else { return }
+        if dragFrom == nil { dragFrom = zoomEnd }
+        let w = max(200, UIScreen.main.bounds.width - 110)
+        let e = dragFrom!.addingTimeInterval(-Double(dx / w) * z * 86400)
+        zoomEnd = min(max(e, rangeStart.addingTimeInterval(z * 86400)), Date())
+    }
+    private func panEnded() { dragFrom = nil }
+    private var xStride: Int {
+        let d = shownDays
+        if d <= 10 { return 1 }
+        if d <= 20 { return 2 }
+        if d <= 45 { return 7 }
+        return 14
+    }
+    private var pinch: some Gesture {
+        MagnifyGesture()
+            .onChanged { v in pinchChanged(v.magnification) }
+            .onEnded { _ in pinchEnded() }
+    }
 
     private var series: [GPoint] {
         let start = Calendar.current.date(byAdding: .day, value: -days, to: Date())!
@@ -118,6 +161,16 @@ struct GlucoseTrendCard: View {
                     Text("90天").tag(90)
                 }
                 .pickerStyle(.menu)
+                .tint(.secondary)
+            }
+
+            if let z = zoomDays {
+                Button {
+                    withAnimation { zoomDays = nil; zoomEnd = Date() }
+                } label: {
+                    Label("已放大到 \(Int(z.rounded())) 天 · 单指左右拖看前后 · 点这里还原", systemImage: "arrow.uturn.backward")
+                        .font(.caption)
+                }
                 .tint(.secondary)
             }
 
@@ -192,7 +245,8 @@ struct GlucoseTrendCard: View {
         .onTapGesture { withAnimation(.easeOut(duration: 0.15)) { selected = nil } }
         .glassCard(26)
         .onChange(of: kind) { _, _ in selected = nil }
-        .onChange(of: days) { _, _ in selected = nil }
+        .onChange(of: days) { _, _ in selected = nil; zoomDays = nil }
+        .background(DisableTabPaging(active: zoomed || pinchFrom != nil).frame(width: 0, height: 0))
         .onChange(of: person) { _, _ in selected = nil }
         .onChange(of: meal) { _, _ in selected = nil }
     }
@@ -281,7 +335,11 @@ struct GlucoseTrendCard: View {
             }
         }
         .chartYScale(domain: lo...hi)
+        .chartXScale(domain: xDomain(data))
+        .chartPlotStyle { $0.clipped() }
         .tapToSelect($selected, dates: data.map(\.0))
+        .horizontalPan(enabled: zoomed, changed: panChanged, ended: panEnded)
+        .simultaneousGesture(pinch)
         .chartYAxis {
             // 普通刻度（太靠近安全线的不显示，免得和 7.8 挤在一起）
             AxisMarks(position: .trailing, values: yTicks(lo, hi, avoid: line)) { v in
@@ -311,12 +369,32 @@ struct GlucoseTrendCard: View {
             }
         }
         .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: 4)) { v in
-                AxisValueLabel {
-                    if let d = v.as(Date.self) { Text(shortDay(d)).font(.caption2) }
+            if zoomed {
+                AxisMarks(values: .stride(by: .day, count: xStride)) { v in
+                    AxisGridLine().foregroundStyle(.white.opacity(0.05))
+                    AxisValueLabel {
+                        if let d = v.as(Date.self) { Text(shortDay(d)).font(.caption2) }
+                    }
+                }
+            } else {
+                AxisMarks(values: .automatic(desiredCount: 4)) { v in
+                    AxisValueLabel {
+                        if let d = v.as(Date.self) { Text(shortDay(d)).font(.caption2) }
+                    }
                 }
             }
         }
+    }
+
+    /// 横轴范围：没放大时和以前一样跟着数据走；放大后只看 zoomDays 天
+    private func xDomain(_ data: [GPoint]) -> ClosedRange<Date> {
+        if let z = zoomDays {
+            return zoomEnd.addingTimeInterval(-z * 86400)...zoomEnd.addingTimeInterval(3 * 3600)
+        }
+        let a: Date = data.first?.0 ?? rangeStart
+        let b: Date = data.last?.0 ?? Date()
+        let pad: TimeInterval = max(b.timeIntervalSince(a) * 0.02, 3600)
+        return a.addingTimeInterval(-pad)...b.addingTimeInterval(pad)
     }
 
     /// 右边坐标轴的刻度：每 2 一格（范围小就每 1 一格），离安全线太近的去掉
