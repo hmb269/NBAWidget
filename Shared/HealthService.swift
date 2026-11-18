@@ -314,6 +314,7 @@ enum HealthService {
     struct WeightPoint: Codable {
         var date: Date
         var kg: Double
+        var time: Date? = nil   // 实际称重的时刻（date 是当天零点）
     }
 
     /// 最近若干天的体重，每天取最后一次记录，按日期从早到晚
@@ -327,7 +328,7 @@ enum HealthService {
             if perDay[d] == nil { perDay[d] = smp }
         }
         return perDay.keys.sorted().map {
-            WeightPoint(date: $0, kg: perDay[$0]!.quantity.doubleValue(for: .gramUnit(with: .kilo)))
+            WeightPoint(date: $0, kg: perDay[$0]!.quantity.doubleValue(for: .gramUnit(with: .kilo)), time: perDay[$0]!.endDate)
         }
     }
 

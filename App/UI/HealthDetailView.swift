@@ -47,6 +47,7 @@ struct HealthDetailView: View {
     @State private var scores: [DayValue] = []      // 睡眠评分（和「趋势对比」同一套算法）
     @State private var scoreNote = ""
     @State private var scoreSel: Date?
+    @State private var weighTimes: [Date: Date] = [:]  // 体重：每天实际称重的时刻
 
     private var picked: DayValue? {
         guard let s = selected else { return nil }
@@ -97,7 +98,7 @@ struct HealthDetailView: View {
     private var header: some View {
         let p = picked ?? values.last
         return VStack(alignment: .leading, spacing: 2) {
-            Text(picked == nil ? "最近" : dayText(p?.date ?? Date(), weekday: true))
+            Text((picked == nil ? "最近" : dayText(p?.date ?? Date(), weekday: true)) + timeSuffix(p?.date))
                 .font(.caption).foregroundStyle(.secondary)
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(p.map { kind.format($0.value) } ?? "--")
@@ -262,7 +263,7 @@ struct HealthDetailView: View {
         VStack(spacing: 1) {
             Text(kind.format(p.value) + (kind == .sleep ? "" : " " + kind.unit))
                 .font(.system(size: 13, weight: .bold, design: .rounded).monospacedDigit())
-            Text(dayText(p.date, weekday: true))
+            Text(dayText(p.date, weekday: true) + timeSuffix(p.date))
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
         }
@@ -278,6 +279,9 @@ struct HealthDetailView: View {
                 if i > 0 { Divider().overlay(Color.white.opacity(0.06)) }
                 HStack {
                     Text(dayText(v.date, weekday: true)).font(.subheadline).foregroundStyle(.secondary)
+                    if let t = weighTimes[v.date] {
+                        Text(Self.clock(t)).font(.subheadline.monospacedDigit()).foregroundStyle(.tertiary)
+                    }
                     Spacer()
                     if kind == .sleep, let n = nights.first(where: { Calendar.current.isDate($0.0, inSameDayAs: v.date) })?.1 {
                         Text("深 \(HealthFormat.clock(n.deep)) · 核 \(HealthFormat.clock(n.core)) · 眼 \(HealthFormat.clock(n.rem))")
@@ -319,6 +323,9 @@ struct HealthDetailView: View {
         case .weight:
             let pts = (try? await HealthService.weightHistory(days: days)) ?? []
             values = pts.map { DayValue(date: $0.date, value: $0.kg) }
+            var t: [Date: Date] = [:]
+            for p in pts { if let x = p.time { t[p.date] = x } }
+            weighTimes = t
         case .hrv:
             values = (try? await HealthService.daily(.hrv, days: days)) ?? []
         case .steps:
@@ -402,6 +409,18 @@ struct HealthDetailView: View {
             }
         }
         .tapToSelect($scoreSel, dates: scores.map(\.date), byDay: true)
+    }
+
+    /// 体重：在日期后面加上称重时刻，比如「 07:32」
+    private func timeSuffix(_ d: Date?) -> String {
+        guard kind == .weight, let d, let t = weighTimes[d] else { return "" }
+        return " " + Self.clock(t)
+    }
+
+    static func clock(_ d: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f.string(from: d)
     }
 
     private func dayText(_ d: Date, weekday: Bool) -> String {
