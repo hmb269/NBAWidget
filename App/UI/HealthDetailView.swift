@@ -44,6 +44,9 @@ struct HealthDetailView: View {
     @State private var nights: [(Date, HealthService.SleepData)] = []
     @State private var loading = false
     @State private var selected: Date?
+    @State private var scores: [DayValue] = []      // 睡眠评分（和「趋势对比」同一套算法）
+    @State private var scoreNote = ""
+    @State private var scoreSel: Date?
 
     private var picked: DayValue? {
         guard let s = selected else { return nil }
@@ -75,6 +78,8 @@ struct HealthDetailView: View {
                 .contentShape(Rectangle())
                 .onTapGesture { withAnimation(.easeOut(duration: 0.15)) { selected = nil } }
                 .glassCard(26)
+
+                if kind == .sleep && !scores.isEmpty { scoreCard }
 
                 stats
 
@@ -280,6 +285,13 @@ struct HealthDetailView: View {
                     }
                     Text(kind.format(v.value) + (kind == .sleep ? "" : " " + kind.unit))
                         .font(.subheadline.weight(.semibold).monospacedDigit())
+                    if kind == .sleep, let sc = score(on: v.date) {
+                        Text("\(Int(sc))")
+                            .font(.caption.weight(.bold).monospacedDigit())
+                            .foregroundStyle(Self.scoreColor(sc))
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Capsule().fill(Self.scoreColor(sc).opacity(0.15)))
+                    }
                 }
                 .padding(.vertical, 10)
             }
@@ -295,8 +307,15 @@ struct HealthDetailView: View {
         selected = nil
         switch kind {
         case .sleep:
-            nights = await HealthService.nightlySleep(days: days)
+            // 多读 14 晚，评分要用「平时几点睡」
+            let all = await HealthService.nightlySleep(days: days + 14)
+            let from = Calendar.current.date(byAdding: .day, value: -days, to: Calendar.current.startOfDay(for: Date()))!
+            nights = all.filter { $0.0 >= from }
             values = nights.map { DayValue(date: $0.0, value: $0.1.asleep / 3600) }
+            let (sc, note) = SleepScore.scores(all)
+            scores = sc.filter { $0.date >= from }
+            scoreNote = note
+            scoreSel = nil
         case .weight:
             let pts = (try? await HealthService.weightHistory(days: days)) ?? []
             values = pts.map { DayValue(date: $0.date, value: $0.kg) }
@@ -305,6 +324,84 @@ struct HealthDetailView: View {
         case .steps:
             values = (try? await HealthService.daily(.steps, days: days)) ?? []
         }
+    }
+
+    // MARK: 睡眠评分
+
+    private func score(on d: Date) -> Double? {
+        scores.first { Calendar.current.isDate($0.date, inSameDayAs: d) }?.value
+    }
+
+    static func scoreColor(_ v: Double) -> Color {
+        if v >= 85 { return Color(red: 0.35, green: 0.9, blue: 0.6) }
+        if v >= 70 { return Color(red: 1.0, green: 0.8, blue: 0.3) }
+        return Color(red: 1.0, green: 0.45, blue: 0.45)
+    }
+
+    private var scorePicked: DayValue? {
+        guard let s = scoreSel else { return nil }
+        return scores.min { abs($0.date.timeIntervalSince(s)) < abs($1.date.timeIntervalSince(s)) }
+    }
+
+    private var scoreCard: some View {
+        let p: DayValue? = scorePicked ?? scores.last
+        let avg: Double = scores.map(\.value).reduce(0, +) / Double(max(scores.count, 1))
+        let lo: Double = max(0, (scores.map(\.value).min() ?? 60) - 10)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Label("睡眠评分", systemImage: "moon.stars.fill").font(.headline).foregroundStyle(AppColor.sleep)
+                Spacer()
+                Text("平均 \(Int(avg.rounded())) 分").font(.caption).foregroundStyle(.secondary)
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(p.map { String(Int($0.value)) } ?? "--")
+                    .font(.system(size: 30, weight: .bold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(p.map { Self.scoreColor($0.value) } ?? .primary)
+                Text("分").font(.subheadline).foregroundStyle(.secondary)
+                Text(scorePicked == nil ? "最近" : dayText(p?.date ?? Date(), weekday: true))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            scoreChart(lo: lo)
+                .frame(height: 160)
+            Text(scoreNote + "。85 分以上绿色，70～84 黄色，70 以下红色。")
+                .font(.caption2).foregroundStyle(.tertiary)
+        }
+        .padding(18)
+        .contentShape(Rectangle())
+        .onTapGesture { withAnimation(.easeOut(duration: 0.15)) { scoreSel = nil } }
+        .glassCard(26)
+    }
+
+    private func scoreChart(lo: Double) -> some View {
+        Chart {
+            ForEach(scores) { v in
+                LineMark(x: .value("日期", v.date, unit: .day), y: .value("评分", v.value))
+                    .interpolationMethod(.catmullRom)
+                    .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                    .foregroundStyle(AppColor.sleep)
+                PointMark(x: .value("日期", v.date, unit: .day), y: .value("评分", v.value))
+                    .symbolSize(days > 7 ? 18 : 36)
+                    .foregroundStyle(Self.scoreColor(v.value))
+            }
+            if let p = scorePicked {
+                RuleMark(x: .value("日期", p.date, unit: .day)).foregroundStyle(.white.opacity(0.3))
+                PointMark(x: .value("日期", p.date, unit: .day), y: .value("评分", p.value))
+                    .symbolSize(90).foregroundStyle(.white)
+            }
+        }
+        .chartYScale(domain: lo...100)
+        .chartYAxis {
+            AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) { _ in
+                AxisGridLine().foregroundStyle(.white.opacity(0.06))
+                AxisValueLabel().font(.caption2)
+            }
+        }
+        .chartXAxis {
+            AxisMarks(values: .automatic(desiredCount: days > 7 ? 5 : 7)) { _ in
+                AxisValueLabel(format: .dateTime.month(.defaultDigits).day(), centered: true)
+            }
+        }
+        .tapToSelect($scoreSel, dates: scores.map(\.date), byDay: true)
     }
 
     private func dayText(_ d: Date, weekday: Bool) -> String {
