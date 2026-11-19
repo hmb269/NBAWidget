@@ -662,9 +662,7 @@ enum PrizeCalc {
             }
         }
         let order = ["一等奖", "二等奖", "三等奖", "四等奖", "五等奖", "六等奖", "七等奖", "福运奖"]
-        let fixed: [String: Double] = game == .ssq
-            ? ["三等奖": 3000, "四等奖": 200, "五等奖": 10, "六等奖": 5, "福运奖": 5]
-            : ["三等奖": 5000, "四等奖": 300, "五等奖": 150, "六等奖": 15, "七等奖": 5]
+        let fixed = fixedTable(game)
         var hits = order.compactMap { name -> PrizeHit? in
             guard let c = counts[name] else { return nil }
             return PrizeHit(name: name, count: c * multiple, each: amount(name, draw: draw, fixed: fixed))
@@ -684,6 +682,16 @@ enum PrizeCalc {
 
     /// 双色球、大乐透（2026 年 2 月起新规则）的奖级
     private static func tier(_ g: LotteryGame, _ k: Int, _ j: Int, draw: LotteryDraw) -> String? {
+        if g == .ssq && k == 3 && j == 0 {
+            // 福运奖：奖池达到 15 亿时才设，看这期开奖公告里有没有
+            if let p = draw.prize("福运奖"), (Int(p.count.replacingOccurrences(of: ",", with: "")) ?? 0) > 0 { return "福运奖" }
+            return nil
+        }
+        return baseTier(g, k, j)
+    }
+
+    /// 不看开奖公告的奖级（不含福运奖），计算器用
+    static func baseTier(_ g: LotteryGame, _ k: Int, _ j: Int) -> String? {
         if g == .ssq {
             switch (k, j) {
             case (6, 1): return "一等奖"
@@ -692,10 +700,6 @@ enum PrizeCalc {
             case (5, 0), (4, 1): return "四等奖"
             case (4, 0), (3, 1): return "五等奖"
             case (2, 1), (1, 1), (0, 1): return "六等奖"
-            case (3, 0):
-                // 福运奖：奖池达到 15 亿时才设，看这期开奖公告里有没有
-                if let p = draw.prize("福运奖"), (Int(p.count.replacingOccurrences(of: ",", with: "")) ?? 0) > 0 { return "福运奖" }
-                return nil
             default: return nil
             }
         }
@@ -714,7 +718,7 @@ enum PrizeCalc {
     // MARK: 快乐8（选一 ~ 选十，开 20 个号码）
 
     /// [选几: [中几: 奖金]]，选十中十是浮动奖（最高 500 万）
-    private static let kl8Table: [Int: [Int: Double]] = [
+    static let kl8Table: [Int: [Int: Double]] = [
         10: [9: 8000, 8: 800, 7: 80, 6: 5, 5: 3, 0: 2],
         9: [9: 300000, 8: 2000, 7: 200, 6: 20, 5: 5, 4: 3, 0: 2],
         8: [8: 50000, 7: 800, 6: 88, 5: 10, 4: 3, 0: 2],
@@ -726,7 +730,7 @@ enum PrizeCalc {
         2: [2: 19],
         1: [1: 4.6],
     ]
-    private static let cnNum = ["", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十"]
+    static let cnNum = ["", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十"]
 
     private static func checkKL8(_ bet: LotteryBet, draw: LotteryDraw, multiple: Int) -> BetResult {
         let drawn = Set(draw.front.compactMap { Int($0) })
@@ -764,10 +768,31 @@ enum PrizeCalc {
         case (3, false), (2, true), (1, true), (0, true): name = "六等奖"
         default: name = nil
         }
-        let fixed: [String: Double] = ["三等奖": 3000, "四等奖": 500, "五等奖": 30, "六等奖": 5]
+        let fixed = fixedTable(.qxc)
         let hits = name.map { [PrizeHit(name: $0, count: multiple, each: amount($0, draw: draw, fixed: fixed))] } ?? []
         return BetResult(bet: bet, frontHitIdx: idx, backHitIdx: backHit ? [0] : [], frontHits: k, backHits: backHit ? 1 : 0,
                          hits: hits, combos: 1)
+    }
+
+    /// 固定奖金（一、二等奖是浮动奖，不在表里）
+    static func fixedTable(_ g: LotteryGame) -> [String: Double] {
+        switch g {
+        case .ssq: return ["三等奖": 3000, "四等奖": 200, "五等奖": 10, "六等奖": 5, "福运奖": 5]
+        case .dlt: return ["三等奖": 5000, "四等奖": 300, "五等奖": 150, "六等奖": 15, "七等奖": 5]
+        default: return ["三等奖": 3000, "四等奖": 500, "五等奖": 30, "六等奖": 5]
+        }
+    }
+
+    static func qxcTier(_ k: Int, _ backHit: Bool) -> String? {
+        switch (k, backHit) {
+        case (6, true): return "一等奖"
+        case (6, false): return "二等奖"
+        case (5, true): return "三等奖"
+        case (5, false), (4, true): return "四等奖"
+        case (4, false), (3, true): return "五等奖"
+        case (3, false), (2, true), (1, true), (0, true): return "六等奖"
+        default: return nil
+        }
     }
 
     private static func amount(_ name: String, draw: LotteryDraw, fixed: [String: Double]) -> Double? {
