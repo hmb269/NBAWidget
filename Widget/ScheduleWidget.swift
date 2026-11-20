@@ -179,22 +179,30 @@ struct Provider: TimelineProvider {
 
 /// 和系统自带小组件一样的底色：深色模式接近纯黑，浅色模式白色
 extension View {
-    /// 设置里选的小组件外观：跟随系统 / 总是深色 / 总是浅色
+    /// 设置里选的小组件配色：文字用深色还是浅色
     @ViewBuilder
     func widgetTheme() -> some View {
-        switch RefreshSettings.current.theme {
-        case 1: self.environment(\.colorScheme, .dark)
-        case 2: self.environment(\.colorScheme, .light)
-        default: self
+        let t = WidgetThemes.def(RefreshSettings.current.theme)
+        if let d = t.dark {
+            self.environment(\.colorScheme, d ? .dark : .light)
+        } else {
+            self
         }
     }
 }
 
-let widgetBackground = Color(uiColor: UIColor { trait in
+let systemWidgetBackground = Color(uiColor: UIColor { trait in
     trait.userInterfaceStyle == .dark
         ? UIColor(red: 28 / 255, green: 28 / 255, blue: 28 / 255, alpha: 1)
         : UIColor.white
 })
+
+/// 小组件底色：跟随系统时黑/白，选了配色就用那个渐变
+var widgetBackground: AnyShapeStyle {
+    let id = RefreshSettings.current.theme
+    if id == 0 { return AnyShapeStyle(systemWidgetBackground) }
+    return AnyShapeStyle(WidgetThemes.def(id).gradient)
+}
 let nbaAccent = Color(red: 0.88, green: 0.15, blue: 0.25)
 private let liveRed = Color(red: 1.0, green: 0.27, blue: 0.23)
 

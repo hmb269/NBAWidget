@@ -16,15 +16,15 @@ struct RefreshSettingsCard: View {
             row("血糖", sub: "写入健康后、点小组件时会立即刷新", value: $s.glucose, options: RefreshSettings.glucoseOptions)
             RowDivider()
 #endif
-            VStack(alignment: .leading, spacing: 6) {
-                Text("外观")
-                Text("桌面是「默认」浅色时，小组件也可以一直用深色").font(.caption).foregroundStyle(.secondary)
-                Picker("外观", selection: $s.theme) {
-                    Text("跟随系统").tag(0)
-                    Text("总是深色").tag(1)
-                    Text("总是浅色").tag(2)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("配色")
+                Text("所有小组件一起换。「跟随系统」是桌面浅色时白底、深色时黑底").font(.caption).foregroundStyle(.secondary)
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 6), spacing: 10) {
+                    ForEach(WidgetThemes.all) { t in
+                        ThemeSwatch(t: t, selected: s.theme == t.id)
+                            .onTapGesture { s.theme = t.id }
+                    }
                 }
-                .pickerStyle(.segmented)
             }
             .padding(.vertical, 8)
         }
@@ -57,5 +57,39 @@ struct RefreshSettingsCard: View {
             .tint(.secondary)
         }
         .padding(.vertical, 8)
+    }
+}
+
+/// 配色小样：底色 + 一个字的颜色示意
+struct ThemeSwatch: View {
+    let t: WidgetThemeDef
+    let selected: Bool
+
+    var body: some View {
+        VStack(spacing: 4) {
+            ZStack {
+                if t.id == 0 {
+                    // 跟随系统：一半白一半黑
+                    HStack(spacing: 0) {
+                        Color.white
+                        Color(red: 0.11, green: 0.11, blue: 0.11)
+                    }
+                } else {
+                    t.gradient
+                }
+                Text("7")
+                    .font(.system(size: 16, weight: .heavy, design: .rounded))
+                    .foregroundStyle(t.dark == false ? Color.black.opacity(0.8) : Color.white)
+                    .opacity(t.id == 0 ? 0 : 1)
+                Circle().fill(Color(red: 0.4, green: 0.88, blue: 0.88)).frame(width: 6, height: 6)
+                    .offset(x: 11, y: -11)
+            }
+            .frame(height: 44)
+            .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .stroke(selected ? Color(red: 0.4, green: 0.88, blue: 0.88) : Color.white.opacity(0.15), lineWidth: selected ? 2.5 : 0.8))
+            Text(t.name).font(.system(size: 10)).foregroundStyle(selected ? .primary : .secondary).lineLimit(1)
+        }
+        .contentShape(Rectangle())
     }
 }
