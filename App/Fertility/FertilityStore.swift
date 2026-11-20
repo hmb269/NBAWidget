@@ -83,6 +83,8 @@ final class FertilityStore: ObservableObject {
     @Published var wristTemps: [String: Double] = [:]
     /// 健康里读到的经期（自己没记的那几天），key = 日期，值 = 流量
     @Published var healthFlow: [String: Int] = [:]
+    /// 健康里的体温（体温计量的，不是基础体温），key = 日期，一天取最高
+    @Published var bodyTemps: [String: Double] = [:]
     @Published var healthMessage: String?
 
     var mode: FertilityMode {
@@ -400,6 +402,7 @@ final class FertilityStore: ObservableObject {
         let r = await FertilityHealth.read(days: 400)
         healthFlow = r.flow.filter { (data.days[$0.key]?.flow ?? 0) == 0 }
         wristTemps = r.wrist
+        bodyTemps = r.body
         var changed = false
         for (k, t) in r.bbt where data.days[k]?.bbt == nil {
             var d = data.days[k] ?? FertilityDay(key: k)
@@ -426,12 +429,13 @@ enum FertilityHealth {
     static let diaType = HKQuantityType(.bloodPressureDiastolic)
     static let restingType = HKQuantityType(.restingHeartRate)
     static let heightType = HKQuantityType(.height)
+    static let bodyTempType = HKQuantityType(.bodyTemperature)
 
     static func requestAccess() async -> String? {
         guard HKHealthStore.isHealthDataAvailable() else { return "这台设备不支持健康数据" }
         let share: Set<HKSampleType> = [flowType, bbtType, lhType, mucusType]
         let read: Set<HKObjectType> = [flowType, bbtType, wristType, lhType, mucusType, massType, sysType, diaType,
-                                       restingType, heightType, HKCategoryType(.pregnancyTestResult)]
+                                       restingType, heightType, bodyTempType, HKCategoryType(.pregnancyTestResult)]
         do {
             try await store.requestAuthorization(toShare: share, read: read)
             return nil
@@ -455,6 +459,7 @@ enum FertilityHealth {
         var flow: [String: Int] = [:]
         var bbt: [String: Double] = [:]
         var wrist: [String: Double] = [:]
+        var body: [String: Double] = [:]
         var error: String?
     }
 
@@ -481,6 +486,12 @@ enum FertilityHealth {
         // 手表睡眠腕温：记在醒来那天
         for s in await samples(wristType, from: from).compactMap({ $0 as? HKQuantitySample }) {
             r.wrist[FertilityStore.key(s.endDate)] = s.quantity.doubleValue(for: .degreeCelsius())
+        }
+        // 体温计量的体温：一天取最高
+        for s in await samples(bodyTempType, from: from).compactMap({ $0 as? HKQuantitySample }) {
+            let k = FertilityStore.key(s.startDate)
+            let v = s.quantity.doubleValue(for: .degreeCelsius())
+            r.body[k] = max(r.body[k] ?? 0, v)
         }
         return r
     }

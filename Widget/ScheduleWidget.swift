@@ -6,6 +6,7 @@ import AppIntents
 struct NBAWidgetBundle: WidgetBundle {
     var body: some Widget {
 #if LITE
+        FertilityWidget()
         HealthWidget()
         WaterWidget()
         PillWidget()

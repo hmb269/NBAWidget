@@ -293,7 +293,15 @@ struct DisableTabPaging: UIViewRepresentable {
 
 /// 首页卡片（顺序可以自己调）
 enum HomeCard: String, CaseIterable, Identifiable {
-    case sleep, weight, bmi, hrv, resting, steps, compare
+    case sleep, weight, bmi, hrv, resting, steps, compare, temperature
+    /// 体温卡只在精简版
+    static var available: [HomeCard] {
+#if LITE
+        return Array(allCases)
+#else
+        return allCases.filter { $0 != .temperature }
+#endif
+    }
     var id: String { rawValue }
     var wide: Bool { self == .sleep }
     var title: String {
@@ -305,6 +313,7 @@ enum HomeCard: String, CaseIterable, Identifiable {
         case .resting: return "静息心率"
         case .steps: return "今日步数"
         case .compare: return "趋势对比"
+        case .temperature: return "体温"
         }
     }
     var icon: String {
@@ -316,11 +325,12 @@ enum HomeCard: String, CaseIterable, Identifiable {
         case .resting: return "heart.fill"
         case .steps: return "figure.walk"
         case .compare: return "chart.xyaxis.line"
+        case .temperature: return "thermometer.medium"
         }
     }
     static var saved: [HomeCard] {
         let s = (UserDefaults.standard.stringArray(forKey: "homeCardOrder") ?? []).compactMap(HomeCard.init(rawValue:))
-        return s + allCases.filter { !s.contains($0) }
+        return s.filter { available.contains($0) } + available.filter { !s.contains($0) }
     }
     static func save(_ list: [HomeCard]) { UserDefaults.standard.set(list.map(\.rawValue), forKey: "homeCardOrder") }
 }
@@ -366,6 +376,9 @@ struct HealthHomeView: View {
         case .compare:
             NavigationLink { HealthCompareView() } label: { compareCard.overlay(alignment: .topTrailing) { chevron } }
                 .buttonStyle(.plain)
+        case .temperature:
+            NavigationLink { TemperatureDetailView() } label: { TemperatureHomeCard().overlay(alignment: .topTrailing) { chevron } }
+                .buttonStyle(.plain)
         }
     }
 
@@ -383,7 +396,7 @@ struct HealthHomeView: View {
                 }
                 Section {
                     Button("恢复默认顺序") {
-                        cardOrder = HomeCard.allCases
+                        cardOrder = HomeCard.available
                         HomeCard.save(cardOrder)
                     }
                 }
@@ -595,6 +608,9 @@ struct HealthHomeView: View {
     private func authorizeAndLoad() async {
         message = await HealthService.requestAccess()
         await load()
+#if LITE
+        await FertilityStore.shared.syncFromHealth()
+#endif
     }
 
     private func load() async {
