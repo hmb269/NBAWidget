@@ -45,6 +45,10 @@ struct HealthEntry: TimelineEntry {
     var hrv: HealthService.Reading<HealthService.HRVData>
     var steps: HealthService.Reading<Int>
     var icons: [IconSlot: UIImage] = [:]
+    var vitals: HealthService.Reading<VitalsSummary> = .init()
+    var resting: HealthService.Reading<Double> = .init()
+    var kcal: HealthService.Reading<Double> = .init()
+    var slots: [HealthSlot] = RefreshSettings.current.slots
 
     static var sample: HealthEntry {
         HealthEntry(
@@ -71,9 +75,25 @@ struct HealthEntry: TimelineEntry {
         let s = await sleep
         let ps = await prevSleep
         let hrv = await HealthService.load("hrv", keepFor: 24) { try await HealthService.recentHRV(sleep: s.value, prevSleep: ps.value) }
-        return HealthEntry(date: Date(), sleep: s, prevSleep: ps, weightHistory: await history,
-                           weight: await weight, hrv: hrv, steps: await steps,
-                           icons: IconStore.loadAllForWidget())
+        let slots = RefreshSettings.current.slots
+        var e = HealthEntry(date: Date(), sleep: s, prevSleep: ps, weightHistory: await history,
+                            weight: await weight, hrv: hrv, steps: await steps,
+                            icons: IconStore.loadAllForWidget())
+        e.slots = slots
+        // 只读选中的项目，省电
+        if slots.contains(where: { [.vitals, .temp, .spo2, .resp].contains($0) }) {
+            e.vitals = await HealthService.load("vitals", keepFor: 18) { try await Vitals.lastNight() }
+        }
+        if slots.contains(.resting) {
+            e.resting = await HealthService.load("restingHR", keepFor: 36) { try await HealthService.daily(.restingHR, days: 2).last?.value }
+        }
+        if slots.contains(.kcal) {
+            e.kcal = await HealthService.load("kcalToday", keepFor: 6) {
+                let d = try await HealthService.daily(.activeEnergy, days: 1).last
+                return d.flatMap { Calendar.current.isDateInToday($0.date) ? $0.value : nil } ?? 0
+            }
+        }
+        return e
     }
 
     // 各项显示用的文字
@@ -201,7 +221,7 @@ struct HealthWidget: Widget {
             HealthWidgetView(entry: entry).widgetTheme()
         }
         .configurationDisplayName("健康")
-        .description("睡眠时间、体重、恢复心率变异性、步数、日出日落；大号带体重趋势图")
+        .description("睡眠和你选的 4 项（体重、HRV、步数、生命体征、体温、血氧…）；大号带体重趋势图")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
         .contentMarginsDisabled() // 自己画底色，避免系统把底色提亮
     }
@@ -238,21 +258,41 @@ private var sunText: String {
 struct SmallHealthView: View {
     let entry: HealthEntry
 
-    var body: some View {
+    var body: some View { bodyWithSlots }
+
+    var bodyWithSlots: some View {
         VStack(alignment: .leading, spacing: 0) {
             row(.sleep, .sleep, entry.sleepValue, plainIcon: true, trend: entry.sleepDelta.map { $0 / 60 }, threshold: 1)
-            Spacer(minLength: 0)
-            row(.weight, .weight, entry.weightValue, unit: entry.weight.value == nil ? "" : "公斤",
-                trend: entry.weightTrend, threshold: 0.005, color: entry.weightColor)
-            Spacer(minLength: 0)
-            row(.hrv, .hrv, entry.hrvValue, unit: entry.hrv.value == nil ? "" : "毫秒",
-                trend: entry.hrvDelta, threshold: 0.5, color: entry.hrvColor)
-            Spacer(minLength: 0)
-            row(.steps, .steps, entry.stepsValue, unit: entry.stepsValue == "--" ? "" : "步", color: Theme.steps.text)
-            Spacer(minLength: 0)
-            row(.sun, .sun, sunText, color: Theme.sun.text)
+            ForEach(Array(entry.slots.enumerated()), id: \.offset) { _, k in
+                Spacer(minLength: 0)
+                slotRow(k)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func slotRow(_ k: HealthSlot) -> some View {
+        switch k {
+        case .weight:
+            row(.weight, .weight, entry.weightValue, unit: entry.weight.value == nil ? "" : "公斤",
+                trend: entry.weightTrend, threshold: 0.005, color: entry.weightColor)
+        case .hrv:
+            row(.hrv, .hrv, entry.hrvValue, unit: entry.hrv.value == nil ? "" : "毫秒",
+                trend: entry.hrvDelta, threshold: 0.5, color: entry.hrvColor)
+        case .steps:
+            row(.steps, .steps, entry.stepsValue, unit: entry.stepsValue == "--" ? "" : "步", color: Theme.steps.text)
+        case .sun:
+            row(.sun, .sun, sunText, color: Theme.sun.text)
+        default:
+            let info = entry.info(k)
+            HStack(spacing: 6) {
+                SymbolBadge(symbol: k.symbol, theme: Theme.of(k), size: 22)
+                ValueText(info.value, size: 15, color: info.color)
+                if !info.unit.isEmpty { UnitText(info.unit, theme: Theme.of(k), color: info.color) }
+            }
+            .lineLimit(1)
+        }
     }
 
     private func row(_ slot: IconSlot, _ theme: Theme, _ value: String, plainIcon: Bool = false, unit: String = "",
@@ -298,22 +338,8 @@ struct MediumHealthView: View {
             .frame(width: 136, alignment: .leading)
 
             Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 12) {
-                gridRow(.weight, .weight, "体重", color: entry.weightColor) {
-                    ValueText(entry.weightValue, size: 15, color: entry.weightColor, shrink: false)
-                    if entry.weight.value != nil { UnitText("公斤", theme: .weight, color: entry.weightColor) }
-                    if let t = entry.weightTrend { TrendView(delta: t, threshold: 0.005, compact: true) }
-                }
-                gridRow(.hrv, .hrv, "恢复HRV", color: entry.hrvColor) {
-                    ValueText(entry.hrvValue, size: 15, color: entry.hrvColor, shrink: false)
-                    if entry.hrv.value != nil { UnitText("毫秒", theme: .hrv, color: entry.hrvColor) }
-                    if let d = entry.hrvDelta { TrendView(delta: d, threshold: 0.5, compact: true) }
-                }
-                gridRow(.steps, .steps, "今日步数") {
-                    ValueText(entry.stepsValue, size: 15, color: Theme.steps.text, shrink: false)
-                    if entry.stepsValue != "--" { UnitText("步", theme: .steps) }
-                }
-                gridRow(.sun, .sun, "日出日落") {
-                    ValueText(sunText, size: 15, color: Theme.sun.text, shrink: false)
+                ForEach(Array(entry.slots.enumerated()), id: \.offset) { _, k in
+                    slotGridRow(k)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -336,6 +362,48 @@ struct MediumHealthView: View {
                 .foregroundStyle(valueColor ?? Color.primary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func slotGridRow(_ k: HealthSlot) -> some View {
+        switch k {
+        case .weight:
+            gridRow(.weight, .weight, "体重", color: entry.weightColor) {
+                ValueText(entry.weightValue, size: 15, color: entry.weightColor, shrink: false)
+                if entry.weight.value != nil { UnitText("公斤", theme: .weight, color: entry.weightColor) }
+                if let t = entry.weightTrend { TrendView(delta: t, threshold: 0.005, compact: true) }
+            }
+        case .hrv:
+            gridRow(.hrv, .hrv, "恢复HRV", color: entry.hrvColor) {
+                ValueText(entry.hrvValue, size: 15, color: entry.hrvColor, shrink: false)
+                if entry.hrv.value != nil { UnitText("毫秒", theme: .hrv, color: entry.hrvColor) }
+                if let d = entry.hrvDelta { TrendView(delta: d, threshold: 0.5, compact: true) }
+            }
+        case .steps:
+            gridRow(.steps, .steps, "今日步数") {
+                ValueText(entry.stepsValue, size: 15, color: Theme.steps.text, shrink: false)
+                if entry.stepsValue != "--" { UnitText("步", theme: .steps) }
+            }
+        case .sun:
+            gridRow(.sun, .sun, "日出日落") {
+                ValueText(sunText, size: 15, color: Theme.sun.text, shrink: false)
+            }
+        default:
+            let info = entry.info(k)
+            GridRow(alignment: .center) {
+                HStack(spacing: 5) {
+                    SymbolBadge(symbol: k.symbol, theme: Theme.of(k), size: 22)
+                    CaptionText(k.title, theme: Theme.of(k), size: 12, color: info.color)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+                HStack(alignment: .firstTextBaseline, spacing: 3) {
+                    ValueText(info.value, size: 15, color: info.color, shrink: true)
+                    if !info.unit.isEmpty { UnitText(info.unit, theme: Theme.of(k), color: info.color) }
+                }
+                .lineLimit(1)
+            }
+        }
     }
 
     private func gridRow<V: View>(_ slot: IconSlot, _ theme: Theme, _ title: String, color: Color? = nil,
@@ -369,9 +437,9 @@ struct LargeHealthView: View {
             weightCard
                 .frame(maxHeight: .infinity)
             HStack(spacing: 6) {
-                hrvCard
-                stepsCard
-                sunCard
+                ForEach(bottomSlots) { k in
+                    slotTile(k)
+                }
             }
             .fixedSize(horizontal: false, vertical: true)
             .tapToRefresh()
@@ -451,7 +519,39 @@ struct LargeHealthView: View {
         .card()
     }
 
-    // 下面三格
+    // 下面三格：设置里选的项目（体重已经有大图，跳过）
+    private var bottomSlots: [HealthSlot] {
+        var s = entry.slots.filter { $0 != .weight }
+        for d in [HealthSlot.hrv, .steps, .vitals, .sun] where s.count < 3 && !s.contains(d) { s.append(d) }
+        return Array(s.prefix(3))
+    }
+
+    @ViewBuilder
+    private func slotTile(_ k: HealthSlot) -> some View {
+        switch k {
+        case .hrv: hrvCard
+        case .steps: stepsCard
+        case .sun: sunCard
+        default:
+            let info = entry.info(k)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 4) {
+                    SymbolBadge(symbol: k.symbol, theme: Theme.of(k), size: 18)
+                    CaptionText(k.title, theme: Theme.of(k), size: 11, color: info.color)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                }
+                HStack(alignment: .firstTextBaseline, spacing: 2) {
+                    ValueText(info.value, size: 20, color: info.color)
+                    if !info.unit.isEmpty { UnitText(info.unit, theme: Theme.of(k), color: info.color) }
+                }
+                FootText(info.foot)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .card(padding: 10)
+        }
+    }
+
     private var hrvCard: some View {
         tile(.hrv, .hrv, "恢复HRV", titleColor: entry.hrvColor) {
             HStack(alignment: .firstTextBaseline, spacing: 2) {
@@ -951,5 +1051,81 @@ struct SleepRing: View {
         }
         .frame(width: size, height: size)
         .padding(lw / 2)
+    }
+}
+
+// MARK: - 新加的几项（生命体征、体温、静息心率、血氧、呼吸、卡路里）
+
+struct SlotInfo {
+    var value: String
+    var unit: String
+    var color: Color?
+    var foot: String
+}
+
+extension HealthEntry {
+    func info(_ k: HealthSlot) -> SlotInfo {
+        let v = vitals.value
+        switch k {
+        case .vitals:
+            guard let v else { return SlotInfo(value: "--", unit: "", color: nil, foot: vitals.note ?? "戴手表睡觉后显示") }
+            if v.measured.isEmpty { return SlotInfo(value: "--", unit: "", color: nil, foot: v.foot) }
+            return SlotInfo(value: v.text, unit: "", color: v.allNormal ? HealthColor.more : Color.orange, foot: v.foot)
+        case .temp:
+            return vitalInfo(v?.item("腕温"), foot: "昨晚腕温 · 和平时比")
+        case .spo2:
+            return vitalInfo(v?.item("血氧"), foot: "昨晚平均")
+        case .resp:
+            return vitalInfo(v?.item("呼吸"), foot: "昨晚平均")
+        case .resting:
+            guard let r = resting.value else { return SlotInfo(value: "--", unit: "", color: nil, foot: resting.note ?? " ") }
+            let c: Color? = (r < 50 || r > 100) ? Color.orange : HealthColor.more
+            return SlotInfo(value: String(Int(r.rounded())), unit: "次/分", color: c, foot: "正常 50～100")
+        case .kcal:
+            guard let c = kcal.value else { return SlotInfo(value: "--", unit: "", color: nil, foot: kcal.note ?? " ") }
+            return SlotInfo(value: String(Int(c.rounded())), unit: "千卡", color: Theme.of(.kcal).text, foot: "今天")
+        default:
+            return SlotInfo(value: "--", unit: "", color: nil, foot: " ")
+        }
+    }
+
+    private func vitalInfo(_ i: VitalItem?, foot: String) -> SlotInfo {
+        guard let i, i.status != 0 else { return SlotInfo(value: "--", unit: "", color: nil, foot: "戴手表睡觉后显示") }
+        let c: Color = i.status == 1 ? HealthColor.more : Color.orange
+        let f = i.status == 1 ? foot : i.statusText
+        return SlotInfo(value: i.valueText, unit: i.unit, color: c, foot: f)
+    }
+}
+
+extension Theme {
+    static func of(_ k: HealthSlot) -> Theme {
+        switch k {
+        case .weight: return .weight
+        case .hrv: return .hrv
+        case .steps: return .steps
+        case .sun: return .sun
+        case .vitals: return Theme(top: Color(red: 0.35, green: 0.90, blue: 0.60), bottom: Color(red: 0.15, green: 0.70, blue: 0.65))
+        case .temp: return Theme(top: Color(red: 1.0, green: 0.62, blue: 0.30), bottom: Color(red: 1.0, green: 0.35, blue: 0.40))
+        case .resting: return Theme(top: Color(red: 1.0, green: 0.42, blue: 0.42), bottom: Color(red: 0.88, green: 0.18, blue: 0.30))
+        case .spo2: return Theme(top: Color(red: 0.45, green: 0.75, blue: 1.0), bottom: Color(red: 0.25, green: 0.45, blue: 0.95))
+        case .resp: return Theme(top: Color(red: 0.40, green: 0.90, blue: 0.95), bottom: Color(red: 0.20, green: 0.60, blue: 0.85))
+        case .kcal: return Theme(top: Color(red: 1.0, green: 0.45, blue: 0.35), bottom: Color(red: 0.95, green: 0.20, blue: 0.35))
+        }
+    }
+}
+
+struct SymbolBadge: View {
+    let symbol: String
+    let theme: Theme
+    let size: CGFloat
+
+    var body: some View {
+        ZStack {
+            Circle().fill(theme.gradient)
+            Image(systemName: symbol)
+                .font(.system(size: size * 0.48, weight: .bold))
+                .foregroundStyle(.white)
+        }
+        .frame(width: size, height: size)
     }
 }

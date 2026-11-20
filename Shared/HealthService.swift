@@ -29,7 +29,7 @@ enum HealthService {
                 HKObjectType.workoutType(), HKObjectType.activitySummaryType(),
             ]
             let base: [HKObjectType] = [stepType, massType, sdnnType, sleepType] + (rmssdType.map { [$0] } ?? [])
-            try await store.requestAuthorization(toShare: [], read: Set(base + fitness))
+            try await store.requestAuthorization(toShare: [], read: Set(base + fitness + Vitals.readTypes))
             return nil
         } catch {
             return "授权失败：\(error.localizedDescription)"

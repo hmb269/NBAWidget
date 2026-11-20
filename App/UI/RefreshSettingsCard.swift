@@ -8,7 +8,7 @@ struct RefreshSettingsCard: View {
 
     var body: some View {
         CardSection(footer: message ?? "外观改了几秒后小组件会自动变。间隔越长越省电。喝水、吃药只在零点和点击时刷新；NBA 按比赛情况自动调整。iOS 还会根据你看手机的频率限制刷新次数，实际间隔可能更长。") {
-            CardTitle("小组件刷新和外观")
+            CardTitle("小组件设置")
             RowDivider()
             row("健康", sub: "步数、睡眠、体重、HRV", value: $s.health, options: RefreshSettings.healthOptions)
             RowDivider()
@@ -16,6 +16,24 @@ struct RefreshSettingsCard: View {
             row("血糖", sub: "写入健康后、点小组件时会立即刷新", value: $s.glucose, options: RefreshSettings.glucoseOptions)
             RowDivider()
 #endif
+            RowDivider()
+            VStack(alignment: .leading, spacing: 4) {
+                Text("健康小组件显示")
+                Text("右边 4 行（小号是睡眠下面 4 行，大号是下面 3 格）显示什么。生命体征：昨晚心率、呼吸、腕温、血氧、睡眠都在平时范围就显示绿色「正常」，超出的会写出是哪项偏高 / 偏低").font(.caption).foregroundStyle(.secondary)
+                ForEach(0..<4, id: \.self) { i in
+                    HStack {
+                        Text("第 \(i + 1) 行").font(.subheadline)
+                        Spacer()
+                        Picker("第 \(i + 1) 行", selection: Binding(get: { s.slots[i] }, set: { s.slots[i] = $0 })) {
+                            ForEach(HealthSlot.allCases) { Label($0.title, systemImage: $0.symbol).tag($0) }
+                        }
+                        .pickerStyle(.menu)
+                        .tint(.secondary)
+                    }
+                }
+            }
+            .padding(.vertical, 8)
+            RowDivider()
             VStack(alignment: .leading, spacing: 8) {
                 Text("配色")
                 Text("所有小组件一起换。「跟随系统」是桌面浅色时白底、深色时黑底").font(.caption).foregroundStyle(.secondary)
