@@ -581,6 +581,11 @@ struct GlucoseView: View {
     private func setTag(_ t: String?, for r: GlucoseRecord) {
         GlucoseTags.set(t, for: r.id)
         tags = GlucoseTags.all
+        // 已经在健康里的记录：标签改了马上同步到健康（小组件按健康里的标签画曲线）
+        if let cur = records.first(where: { $0.id == r.id }), cur.mine {
+            let person = owners[cur.id] ?? GlucosePeople.me
+            Task { _ = try? await GlucoseStore.write(keep: [cur], remove: [], person: person, label: label) }
+        }
     }
 
     private func label(_ r: GlucoseRecord) -> String? { tags[r.id] ?? GlucoseTags.auto(r) }
