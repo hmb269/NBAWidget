@@ -22,6 +22,70 @@ enum GlucoseFoods {
         UserDefaults.standard.set(m, forKey: key)
     }
 
+    // MARK: 菜名拆成食材（分析用）：「番茄鸡蛋」→ 番茄、鸡蛋，菜名本身也保留
+
+    static let ingredients: [String] = [
+        "米饭", "白饭", "糙米", "燕麦", "小米", "粥", "面条", "米粉", "河粉", "粉丝", "粉条", "馒头", "包子", "饺子", "面包",
+        "红薯", "紫薯", "山药", "芋头", "玉米", "土豆", "马铃薯", "南瓜", "鹰嘴豆", "绿豆", "红豆", "黄豆", "黑豆",
+        "豆腐", "豆干", "腐竹", "豆豉", "豆角", "四季豆", "荷兰豆", "豌豆", "毛豆", "豆芽",
+        "鸡肉", "鸡腿", "鸡翅", "鸡胸", "白切鸡", "鸭肉", "鸭", "鹅", "猪肉", "瘦肉", "五花肉", "排骨", "猪肝", "猪蹄", "牛肉", "牛腩", "羊肉", "肉",
+        "鱼", "鲈鱼", "青花鱼", "鲫鱼", "草鱼", "三文鱼", "鳕鱼", "鱼丸", "虾", "虾仁", "蟹", "鲍鱼", "扇贝", "蛤蜊", "生蚝", "鱿鱼",
+        "鸡蛋", "鸭蛋", "鹌鹑蛋", "蛋",
+        "番茄", "西红柿", "黄瓜", "胡萝卜", "白萝卜", "萝卜", "木耳", "银耳", "香菇", "蘑菇", "金针菇", "杏鲍菇",
+        "芹菜", "西芹", "菠菜", "生菜", "油麦菜", "白菜", "大白菜", "小白菜", "杭白菜", "娃娃菜", "包菜", "卷心菜", "椰菜",
+        "花菜", "西兰花", "菜心", "芥兰", "芥菜", "空心菜", "苋菜", "韭菜", "蒜苗", "蒜薹", "青椒", "辣椒", "茄子",
+        "苦瓜", "丝瓜", "冬瓜", "节瓜", "西葫芦", "莴笋", "儿菜", "洋葱", "青菜", "海带", "紫菜", "百合", "莲藕", "竹笋", "笋",
+        "绿甘蓝", "甘蓝", "秋葵", "芦笋", "坚果", "花生", "核桃", "腰果", "牛奶", "酸奶", "豆浆",
+        "水果", "苹果", "香蕉", "橙子", "葡萄", "西瓜", "火龙果", "梨", "甜品", "油炸",
+    ]
+
+    /// 同一样东西的不同叫法
+    static let synonyms: [String: String] = ["西红柿": "番茄", "白饭": "米饭", "马铃薯": "土豆", "椰菜": "卷心菜", "包菜": "卷心菜", "西芹": "芹菜"]
+
+    /// 一道菜名里拆出来的食材（按最长匹配，没拆出来就是空）
+    static func split(_ dish: String, extra: Set<String>) -> [String] {
+        let dict = Set(ingredients).union(extra)
+        let maxLen = dict.map(\.count).max() ?? 1
+        let chars = Array(dish)
+        var out: [String] = []
+        var i = 0
+        while i < chars.count {
+            var hit: String?
+            var n = min(maxLen, chars.count - i)
+            while n >= 1 {
+                let w = String(chars[i..<(i + n)])
+                if dict.contains(w) { hit = w; break }
+                n -= 1
+            }
+            if let h = hit {
+                let norm = synonyms[h] ?? h
+                if !out.contains(norm) { out.append(norm) }
+                i += h.count
+            } else {
+                i += 1
+            }
+        }
+        // 只拆出它自己（比如「米饭」）就不算拆
+        if out.count == 1 && (out[0] == dish || synonyms[dish] == out[0]) { return [] }
+        return out
+    }
+
+    /// 分析用：原来标的 + 拆出来的
+    static func expanded(_ tags: [String], extra: Set<String>) -> [String] {
+        var out: [String] = tags.map { synonyms[$0] ?? $0 }
+        for t in tags {
+            for f in split(t, extra: extra) where !out.contains(f) { out.append(f) }
+        }
+        return out
+    }
+
+    /// 自己标过的短词（两个字以内）也当成食材词，拆菜名时用得上
+    static var userWords: Set<String> {
+        var s = Set<String>()
+        for list in all.values { for f in list where f.count <= 2 { s.insert(f) } }
+        return s
+    }
+
     /// 常见的，没用过时也列出来
     static let common = ["米饭", "粥", "面条", "米粉", "馒头", "面包", "红薯", "玉米", "土豆", "南瓜",
                          "鸡肉", "猪肉", "牛肉", "鱼", "虾", "鸡蛋", "豆腐",
@@ -202,6 +266,7 @@ struct GlucoseFoodAnalysisView: View {
         let overRate: Double    // 吃了时超标的比例
         let records: [(Date, Double, [String])]
         let recs: [GlucoseRecord]   // 和 records 一一对应，点开看照片用
+        var derived = false         // 是从菜名里拆出来的食材（没单独标过）
         var id: String { food }
         var diff: Double { avgWith - avgWithout }
     }
@@ -224,7 +289,7 @@ struct GlucoseFoodAnalysisView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("用你自己「餐后2小时」的记录：比较吃了某样东西和没吃时的餐后血糖平均值。")
                         .font(.subheadline)
-                    Text("共 \(total) 条餐后2小时记录，其中 \(tagged) 条标了食材。至少吃过 3 次的食材才下结论。")
+                    Text("共 \(total) 条餐后2小时记录，其中 \(tagged) 条标了食材。至少吃过 3 次的食材才下结论。菜名会自动拆成食材一起分析，比如「番茄鸡蛋」会同时算番茄、鸡蛋和番茄鸡蛋整道菜。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 .padding(16).frame(maxWidth: .infinity, alignment: .leading).glassCard(20)
@@ -264,7 +329,7 @@ struct GlucoseFoodAnalysisView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
                         Text(r.food).font(.subheadline.weight(.bold))
-                        Text("吃了 \(r.n) 次").font(.caption).foregroundStyle(.secondary)
+                        Text("吃了 \(r.n) 次" + (r.derived ? " · 从菜名拆出" : "")).font(.caption).foregroundStyle(.secondary)
                         Spacer()
                         Text(diffText(r)).font(.subheadline.weight(.bold).monospacedDigit())
                             .foregroundStyle(r.n < 3 ? Color.secondary : r.diff >= 0.5 ? Color(red: 1, green: 0.45, blue: 0.4)
@@ -327,7 +392,12 @@ struct GlucoseFoodAnalysisView: View {
     private func compute() {
         let owners = GlucosePeople.owners
         let tags = GlucoseTags.all
-        let foods = GlucoseFoods.all
+        let raw = GlucoseFoods.all
+        let extra = GlucoseFoods.userWords
+        // 菜名拆成食材：每顿 = 原来标的（整道菜）+ 拆出来的食材
+        let foods: [String: [String]] = raw.mapValues { GlucoseFoods.expanded($0, extra: extra) }
+        var original = Set<String>()
+        for list in raw.values { for f in list { original.insert(GlucoseFoods.synonyms[f] ?? f) } }
         let recs = GlucoseLocal.load().filter {
             (owners[$0.id] ?? GlucosePeople.me) == GlucosePeople.me && GlucoseKind.of(tags[$0.id] ?? GlucoseTags.auto($0)) == .after2
         }
@@ -345,8 +415,8 @@ struct GlucoseFoodAnalysisView: View {
             let ao = without.map(\.mmol).reduce(0, +) / Double(without.count)
             let over = Double(with.filter { $0.mmol > 7.8 }.count) / Double(with.count)
             out.append(Row(food: name, n: with.count, avgWith: aw, avgWithout: ao, overRate: over,
-                           records: with.sorted { $0.date > $1.date }.map { ($0.date, $0.mmol, foods[$0.id] ?? []) },
-                           recs: with.sorted { $0.date > $1.date }))
+                           records: with.sorted { $0.date > $1.date }.map { ($0.date, $0.mmol, raw[$0.id] ?? []) },
+                           recs: with.sorted { $0.date > $1.date }, derived: !original.contains(name)))
         }
         rows = out.sorted { ($0.n >= 3 ? 1 : 0, $0.diff) > ($1.n >= 3 ? 1 : 0, $1.diff) }
     }
