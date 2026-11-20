@@ -369,31 +369,31 @@ struct MediumHealthView: View {
         switch k {
         case .weight:
             gridRow(.weight, .weight, "体重", color: entry.weightColor) {
-                ValueText(entry.weightValue, size: 15, color: entry.weightColor, shrink: false)
+                ValueText(entry.weightValue, size: 15, color: entry.weightColor)
                 if entry.weight.value != nil { UnitText("公斤", theme: .weight, color: entry.weightColor) }
                 if let t = entry.weightTrend { TrendView(delta: t, threshold: 0.005, compact: true) }
             }
         case .hrv:
             gridRow(.hrv, .hrv, "恢复HRV", color: entry.hrvColor) {
-                ValueText(entry.hrvValue, size: 15, color: entry.hrvColor, shrink: false)
+                ValueText(entry.hrvValue, size: 15, color: entry.hrvColor)
                 if entry.hrv.value != nil { UnitText("毫秒", theme: .hrv, color: entry.hrvColor) }
                 if let d = entry.hrvDelta { TrendView(delta: d, threshold: 0.5, compact: true) }
             }
         case .steps:
             gridRow(.steps, .steps, "今日步数") {
-                ValueText(entry.stepsValue, size: 15, color: Theme.steps.text, shrink: false)
+                ValueText(entry.stepsValue, size: 15, color: Theme.steps.text)
                 if entry.stepsValue != "--" { UnitText("步", theme: .steps) }
             }
         case .sun:
             gridRow(.sun, .sun, "日出日落") {
-                ValueText(sunText, size: 15, color: Theme.sun.text, shrink: false)
+                ValueText(sunText, size: 15, color: Theme.sun.text)
             }
         default:
             let info = entry.info(k)
             GridRow(alignment: .center) {
                 HStack(spacing: 5) {
                     SymbolBadge(symbol: k.symbol, theme: Theme.of(k), size: 22)
-                    CaptionText(k.title, theme: Theme.of(k), size: 12, color: info.color)
+                    CaptionText(k.short, theme: Theme.of(k), size: 12, color: info.color)
                         .lineLimit(1)
                         .fixedSize()
                 }
@@ -402,6 +402,7 @@ struct MediumHealthView: View {
                     if !info.unit.isEmpty { UnitText(info.unit, theme: Theme.of(k), color: info.color) }
                 }
                 .lineLimit(1)
+                .layoutPriority(1)
             }
         }
     }
@@ -419,6 +420,7 @@ struct MediumHealthView: View {
                 value()
             }
             .lineLimit(1)
+            .layoutPriority(1)
         }
     }
 }
@@ -496,7 +498,7 @@ struct LargeHealthView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         CaptionText("体重", theme: .weight, size: 13, color: entry.weightColor)
                         HStack(alignment: .firstTextBaseline, spacing: 4) {
-                            ValueText(entry.weightValue, size: 22, color: entry.weightColor, shrink: false)
+                            ValueText(entry.weightValue, size: 22, color: entry.weightColor)
                             if entry.weight.value != nil { UnitText("公斤", theme: .weight, color: entry.weightColor) }
                             if let t = entry.weightTrend { TrendView(delta: t, threshold: 0.005, compact: false) }
                         }
@@ -537,7 +539,7 @@ struct LargeHealthView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 4) {
                     SymbolBadge(symbol: k.symbol, theme: Theme.of(k), size: 18)
-                    CaptionText(k.title, theme: Theme.of(k), size: 11, color: info.color)
+                    CaptionText(k.short, theme: Theme.of(k), size: 11, color: info.color)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
                 }
@@ -900,7 +902,7 @@ struct ValueText: View {
             .font(.system(size: size, weight: .bold, design: .rounded).monospacedDigit())
             .foregroundStyle(text == "--" ? Color.secondary : (color ?? Color.primary))
             .lineLimit(1)
-            .minimumScaleFactor(shrink ? 0.7 : 1)
+            .minimumScaleFactor(shrink ? 0.6 : 1)
     }
 }
 

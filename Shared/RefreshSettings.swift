@@ -101,6 +101,16 @@ enum HealthSlot: String, CaseIterable, Identifiable {
         }
     }
 
+    /// 小组件上用的短名字（窄屏也放得下）
+    var short: String {
+        switch self {
+        case .kcal: return "卡路里"
+        case .resp: return "呼吸"
+        case .steps: return "步数"
+        default: return title
+        }
+    }
+
     var symbol: String {
         switch self {
         case .weight: return "figure"
