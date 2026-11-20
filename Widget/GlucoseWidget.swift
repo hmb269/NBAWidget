@@ -124,6 +124,14 @@ enum GlucoseWidgetData {
             if tag == nil, let raw = meta[HKMetadataKeyBloodGlucoseMealTime] as? NSNumber {
                 tag = raw.intValue == HKBloodGlucoseMealTime.preprandial.rawValue ? "餐前" : "餐后"
             }
+            if tag == nil {
+                // 没标餐点：按默认三餐时间（7:30 / 12:00 / 18:30）猜是不是餐后2小时
+                let c = Calendar.current.dateComponents([.hour, .minute], from: s.startDate)
+                let m = (c.hour ?? 0) * 60 + (c.minute ?? 0)
+                for (name, start) in [("早餐后", 450), ("午餐后", 720), ("晚餐后", 1110)] where m - start >= 90 && m - start <= 165 {
+                    tag = name + "2小时"
+                }
+            }
             return GlucosePoint(date: s.startDate, mmol: s.quantity.doubleValue(for: unit), tag: tag)
         }
     }

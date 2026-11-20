@@ -241,9 +241,21 @@ enum GlucoseTags {
             if m >= 10 * 60 && m < 15 * 60 { return "午餐前" }
             if m >= 15 * 60 && m < 21 * 60 { return "晚餐前" }
             return "睡前"
+        case nil:
+            // 血糖仪没标餐点：离某一餐开始 1.5～2.75 小时，就当成那一餐的餐后2小时
+            return guessAfter2(m)
         default:
             return r.meterMeal
         }
+    }
+
+    /// 没标餐点的记录，按三餐时间猜是不是「餐后2小时」
+    static func guessAfter2(_ m: Int, breakfast b: Int = breakfast, lunch l: Int = lunch, dinner d: Int = dinner) -> String? {
+        for (name, start) in [("早餐后", b), ("午餐后", l), ("晚餐后", d)] {
+            let diff = m - start
+            if diff >= 90 && diff <= 165 { return name + "2小时" }
+        }
+        return nil
     }
 
     static func set(_ tag: String?, for id: String) {
