@@ -5,12 +5,18 @@ import AppIntents
 @main
 struct NBAWidgetBundle: WidgetBundle {
     var body: some Widget {
+#if LITE
+        HealthWidget()
+        WaterWidget()
+        PillWidget()
+#else
         TodayWidget()
         TomorrowWidget()
         HealthWidget()
         GlucoseWidget()
         WaterWidget()
         PillWidget()
+#endif
     }
 }
 

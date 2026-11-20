@@ -9,6 +9,10 @@ on:
         description: "编译机（arm 排队太久时可选 macos-15-intel）"
         required: false
         default: "macos-latest"
+      variant:
+        description: "版本：full 全能版 / lite 精简版"
+        required: false
+        default: "full"
 
 permissions:
   contents: write
@@ -16,6 +20,10 @@ permissions:
 jobs:
   build:
     runs-on: ${{ inputs.runner || 'macos-latest' }}
+    env:
+      APP: ${{ inputs.variant == 'lite' && 'AboLite' || 'NBAWidget' }}
+      APPEX: ${{ inputs.variant == 'lite' && 'AboLiteWidget' || 'NBAWidgetExtension' }}
+      IPA: ${{ inputs.variant == 'lite' && 'AboLite.ipa' || 'Abo.ipa' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -36,7 +44,7 @@ jobs:
           # Xcode 构建系统偶尔会崩（"build system has crashed"），自动重试最多 3 次
           for attempt in 1 2 3; do
             xcodebuild -project NBAWidget.xcodeproj \
-              -target NBAWidget \
+              -target "$APP" \
               -configuration Release \
               -sdk iphoneos \
               -jobs 2 \
@@ -47,7 +55,7 @@ jobs:
             grep -q "build system has crashed" build.log || break
             echo "构建系统崩溃，第 $attempt 次重试"
           done
-          if [ ! -d build/Release-iphoneos/NBAWidget.app/PlugIns/NBAWidgetExtension.appex ]; then
+          if [ ! -d "build/Release-iphoneos/$APP.app/PlugIns/$APPEX.appex" ]; then
             grep -E "error:" build.log | sort -u | head -n 30 | while read -r line; do echo "::error::$line"; done
             tail -n 40 build.log
             exit 1
@@ -56,20 +64,20 @@ jobs:
       - name: Package IPA
         run: |
           mkdir -p Payload
-          cp -R build/Release-iphoneos/NBAWidget.app Payload/
+          cp -R "build/Release-iphoneos/$APP.app" Payload/
           # 临时签名，只为把 App Group / HealthKit 权限写进包里，签名工具保留权限时可用
           codesign --force --sign - --entitlements Widget/NBAWidgetExtension.entitlements \
-            Payload/NBAWidget.app/PlugIns/NBAWidgetExtension.appex
-          codesign --force --sign - --entitlements App/NBAWidget.entitlements Payload/NBAWidget.app
-          zip -qry Abo.ipa Payload
+            "Payload/$APP.app/PlugIns/$APPEX.appex"
+          codesign --force --sign - --entitlements App/NBAWidget.entitlements "Payload/$APP.app"
+          zip -qry "$IPA" Payload
           {
             echo '包内文件（排查用）：'
             echo '```'
             (cd Payload && find . -maxdepth 4 -not -name '*.png' | sort)
             echo '--- 权限（App） ---'
-            codesign -d --entitlements - --xml Payload/NBAWidget.app 2>/dev/null | plutil -p - || true
+            codesign -d --entitlements - --xml "Payload/$APP.app" 2>/dev/null | plutil -p - || true
             echo '--- widget Info.plist ---'
-            plutil -p Payload/NBAWidget.app/PlugIns/*.appex/Info.plist
+            plutil -p "Payload/$APP.app"/PlugIns/*.appex/Info.plist
             echo '```'
           } > notes.md
 
@@ -77,6 +85,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          name: 阿波 build ${{ github.run_number }}
-          files: Abo.ipa
+          name: ${{ inputs.variant == 'lite' && '阿波精简版' || '阿波' }} build ${{ github.run_number }}
+          files: ${{ env.IPA }}
           body_path: notes.md

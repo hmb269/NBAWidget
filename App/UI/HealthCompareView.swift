@@ -182,6 +182,17 @@ enum SleepScore {
     }
 }
 
+extension CompareMetric {
+    /// 精简版没有血糖
+    static var available: [CompareMetric] {
+#if LITE
+        return allCases.filter { $0 != .glucose }
+#else
+        return Array(allCases)
+#endif
+    }
+}
+
 struct HealthCompareView: View {
     @State private var days = 30
     @State private var shown: Set<CompareMetric> = HealthCompareView.savedShown
@@ -243,15 +254,15 @@ struct HealthCompareView: View {
     // 顺序和显示哪几项记在本机
     static var savedOrder: [CompareMetric] {
         let saved = (UserDefaults.standard.stringArray(forKey: "compareOrder") ?? []).compactMap(CompareMetric.init(rawValue:))
-        return saved + CompareMetric.allCases.filter { !saved.contains($0) }
+        return saved + CompareMetric.available.filter { !saved.contains($0) }
     }
     static var savedShown: Set<CompareMetric> {
-        guard let hidden = UserDefaults.standard.stringArray(forKey: "compareHidden") else { return Set(CompareMetric.allCases) }
-        return Set(CompareMetric.allCases.filter { !hidden.contains($0.rawValue) })
+        guard let hidden = UserDefaults.standard.stringArray(forKey: "compareHidden") else { return Set(CompareMetric.available) }
+        return Set(CompareMetric.available.filter { !hidden.contains($0.rawValue) })
     }
     private func persist() {
         UserDefaults.standard.set(order.map(\.rawValue), forKey: "compareOrder")
-        UserDefaults.standard.set(CompareMetric.allCases.filter { !shown.contains($0) }.map(\.rawValue), forKey: "compareHidden")
+        UserDefaults.standard.set(CompareMetric.available.filter { !shown.contains($0) }.map(\.rawValue), forKey: "compareHidden")
     }
 
     var body: some View {

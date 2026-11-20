@@ -6,6 +6,17 @@ import HealthKit
 // 有的看当天，有的看「隔一天」（比如今天走得多 → 明天的 HRV）
 
 /// 参与分析的一项（在趋势对比的基础上，血糖拆成空腹和餐后 2 小时）
+extension RelMetric {
+    /// 精简版没有血糖，去掉和血糖、饭后有关的几项
+    static var available: [RelMetric] {
+#if LITE
+        return allCases.filter { ![.fasting, .after2, .postSteps, .postKcal, .postExercise].contains($0) }
+#else
+        return Array(allCases)
+#endif
+    }
+}
+
 enum RelMetric: String, CaseIterable, Identifiable {
     case steps = "步数", exercise = "锻炼", kcal = "活动卡路里", sleep = "睡眠评分", hrv = "HRV",
          resting = "静息心率", weight = "体重", fasting = "空腹血糖", after2 = "餐后2h血糖", postSteps = "饭后步数",
@@ -309,7 +320,7 @@ struct HealthRelationView: View {
     // MARK: 关系表（当天的两两关系）
 
     private var matrixCard: some View {
-        let ms = RelMetric.allCases
+        let ms = RelMetric.available
         return VStack(alignment: .leading, spacing: 8) {
             Text("关系表（同一天）").font(.headline)
             Text("格子越红：一个高另一个也高；越蓝：一个高另一个反而低；灰 = 看不出或天数太少。点格子看详情。")
@@ -416,7 +427,7 @@ struct HealthRelationView: View {
             ("餐后血糖", .after2, 0, false),
         ]
         if [.postSteps, .postKcal, .postExercise].contains(dose) { list = [("餐后血糖", .after2, 0, false)] }
-        return list
+        return list.filter { RelMetric.available.contains($0.1) }
     }
 
     private struct DoseRow {
@@ -472,7 +483,7 @@ struct HealthRelationView: View {
                 Label("最佳区间", systemImage: "target").font(.headline).foregroundStyle(Color(red: 0.5, green: 0.95, blue: 0.6))
                 Spacer()
                 Picker("", selection: $dose) {
-                    ForEach(DoseKind.allCases) { Text($0.rawValue).tag($0) }
+                    ForEach(DoseKind.allCases.filter { RelMetric.available.contains($0.metric) }) { Text($0.rawValue).tag($0) }
                 }
                 .pickerStyle(.menu).tint(.secondary)
             }
@@ -588,8 +599,8 @@ struct HealthRelationView: View {
         let (res, mat) = await Task.detached(priority: .userInitiated) { () -> ([RelResult], [String: RelResult]) in
             let res = Relation.pairs.map { Relation.compute(snapshot, x: $0.0, y: $0.1, lag: $0.2) }
             var mat: [String: RelResult] = [:]
-            for a in RelMetric.allCases {
-                for b in RelMetric.allCases where a != b {
+            for a in RelMetric.available {
+                for b in RelMetric.available where a != b {
                     mat[a.rawValue + "|" + b.rawValue] = Relation.compute(snapshot, x: a, y: b, lag: 0)
                 }
             }

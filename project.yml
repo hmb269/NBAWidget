@@ -60,3 +60,55 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.hmb269.nbawidget.widget
+  # 精简版：只有健康 + 设置，另加备孕 / 孕期（编译条件 LITE）
+  AboLite:
+    type: application
+    platform: iOS
+    sources:
+      - App
+      - Shared
+    info:
+      path: Lite/Info.plist
+      properties:
+        CFBundleDisplayName: 阿波精简版
+        CFBundleName: 阿波精简版
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        CADisableMinimumFrameDurationOnPhone: true
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        NSCameraUsageDescription: 拍照记录
+        NSHealthUpdateUsageDescription: 把月经、基础体温、排卵试纸等记录保存到健康 App
+        NSHealthShareUsageDescription: 读取睡眠、体重、心率、体温、月经周期等数据，用于健康和备孕孕期监测
+        NSPhotoLibraryUsageDescription: 把你选的照片放进相簿，用作小组件图标
+        NSPhotoLibraryAddUsageDescription: 把你选的照片放进相簿，用作小组件图标
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.hmb269.abolite
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) LITE
+    dependencies:
+      - target: AboLiteWidget
+  AboLiteWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Widget
+      - Shared
+    info:
+      path: Lite/WidgetInfo.plist
+      properties:
+        CFBundleDisplayName: 阿波精简版
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+        NSHealthShareUsageDescription: 读取睡眠、体重、心率变异性和步数，显示在小组件里
+        NSPhotoLibraryUsageDescription: 读取相簿里的小组件设置
+        NSPhotoLibraryAddUsageDescription: 读取相簿里的小组件设置
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.hmb269.abolite.widget
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) LITE

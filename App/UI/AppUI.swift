@@ -152,19 +152,34 @@ struct RootView: View {
     @State private var tab = 0
     @Environment(\.scenePhase) private var scenePhase
 
+#if LITE
+    // 精简版：健康 + 备孕/孕期 + 设置
+    @AppStorage(FertilityStore.modeKey) private var fertilityMode = FertilityMode.trying.rawValue
+    private var tabs: [(String, String)] {
+        let pregnant = fertilityMode == FertilityMode.pregnant.rawValue
+        return [("健康", "heart.fill"), (pregnant ? "孕期" : "备孕", pregnant ? "figure.and.child.holdinghands" : "calendar"), ("设置", "gearshape.fill")]
+    }
+#else
     private let tabs: [(String, String)] = [
         ("健康", "heart.fill"), ("血糖", "drop.fill"), ("彩票", "ticket.fill"), ("NBA", "basketball.fill"), ("设置", "gearshape.fill")
     ]
+#endif
 
     var body: some View {
         // 左右滑动翻页；底部是自己画的玻璃标签栏，点图标也能切换
         TabView(selection: $tab) {
+#if LITE
+            NavigationStack { HealthHomeView() }.tag(0)
+            NavigationStack { FertilityHomeView() }.tag(1)
+            NavigationStack { SettingsView() }.tag(2)
+#else
             NavigationStack { HealthHomeView() }.tag(0)
             NavigationStack { GlucoseView() }.tag(1)
             // 只有正在看的页面才联网刷新
             NavigationStack { LotteryView(isActive: tab == 2) }.tag(2)
             NavigationStack { NBAView(isActive: tab == 3) }.tag(3)
             NavigationStack { SettingsView() }.tag(4)
+#endif
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
         .background(AppBackground())
@@ -708,6 +723,21 @@ struct SettingsView: View {
     @State private var backupTick = 0
 
     var body: some View {
+#if LITE
+        PageScroll(title: "设置", subtitle: "备孕孕期 · 备份 · 图标 · 小组件") {
+            FertilitySettingsCard()
+            WaterSettingsCard()
+            PillSettingsCard()
+            RefreshSettingsCard()
+            backupCard
+            settingsTail
+        }
+        .cloudBackup(isPresented: $cloudBackup) { msg in
+            backupMessage = msg
+            backupTick += 1
+        }
+        .sheet(isPresented: $importing) { importSheet }
+#else
         PageScroll(title: "设置", subtitle: "血糖仪 · 报告 · 备份 · 图标 · 小组件") {
             GlucoseSyncCard()
             GlucoseMealTimesCard()
@@ -717,6 +747,24 @@ struct SettingsView: View {
             RefreshSettingsCard()
             LotteryAISettingsCard()
             backupCard
+            settingsTail
+        }
+        .cloudBackup(isPresented: $cloudBackup) { msg in
+            backupMessage = msg
+            backupTick += 1
+        }
+        .sheet(isPresented: $importing) { importSheet }
+#endif
+    }
+
+#if LITE
+    static let widgetHelp = "长按桌面空白处 → 编辑 → 添加小组件 → 搜索「阿波精简版」，可以选健康、喝水和吃药。\n所有小组件点空白处都只刷新，不会打开 App。"
+#else
+    static let widgetHelp = "长按桌面空白处 → 编辑 → 添加小组件 → 搜索「阿波」，可以选 NBA、健康和血糖。\n所有小组件点空白处都只刷新，不会打开 App。\n湖人、76人的比赛排在最上面，队名显示为红色。"
+#endif
+
+    @ViewBuilder
+    private var settingsTail: some View {
 
             CardSection(footer: iconStatus) {
                 CardTitle("自定义图标")
@@ -730,7 +778,7 @@ struct SettingsView: View {
             CardSection {
                 CardTitle("小组件")
                 RowDivider()
-                Text("长按桌面空白处 → 编辑 → 添加小组件 → 搜索「阿波」，可以选 NBA、健康和血糖。\n所有小组件点空白处都只刷新，不会打开 App。\n湖人、76人的比赛排在最上面，队名显示为红色。")
+                Text(Self.widgetHelp)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 10)
@@ -751,12 +799,9 @@ struct SettingsView: View {
                         .padding(.vertical, 10)
                 }
             }
-        }
-        .cloudBackup(isPresented: $cloudBackup) { msg in
-            backupMessage = msg
-            backupTick += 1
-        }
-        .sheet(isPresented: $importing) {
+    }
+
+    private var importSheet: some View {
             ImportPicker { url in
                 importing = false
                 guard let url else { return }
@@ -771,7 +816,6 @@ struct SettingsView: View {
                 }
             }
             .ignoresSafeArea()
-        }
     }
 
     private var backupCard: some View {
