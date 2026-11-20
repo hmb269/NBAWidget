@@ -362,12 +362,24 @@ struct PregnancyWeightCard: View {
                 Spacer()
                 if let l = last { statusChip(l.1, range: PregnancyInfo.gainRange(week: l.0, rule: rule)) }
             }
-            Text("孕前 " + String(format: "%.1f", pre) + " kg" + (bmi.map { "，BMI " + String(format: "%.1f", $0) + "（" + rule.label + "）" } ?? "（没有身高，按正常体重算）")
-                 + "；整个孕期建议长 \(Int(rule.total.lowerBound))～\(Int(rule.total.upperBound)) kg，现在这个孕周建议长 "
-                 + String(format: "%.1f～%.1f", range.lowerBound, range.upperBound) + " kg。")
+            Text(Self.explain(pre: pre, bmi: bmi, rule: rule, range: range))
                 .font(.caption).foregroundStyle(.secondary)
             if !pts.isEmpty { chart(pts, rule: rule, nowWeek: nowWeek).frame(height: 170) }
         }
+    }
+
+    static func explain(pre: Double, bmi: Double?, rule: PregnancyInfo.GainRule, range: ClosedRange<Double>) -> String {
+        var t: String = "孕前 " + String(format: "%.1f", pre) + " kg"
+        if let b = bmi {
+            t += "，BMI " + String(format: "%.1f", b) + "（" + rule.label + "）"
+        } else {
+            t += "（没有身高，按正常体重算）"
+        }
+        let lo = Int(rule.total.lowerBound)
+        let hi = Int(rule.total.upperBound)
+        t += "；整个孕期建议长 \(lo)～\(hi) kg"
+        t += "，现在这个孕周建议长 " + String(format: "%.1f～%.1f", range.lowerBound, range.upperBound) + " kg。"
+        return t
     }
 
     private func statusChip(_ gain: Double, range: ClosedRange<Double>) -> some View {

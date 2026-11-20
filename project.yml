@@ -65,7 +65,8 @@ targets:
     type: application
     platform: iOS
     sources:
-      - App
+      - path: App
+        excludes: ["Info.plist"]
       - Shared
     info:
       path: Lite/Info.plist
@@ -95,7 +96,8 @@ targets:
     type: app-extension
     platform: iOS
     sources:
-      - Widget
+      - path: Widget
+        excludes: ["Info.plist"]
       - Shared
     info:
       path: Lite/WidgetInfo.plist
