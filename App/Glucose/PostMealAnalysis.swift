@@ -202,6 +202,7 @@ struct PostMealAnalysisView: View {
             .chartXAxisLabel("饭后 2 小时内" + kind.rawValue + "（" + kind.unit + "）")
             .chartYAxisLabel("餐后2h 血糖")
             .chartYScale(domain: .automatic(includesZero: false))
+            .chartZoom(numbers: zoomRange(meals.compactMap { kind.value($0.act) }), fixed: true)
             .frame(height: 220)
             Text("每个点是一顿。点越往右下 = 动得多、血糖低。红线 7.8，蓝线 3.9。").font(.caption2).foregroundStyle(.secondary)
         }

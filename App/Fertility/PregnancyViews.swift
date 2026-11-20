@@ -364,7 +364,11 @@ struct PregnancyWeightCard: View {
             }
             Text(Self.explain(pre: pre, bmi: bmi, rule: rule, range: range))
                 .font(.caption).foregroundStyle(.secondary)
-            if !pts.isEmpty { chart(pts, rule: rule, nowWeek: nowWeek).frame(height: 170) }
+            if !pts.isEmpty {
+                chart(pts, rule: rule, nowWeek: nowWeek)
+                    .chartZoom(numbers: 0...min(40, max(nowWeek + 4, 16)), minFraction: 0.15, fixed: true)
+                    .frame(height: 170)
+            }
         }
     }
 
@@ -412,7 +416,6 @@ struct PregnancyWeightCard: View {
                     .symbolSize(18)
             }
         }
-        .chartXScale(domain: 0...maxW)
         .chartXAxis {
             AxisMarks(values: .stride(by: 4)) { v in
                 AxisGridLine().foregroundStyle(.white.opacity(0.05))

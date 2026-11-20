@@ -57,7 +57,9 @@ struct TemperatureDetailView: View {
                     if bbt.isEmpty {
                         empty("还没有基础体温。到「备孕」页的「记录今天」里填，或者用能同步到健康 App 的体温计。")
                     } else {
-                        bbtChart(bbt, starts: starts).frame(height: 200)
+                        bbtChart(bbt, starts: starts)
+                            .chartZoom(dates: from...FertilityStore.addDays(Date(), 1), fixed: true)
+                            .frame(height: 200)
                         stats(bbt.map(\.1), fmt: "%.2f")
                     }
                 }
@@ -66,14 +68,18 @@ struct TemperatureDetailView: View {
                     if wrist.isEmpty {
                         empty("没有腕温数据。需要 Apple Watch Series 8 / Ultra 及以上，戴着睡觉，并在手表上打开「睡眠」和「腕温」。")
                     } else {
-                        wristChart(wrist, starts: starts).frame(height: 170)
+                        wristChart(wrist, starts: starts)
+                            .chartZoom(dates: from...FertilityStore.addDays(Date(), 1), fixed: true)
+                            .frame(height: 170)
                         stats(wrist.map(\.1), fmt: "%+.2f")
                     }
                 }
 
                 if !bodyPts.isEmpty {
                     section("体温（体温计）", "健康 App 里体温计量的体温，37.3℃ 以上算发烧", Color(red: 1.0, green: 0.35, blue: 0.45)) {
-                        bodyChart(bodyPts).frame(height: 160)
+                        bodyChart(bodyPts)
+                            .chartZoom(dates: from...FertilityStore.addDays(Date(), 1), fixed: true)
+                            .frame(height: 160)
                     }
                 }
 
@@ -165,7 +171,6 @@ struct TemperatureDetailView: View {
             }
         }
         .chartYScale(domain: lo...hi)
-        .chartXScale(domain: from...FertilityStore.addDays(Date(), 1))
         .chartXAxis { xAxis() }
         .chartYAxis {
             AxisMarks(position: .trailing, values: .automatic(desiredCount: 4)) { v in
@@ -188,7 +193,6 @@ struct TemperatureDetailView: View {
                     .foregroundStyle(p.1 >= 0 ? FertilityColor.temp : Color(red: 0.4, green: 0.7, blue: 1.0))
             }
         }
-        .chartXScale(domain: from...FertilityStore.addDays(Date(), 1))
         .chartXAxis { xAxis() }
         .chartYAxis {
             AxisMarks(position: .trailing, values: .automatic(desiredCount: 4)) { v in
@@ -216,7 +220,6 @@ struct TemperatureDetailView: View {
             }
         }
         .chartYScale(domain: lo...hi)
-        .chartXScale(domain: from...FertilityStore.addDays(Date(), 1))
         .chartXAxis { xAxis() }
     }
 

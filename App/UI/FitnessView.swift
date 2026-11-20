@@ -290,10 +290,11 @@ struct FitnessView: View {
                         }
                     }
                     .chartXAxis {
-                        AxisMarks(values: .stride(by: .day, count: 3)) { _ in
+                        AxisMarks(values: .automatic(desiredCount: 5)) { _ in
                             AxisValueLabel(format: .dateTime.month(.defaultDigits).day())
                         }
                     }
+                    .chartZoom(dates: zoomRange(kcal.map(\.date)))
                     .frame(height: 150)
                 }
                 .padding(16)
@@ -453,8 +454,9 @@ struct BMIView: View {
                             }
                         }
                         .chartYScale(domain: (lo - 0.5)...(hi + 0.5))
-                        .frame(height: 200)
                         .tapToSelect($selected, dates: points.map(\.date), byDay: true)
+                        .chartZoom(dates: zoomRange(points.map(\.date)))
+                        .frame(height: 200)
                         Text("绿色区域是健康范围").font(.caption2).foregroundStyle(.secondary)
                     }
                     .padding(16)

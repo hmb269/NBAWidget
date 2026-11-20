@@ -405,13 +405,16 @@ struct TemperatureCard: View {
                     .font(.footnote).foregroundStyle(.secondary)
             } else {
                 bbtChart(pts, cover: shift?.cover, shiftDate: shift?.date)
+                    .chartZoom(dates: zoomRange(pts.map(\.0)))
                     .frame(height: 170)
                 Text(shiftText(shift, count: pts.count)).font(.footnote.weight(.semibold))
             }
             if !wrist.isEmpty {
                 RowDivider()
                 Text("手表睡眠腕温（和平时比）").font(.subheadline.weight(.semibold))
-                wristChart(wrist).frame(height: 120)
+                wristChart(wrist)
+                    .chartZoom(dates: zoomRange(wrist.map(\.0)))
+                    .frame(height: 120)
                 Text("Apple Watch 夜里测的手腕温度变化。排卵后通常会比平时高 0.2～0.5℃，可以和基础体温对照着看。")
                     .font(.caption2).foregroundStyle(.secondary)
             }

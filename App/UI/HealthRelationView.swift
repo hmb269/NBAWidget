@@ -300,8 +300,8 @@ struct HealthRelationView: View {
                 }
                 .chartXAxisLabel(r.x.rawValue + (r.lag == 1 ? "（当天）" : ""))
                 .chartYAxisLabel(r.y.rawValue + (r.lag == 1 ? "（第二天）" : ""))
-                .chartXScale(domain: .automatic(includesZero: false))
                 .chartYScale(domain: .automatic(includesZero: false))
+                .chartZoom(numbers: zoomRange(r.points.map(\.0)), fixed: true)
                 .frame(height: 200)
                 Text("每个点是一天。点从左下往右上排 = 同向；从左上往右下排 = 反向；散成一团 = 没关系。共 \(r.n) 天。")
                     .font(.caption2).foregroundStyle(.tertiary)

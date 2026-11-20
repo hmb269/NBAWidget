@@ -71,7 +71,9 @@ struct HealthDetailView: View {
                         Text("这段时间没有数据").font(.footnote).foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, minHeight: 200)
                     } else {
-                        chart.frame(height: 220)
+                        chart
+                            .chartZoom(dates: zoomRange(values.map(\.date)))
+                            .frame(height: 220)
                     }
                     if kind == .sleep && !nights.isEmpty { sleepLegend }
                 }
@@ -369,6 +371,7 @@ struct HealthDetailView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             scoreChart(lo: lo)
+                .chartZoom(dates: zoomRange(scores.map(\.date)))
                 .frame(height: 160)
             Text(scoreNote + "。85 分以上绿色，70～84 黄色，70 以下红色。")
                 .font(.caption2).foregroundStyle(.tertiary)
