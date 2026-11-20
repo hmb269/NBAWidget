@@ -316,7 +316,11 @@ struct GlucoseFoodAnalysisView: View {
         .navigationTitle("三餐食材分析")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
-        .task { compute() }
+        .task {
+            // 在后台算，不卡界面
+            let r = await Task.detached(priority: .userInitiated) { GlucoseFoodAnalysisView.computeAll() }.value
+            rows = r.0; total = r.1; tagged = r.2
+        }
         .fullScreenCover(item: $viewing) { v in
             GlucoseOverViewer(items: v.items, start: v.start, missing: []) { _ in viewing = nil }
         }
@@ -325,6 +329,7 @@ struct GlucoseFoodAnalysisView: View {
     private func section(_ title: String, _ list: [Row], _ color: Color) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title).font(.headline).foregroundStyle(color == .secondary ? Color.primary : color)
+            LazyVStack(alignment: .leading, spacing: 8) {
             ForEach(list) { r in
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
@@ -361,6 +366,7 @@ struct GlucoseFoodAnalysisView: View {
                 .contentShape(Rectangle())
                 .onTapGesture { withAnimation { open = open == r.id ? nil : r.id } }
             }
+            }
         }
     }
 
@@ -389,7 +395,7 @@ struct GlucoseFoodAnalysisView: View {
         return f.string(from: d)
     }
 
-    private func compute() {
+    nonisolated static func computeAll() -> ([Row], Int, Int) {
         let owners = GlucosePeople.owners
         let tags = GlucoseTags.all
         let raw = GlucoseFoods.all
@@ -401,9 +407,9 @@ struct GlucoseFoodAnalysisView: View {
         let recs = GlucoseLocal.load().filter {
             (owners[$0.id] ?? GlucosePeople.me) == GlucosePeople.me && GlucoseKind.of(tags[$0.id] ?? GlucoseTags.auto($0)) == .after2
         }
-        total = recs.count
+        let total = recs.count
         let taggedRecs = recs.filter { !(foods[$0.id] ?? []).isEmpty }
-        tagged = taggedRecs.count
+        let tagged = taggedRecs.count
         var names = Set<String>()
         for r in taggedRecs { for f in foods[r.id] ?? [] { names.insert(f) } }
         var out: [Row] = []
@@ -418,7 +424,8 @@ struct GlucoseFoodAnalysisView: View {
                            records: with.sorted { $0.date > $1.date }.map { ($0.date, $0.mmol, raw[$0.id] ?? []) },
                            recs: with.sorted { $0.date > $1.date }, derived: !original.contains(name)))
         }
-        rows = out.sorted { ($0.n >= 3 ? 1 : 0, $0.diff) > ($1.n >= 3 ? 1 : 0, $1.diff) }
+        let sorted = out.sorted { ($0.n >= 3 ? 1 : 0, $0.diff) > ($1.n >= 3 ? 1 : 0, $1.diff) }
+        return (sorted, total, tagged)
     }
 }
 

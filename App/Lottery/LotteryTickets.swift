@@ -210,6 +210,7 @@ struct LotteryTicketsPane: View {
                 .padding(24)
                 .glassCard(22)
             } else {
+                LazyVStack(spacing: 12) {
                 ForEach(shown) { t in
                     Button { onOpen(t) } label: { card(t) }
                         .buttonStyle(.plain)
@@ -218,6 +219,7 @@ struct LotteryTicketsPane: View {
                                 LotteryTickets.delete(t.id)
                             } label: { Label("删除这张票", systemImage: "trash") }
                         }
+                }
                 }
                 Text("没有更多了 · 长按一张票可以删除").font(.caption2).foregroundStyle(.tertiary)
             }
@@ -230,16 +232,32 @@ struct LotteryTicketsPane: View {
     }
 
     private func refresh() async {
-        for t in tickets {
-            let s = await LotteryTickets.check(t)
-            withAnimation { status[t.id] = s }
-        }
+        // 全部对完一次性更新，避免一张一张刷新整个列表
+        var out = status
+        for t in tickets { out[t.id] = await LotteryTickets.check(t) }
+        status = out
+    }
+
+    private static let timeFmt: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HH:mm:ss"; return f
+    }()
+
+    /// 票的小图：解码一次、缩成小图后缓存，滑动 / 切页时不再每次解码大图
+    private static let thumbCache = NSCache<NSString, UIImage>()
+    private static func thumb(_ t: MyTicket) -> UIImage? {
+        if let c = thumbCache.object(forKey: t.id as NSString) { return c }
+        guard let d = t.photo, let img = UIImage(data: d) else { return nil }
+        let k = 160 / max(img.size.width, img.size.height, 1)
+        let size = CGSize(width: img.size.width * min(k, 1), height: img.size.height * min(k, 1))
+        let small = img.preparingThumbnail(of: size) ?? img
+        thumbCache.setObject(small, forKey: t.id as NSString)
+        return small
     }
 
     private func card(_ t: MyTicket) -> some View {
         let s = status[t.id]
         let red = Color(red: 1, green: 0.4, blue: 0.35)
-        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        let f = Self.timeFmt
         return VStack(alignment: .leading, spacing: 0) {
             Text("票号：" + (t.ticketNo.isEmpty ? "未识别" : t.ticketNo.replacingOccurrences(of: "-", with: "")))
                 .font(.footnote.monospacedDigit()).foregroundStyle(.secondary)
@@ -297,7 +315,7 @@ struct LotteryTicketsPane: View {
     /// 左边：票的照片；没有就用玩法色块
     @ViewBuilder
     private func badge(_ t: MyTicket) -> some View {
-        if let d = t.photo, let img = UIImage(data: d) {
+        if let img = Self.thumb(t) {
             Image(uiImage: img).resizable().scaledToFill()
                 .frame(width: 56, height: 72)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
