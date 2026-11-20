@@ -150,6 +150,7 @@ struct PillProvider: TimelineProvider {
         completion(PillEntry(date: Date(), health: []))
     }
     func getTimeline(in context: Context, completion: @escaping (Timeline<PillEntry>) -> Void) {
+        RefreshSettings.refreshFromAlbum()   // 读外观设置
         Task {
             PillSettings.refreshFromAlbum()
             let health = await MedsHealth.takenDates(matching: PillSettings.current.name)
@@ -169,7 +170,7 @@ struct PillProvider: TimelineProvider {
 struct PillWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "Pill", provider: PillProvider()) { entry in
-            PillWidgetView(entry: entry)
+            PillWidgetView(entry: entry).widgetTheme()
         }
         .configurationDisplayName("吃药")
         .description("维生素D 隔天一颗：该吃时提醒，点一下记录已吃。健康 App 里记的「已服用」也会同步显示。")

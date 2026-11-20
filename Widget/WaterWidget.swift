@@ -136,6 +136,7 @@ struct WaterProvider: TimelineProvider {
         completion(WaterEntry(date: Date()))
     }
     func getTimeline(in context: Context, completion: @escaping (Timeline<WaterEntry>) -> Void) {
+        RefreshSettings.refreshFromAlbum()   // 读外观设置
         WaterSettings.refreshFromAlbum()
         let midnight = Calendar.current.startOfDay(for: Date().addingTimeInterval(86400)).addingTimeInterval(5)
         var entries = [WaterEntry(date: Date())]
@@ -150,7 +151,7 @@ struct WaterProvider: TimelineProvider {
 struct WaterWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "Water", provider: WaterProvider()) { entry in
-            WaterWidgetView(now: entry.date)
+            WaterWidgetView(now: entry.date).widgetTheme()
         }
         .configurationDisplayName("喝水")
         .description("喝一杯点一下杯子打勾；撤销要连点两次最后一杯。杯子形状和容量在 App 设置里改。")

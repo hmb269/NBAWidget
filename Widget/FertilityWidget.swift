@@ -70,6 +70,7 @@ struct FertilityProvider: TimelineProvider {
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<FertilityEntry>) -> Void) {
+        RefreshSettings.refreshFromAlbum()   // 读外观设置
         Task {
             let e = await FertilityEntry.load()
             // 每 2 小时，或者过了零点就更新（周期第几天会变）
@@ -83,7 +84,7 @@ struct FertilityProvider: TimelineProvider {
 struct FertilityWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "FertilityTemp", provider: FertilityProvider()) { entry in
-            FertilityWidgetView(entry: entry)
+            FertilityWidgetView(entry: entry).widgetTheme()
         }
         .configurationDisplayName("备孕体温")
         .description("周期第几天、易孕期、排卵日和基础体温 / 手表腕温曲线")

@@ -169,6 +169,7 @@ struct GlucoseProvider: TimelineProvider {
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<GlucoseEntry>) -> Void) {
+        RefreshSettings.refreshFromAlbum()   // 读外观设置
         Task {
             let entry = await load()
             GlucoseProvider.lastEntry = entry
@@ -188,7 +189,7 @@ struct GlucoseProvider: TimelineProvider {
 struct GlucoseWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "Glucose", provider: GlucoseProvider()) { entry in
-            GlucoseWidgetView(entry: entry)
+            GlucoseWidgetView(entry: entry).widgetTheme()
         }
         .configurationDisplayName("血糖")
         .description("最近一次血糖和餐后 2 小时的变化（读健康里的血糖）")

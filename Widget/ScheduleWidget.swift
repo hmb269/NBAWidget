@@ -24,7 +24,7 @@ struct NBAWidgetBundle: WidgetBundle {
 struct TodayWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "NBAToday", provider: Provider(day: .today)) { entry in
-            ScheduleWidgetView(entry: entry)
+            ScheduleWidgetView(entry: entry).widgetTheme()
         }
         .configurationDisplayName("今日 NBA")
         .description("今天的 NBA 比赛（北京时间）。点一下翻页，喜欢的球队在 App 里设置")
@@ -36,7 +36,7 @@ struct TodayWidget: Widget {
 struct TomorrowWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "NBATomorrow", provider: Provider(day: .tomorrow)) { entry in
-            ScheduleWidgetView(entry: entry)
+            ScheduleWidgetView(entry: entry).widgetTheme()
         }
         .configurationDisplayName("明日 NBA")
         .description("明天的 NBA 比赛（北京时间）。点一下翻页，喜欢的球队在 App 里设置")
@@ -114,6 +114,7 @@ struct Provider: TimelineProvider {
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<ScheduleEntry>) -> Void) {
+        RefreshSettings.refreshFromAlbum()   // 读外观设置
         Task {
             let entry = await makeEntry(context)
             Provider.lastEntries[cacheKey(context)] = entry
@@ -177,6 +178,18 @@ struct Provider: TimelineProvider {
 // MARK: - 界面
 
 /// 和系统自带小组件一样的底色：深色模式接近纯黑，浅色模式白色
+extension View {
+    /// 设置里选的小组件外观：跟随系统 / 总是深色 / 总是浅色
+    @ViewBuilder
+    func widgetTheme() -> some View {
+        switch RefreshSettings.current.theme {
+        case 1: self.environment(\.colorScheme, .dark)
+        case 2: self.environment(\.colorScheme, .light)
+        default: self
+        }
+    }
+}
+
 let widgetBackground = Color(uiColor: UIColor { trait in
     trait.userInterfaceStyle == .dark
         ? UIColor(red: 28 / 255, green: 28 / 255, blue: 28 / 255, alpha: 1)

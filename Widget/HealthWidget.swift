@@ -198,7 +198,7 @@ struct HealthProvider: TimelineProvider {
 struct HealthWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "HealthAll", provider: HealthProvider()) { entry in
-            HealthWidgetView(entry: entry)
+            HealthWidgetView(entry: entry).widgetTheme()
         }
         .configurationDisplayName("健康")
         .description("睡眠时间、体重、恢复心率变异性、步数、日出日落；大号带体重趋势图")

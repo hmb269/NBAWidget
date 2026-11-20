@@ -5,14 +5,15 @@ import Photos
 struct RefreshSettings: Equatable {
     var health = 15     // 分钟
     var glucose = 60
+    var theme = 0       // 小组件外观：0 跟随系统 1 总是深色 2 总是浅色
 
     static let healthOptions = [15, 30, 60]
     static let glucoseOptions = [30, 60, 120, 240, 480, 720]
     static let prefix = "阿波设置·刷新·"
 
-    var albumTitle: String { Self.prefix + "健康\(health)·血糖\(glucose)" }
+    var albumTitle: String { Self.prefix + "健康\(health)·血糖\(glucose)" + (theme == 0 ? "" : "·外观\(theme)") }
 
-    init(health: Int = 15, glucose: Int = 60) { self.health = health; self.glucose = glucose }
+    init(health: Int = 15, glucose: Int = 60, theme: Int = 0) { self.health = health; self.glucose = glucose; self.theme = theme }
 
     init?(albumTitle t: String) {
         guard t.hasPrefix(Self.prefix) else { return nil }
@@ -20,6 +21,7 @@ struct RefreshSettings: Equatable {
         for part in t.dropFirst(Self.prefix.count).split(separator: "·").map(String.init) {
             if part.hasPrefix("健康"), let n = Int(part.dropFirst(2)), Self.healthOptions.contains(n) { r.health = n }
             if part.hasPrefix("血糖"), let n = Int(part.dropFirst(2)), Self.glucoseOptions.contains(n) { r.glucose = n }
+            if part.hasPrefix("外观"), let n = Int(part.dropFirst(2)), (0...2).contains(n) { r.theme = n }
         }
         self = r
     }
