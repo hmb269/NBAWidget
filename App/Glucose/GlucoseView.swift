@@ -576,16 +576,26 @@ struct GlucoseView: View {
     private func setOwner(_ p: String, for id: String) {
         GlucosePeople.set(p, for: id)
         owners = GlucosePeople.owners
+        if let cur = records.first(where: { $0.id == id }) { syncHealth(cur) }
+    }
+
+    /// 改了标签 / 测量人 / 照片备注后同步健康：自己的写进去（带最新标签），别人的从健康移出
+    private func syncHealth(_ r: GlucoseRecord) {
+        let person = owners[r.id] ?? GlucosePeople.me
+        let label = self.label
+        if person == GlucosePeople.me {
+            guard r.mine || r.id.hasPrefix("accuchek-") else { return }
+            Task { _ = try? await GlucoseStore.write(keep: [r], remove: [], person: person, label: label) }
+        } else if r.mine {
+            Task { _ = try? await GlucoseStore.write(keep: [], remove: [r], person: GlucosePeople.me, label: label) }
+        }
     }
 
     private func setTag(_ t: String?, for r: GlucoseRecord) {
         GlucoseTags.set(t, for: r.id)
         tags = GlucoseTags.all
-        // 已经在健康里的记录：标签改了马上同步到健康（小组件按健康里的标签画曲线）
-        if let cur = records.first(where: { $0.id == r.id }), cur.mine {
-            let person = owners[cur.id] ?? GlucosePeople.me
-            Task { _ = try? await GlucoseStore.write(keep: [cur], remove: [], person: person, label: label) }
-        }
+        // 标签改了马上同步到健康（小组件按健康里的标签画曲线）
+        if let cur = records.first(where: { $0.id == r.id }) { syncHealth(cur) }
     }
 
     private func label(_ r: GlucoseRecord) -> String? { tags[r.id] ?? GlucoseTags.auto(r) }
@@ -597,11 +607,7 @@ struct GlucoseView: View {
         records[i].photos = photos.isEmpty ? nil : photos
         GlucoseLocal.save(records)
         refreshMissing()
-        let r = records[i]
-        if r.mine {
-            let person = owners[r.id] ?? GlucosePeople.me
-            Task { _ = try? await GlucoseStore.write(keep: [r], remove: [], person: person, label: label) }
-        }
+        syncHealth(records[i])
     }
 
     /// 检查哪些照片在相册里找不到了

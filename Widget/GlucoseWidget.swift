@@ -118,7 +118,8 @@ enum GlucoseWidgetData {
             }
             HealthService.store.execute(q)
         }
-        return samples.map { s in
+        // 只画自己的：标了「测量人」的是别人的记录
+        return samples.filter { ($0.metadata?["测量人"] as? String) == nil }.map { s in
             let meta = s.metadata ?? [:]
             var tag = (meta["餐点"] as? String) ?? (meta["阿波餐点"] as? String)
             if tag == nil, let raw = meta[HKMetadataKeyBloodGlucoseMealTime] as? NSNumber {
