@@ -261,6 +261,8 @@ enum SleepScore {
         return (d.0, d.1)
     }
 
+    nonisolated(unsafe) static var lastInfo: [Date: String] = [:]
+
     static func detailed(_ nights: [(Date, HealthService.SleepData)]) -> ([DayValue], String, [Date: [Double]]) {
         var feats: [(Date, Features)] = []
         for (i, n) in nights.enumerated() {
@@ -273,6 +275,17 @@ enum SleepScore {
         let raw: [(Date, [Double])] = feats.map { ($0.0, parts($0.1, model)) }
         var byDay: [Date: [Double]] = [:]
         for r in raw { byDay[r.0] = r.1 }
+        var info: [Date: String] = [:]
+        for (d, f) in feats {
+            let p = parts(f, model)
+            var t = String(format: "阿波：时长 %.0f · 就寝 %.0f · 中断 %.0f", p[0], p[1], p[2])
+            t += String(format: "\n睡 %d:%02d", Int(f.hours), Int((f.hours - Double(Int(f.hours))) * 60))
+            if let dv = f.bedDev { t += String(format: " · 入睡偏 %.0f 分", dv) }
+            if let w = f.wakes { t += String(format: " · 醒 %.0f 次", w) }
+            t += String(format: " · 清醒 %.0f 分", f.awakeMin)
+            info[d] = t
+        }
+        lastInfo = info
         // 有分项数据时按分项规则直接相加（和苹果一样）；没有时用总分整体校准
         let useParts = !partData.isEmpty
         let pairs = raw.compactMap { r in apple(on: r.0).map { (r.1, Double($0)) } }
@@ -807,6 +820,9 @@ struct SleepCalibrationSheet: View {
                                 if let m = mine.first(where: { Calendar.current.isDate($0.date, inSameDayAs: d) }) {
                                     Text("阿波算 \(Int(m.value))").font(.caption).foregroundStyle(.secondary)
                                 }
+                            }
+                            if let i = SleepScore.lastInfo.first(where: { Calendar.current.isDate($0.key, inSameDayAs: d) })?.value {
+                                Text(i).font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
                             }
                             HStack(spacing: 8) {
                                 field(d, 0, "总分")
