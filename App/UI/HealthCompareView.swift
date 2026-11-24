@@ -94,9 +94,17 @@ enum SleepScore {
             let dev = usualBed == nil ? max(0, m - ref) : abs(m - ref)
             bed = dev <= 30 ? 30 : max(0, 30 - (dev - 30) / 150 * 30)
         }
-        // 中断：夜里清醒 10 分钟以内满分，90 分钟以上 0
-        let awakeMin = s.awake / 60
-        let inter: Double = awakeMin <= 10 ? 20 : max(0, 20 - (awakeMin - 10) / 80 * 20)
+        // 中断（苹果：醒来几次 + 每次醒多久）：醒 1 次不扣；之后每多醒 1 次扣 2 分；
+        // 入睡后清醒超过 5 分钟的部分每 4 分钟扣 1 分。旧数据没有次数时按清醒总时长估
+        let inter: Double
+        if let c = s.wakeCount, let a = s.awakeInside {
+            let byCount = Double(max(0, c - 1)) * 2
+            let byTime = max(0, a / 60 - 5) / 4
+            inter = max(0, 20 - byCount - byTime)
+        } else {
+            let awakeMin = s.awake / 60
+            inter = awakeMin <= 10 ? 20 : max(0, 20 - (awakeMin - 10) / 80 * 20)
+        }
         return [dur, bed, inter]
     }
 
@@ -162,7 +170,8 @@ enum SleepScore {
     static func scores(_ nights: [(Date, HealthService.SleepData)]) -> ([DayValue], String) {
         var raw: [(Date, [Double])] = []
         for (i, n) in nights.enumerated() {
-            let prev = nights[max(0, i - 14)..<i].compactMap { bedMinutes($0.1.bedtime) }.sorted()
+            // 苹果：看最近 13 晚的入睡时间是否规律
+            let prev = nights[max(0, i - 13)..<i].compactMap { bedMinutes($0.1.bedtime) }.sorted()
             let usual: Double? = prev.count >= 3 ? prev[prev.count / 2] : nil
             if let p = parts(n.1, usualBed: usual) { raw.append((n.0, p)) }
         }

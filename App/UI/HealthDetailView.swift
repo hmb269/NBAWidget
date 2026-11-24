@@ -341,10 +341,19 @@ struct HealthDetailView: View {
         scores.first { Calendar.current.isDate($0.date, inSameDayAs: d) }?.value
     }
 
+    /// 苹果的分档（watchOS 26.2 起）：很低 0–40、低 41–60、一般 61–80、高 81–95、很高 96+
     static func scoreColor(_ v: Double) -> Color {
-        if v >= 85 { return Color(red: 0.35, green: 0.9, blue: 0.6) }
-        if v >= 70 { return Color(red: 1.0, green: 0.8, blue: 0.3) }
+        if v >= 81 { return Color(red: 0.35, green: 0.9, blue: 0.6) }
+        if v >= 61 { return Color(red: 1.0, green: 0.8, blue: 0.3) }
         return Color(red: 1.0, green: 0.45, blue: 0.45)
+    }
+
+    static func scoreLabel(_ v: Double) -> String {
+        if v >= 96 { return "很高" }
+        if v >= 81 { return "高" }
+        if v >= 61 { return "一般" }
+        if v >= 41 { return "低" }
+        return "很低"
     }
 
     private var scorePicked: DayValue? {
@@ -366,14 +375,14 @@ struct HealthDetailView: View {
                 Text(p.map { String(Int($0.value)) } ?? "--")
                     .font(.system(size: 30, weight: .bold, design: .rounded).monospacedDigit())
                     .foregroundStyle(p.map { Self.scoreColor($0.value) } ?? .primary)
-                Text("分").font(.subheadline).foregroundStyle(.secondary)
+                Text("分" + (p.map { " · " + Self.scoreLabel($0.value) } ?? "")).font(.subheadline).foregroundStyle(.secondary)
                 Text(scorePicked == nil ? "最近" : dayText(p?.date ?? Date(), weekday: true))
                     .font(.caption).foregroundStyle(.secondary)
             }
             scoreChart(lo: lo)
                 .chartZoom(dates: zoomRange(scores.map(\.date)))
                 .frame(height: 160)
-            Text(scoreNote + "。85 分以上绿色，70～84 黄色，70 以下红色。")
+            Text(scoreNote + "。按苹果的规则：时长 50 分 + 最近 13 晚入睡规律 30 分 + 夜里醒来（次数和时长）20 分；分档和苹果一样：96 以上很高、81～95 高、61～80 一般、41～60 低、40 以下很低。")
                 .font(.caption2).foregroundStyle(.tertiary)
         }
         .padding(18)

@@ -47,6 +47,8 @@ enum HealthService {
         var other: TimeInterval       // 没分阶段的睡眠（只有 iPhone 记录时）
         var bedtime: Date?
         var wake: Date?
+        var wakeCount: Int? = nil       // 睡着后醒来几次（睡眠评分「中断」用）
+        var awakeInside: TimeInterval? = nil  // 入睡后到最后醒来之间清醒了多久
     }
 
     struct WeightData: Codable {
@@ -131,6 +133,10 @@ enum HealthService {
         if let first = merged.first, let last = merged.last {
             d.bedtime = first.0
             d.wake = last.1
+            // 中断：入睡后、最后醒来前的清醒段（和健康 App 一样，不到 5 分钟的不算）
+            let inside = merge(awakeIntervals).filter { $0.0 >= first.0 && $0.1 <= last.1 }
+            d.wakeCount = inside.count
+            d.awakeInside = inside.reduce(0) { $0 + $1.1.timeIntervalSince($1.0) }
         }
         return d.asleep > 0 ? d : nil
     }
