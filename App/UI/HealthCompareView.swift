@@ -81,31 +81,117 @@ enum SleepScore {
         return m
     }
 
-    /// 三项分数（时长 0~50、入睡时间 0~30、中断 0~20）
-    static func parts(_ s: HealthService.SleepData, usualBed: Double? = nil) -> [Double]? {
+    /// 一晚的原始特征：睡了几小时、入睡比平时偏了几分钟、入睡后醒来几次、清醒几分钟
+    struct Features {
+        var hours: Double
+        var bedDev: Double?
+        var wakes: Double?
+        var awakeMin: Double
+    }
+
+    static func features(_ s: HealthService.SleepData, usualBed: Double?) -> Features? {
         let h = s.asleep / 3600
         guard h > 0.5 else { return nil }
-        // 时长：8～9.5 小时满分；4 小时以下 0；超过 9.5 小时最多扣到 45
-        let dur: Double = h >= 8 ? (h <= 9.5 ? 50 : max(45, 50 - (h - 9.5) * 3)) : max(0, (h - 4) / 4 * 50)
-        // 入睡时间：和平时差 30 分钟以内满分，差 3 小时以上 0；没有平时的数据就按 23:30 前算满分
-        var bed: Double = 24
+        var dev: Double?
         if let m = bedMinutes(s.bedtime) {
             let ref = usualBed ?? (23 * 60 + 30)
-            let dev = usualBed == nil ? max(0, m - ref) : abs(m - ref)
-            bed = dev <= 30 ? 30 : max(0, 30 - (dev - 30) / 150 * 30)
+            dev = usualBed == nil ? max(0, m - ref) : abs(m - ref)
         }
-        // 中断（苹果：醒来几次 + 每次醒多久）：醒 1 次不扣；之后每多醒 1 次扣 2 分；
-        // 入睡后清醒超过 5 分钟的部分每 4 分钟扣 1 分。旧数据没有次数时按清醒总时长估
+        let awake = (s.awakeInside ?? s.awake) / 60
+        return Features(hours: h, bedDev: dev, wakes: s.wakeCount.map(Double.init), awakeMin: awake)
+    }
+
+    /// 每项的扣分规则（可以用你填的苹果分项校准）
+    struct Model {
+        var fullHours = 8.0      // 睡够几小时时长满分
+        var perHour = 12.5       // 每少睡 1 小时扣几分
+        var bedTol = 30.0        // 入睡偏差几分钟内满分
+        var bedSlope = 0.2       // 超出后每分钟扣几分
+        var perWake = 2.0        // 每多醒 1 次（第 1 次不算）扣几分
+        var perAwakeMin = 0.25   // 清醒超过 5 分钟后每分钟扣几分
+    }
+
+    static func parts(_ f: Features, _ m: Model) -> [Double] {
+        let h = f.hours
+        var dur = h >= m.fullHours ? 50 : max(0, 50 - (m.fullHours - h) * m.perHour)
+        if h > 9.5 { dur = max(45, dur - (h - 9.5) * 3) }
+        let bed: Double = f.bedDev.map { $0 <= m.bedTol ? 30 : max(0, 30 - ($0 - m.bedTol) * m.bedSlope) } ?? 24
         let inter: Double
-        if let c = s.wakeCount, let a = s.awakeInside {
-            let byCount = Double(max(0, c - 1)) * 2
-            let byTime = max(0, a / 60 - 5) / 4
-            inter = max(0, 20 - byCount - byTime)
+        if let w = f.wakes {
+            inter = max(0, 20 - max(0, w - 1) * m.perWake - max(0, f.awakeMin - 5) * m.perAwakeMin)
         } else {
-            let awakeMin = s.awake / 60
-            inter = awakeMin <= 10 ? 20 : max(0, 20 - (awakeMin - 10) / 80 * 20)
+            inter = f.awakeMin <= 10 ? 20 : max(0, 20 - (f.awakeMin - 10) / 80 * 20)
         }
         return [dur, bed, inter]
+    }
+
+    /// 旧接口：三项分数（时长 0~50、入睡时间 0~30、中断 0~20），按默认规则
+    static func parts(_ s: HealthService.SleepData, usualBed: Double? = nil) -> [Double]? {
+        features(s, usualBed: usualBed).map { parts($0, Model()) }
+    }
+
+    // MARK: 用苹果的分项（时长 / 就寝 / 中断）逐项校准
+
+    private static let partsKey = "appleSleepParts"
+    /// 你填的苹果分项：「2026-11-24」→ [48, 30, 14]
+    static var appleParts: [String: [Int]] {
+        var m = (UserDefaults.standard.dictionary(forKey: partsKey) as? [String: [Int]]) ?? [:]
+        if m["2026-11-24"] == nil { m["2026-11-24"] = [48, 30, 14] }   // 你发来的截图
+        return m
+    }
+    static func setAppleParts(_ v: [Int]?, on day: Date) {
+        var m = (UserDefaults.standard.dictionary(forKey: partsKey) as? [String: [Int]]) ?? [:]
+        m[dayFmt.string(from: day)] = v
+        UserDefaults.standard.set(m, forKey: partsKey)
+    }
+    static func appleParts(on day: Date) -> [Int]? { appleParts[dayFmt.string(from: day)] }
+
+    /// 按分项数据拟合每项的扣分规则（数据少时尽量贴近默认值）
+    static func fitModel(_ data: [(Features, [Int])]) -> Model {
+        var m = Model()
+        guard !data.isEmpty else { return m }
+        // 时长：在 7～9 小时里找满分线，再算每小时扣几分
+        let durPts = data.map { ($0.0.hours, Double($0.1[0])) }
+        if durPts.contains(where: { $0.1 < 50 }) {
+            var best = (err: Double.infinity, full: m.fullHours, k: m.perHour)
+            var full = 7.0
+            while full <= 9.0001 {
+                var num = 0.0, den = 0.0
+                for (h, y) in durPts where h < full { num += (full - h) * (50 - y); den += (full - h) * (full - h) }
+                // 往默认的每小时扣分拉一点
+                let k = den > 0 ? (num + 0.05 * m.perHour) / (den + 0.05) : m.perHour
+                var err = 0.0
+                for (h, y) in durPts { let p = h >= full ? 50 : 50 - (full - h) * k; err += (p - y) * (p - y) }
+                err += abs(full - 8) * 0.5      // 没证据时偏向 8 小时
+                if err < best.err { best = (err, full, k) }
+                full += 0.05
+            }
+            m.fullHours = best.full
+            m.perHour = max(0, best.k)
+        }
+        // 就寝：有不满分的才调斜率
+        let bedPts = data.compactMap { d -> (Double, Double)? in d.0.bedDev.map { ($0, Double(d.1[1])) } }.filter { $0.1 < 30 && $0.0 > m.bedTol }
+        if !bedPts.isEmpty {
+            let num = bedPts.map { ($0.0 - m.bedTol) * (30 - $0.1) }.reduce(0, +)
+            let den = bedPts.map { ($0.0 - m.bedTol) * ($0.0 - m.bedTol) }.reduce(0, +)
+            if den > 0 { m.bedSlope = max(0.02, num / den) }
+        }
+        // 中断：20 - a·(醒来次数-1) - b·(清醒分钟-5)，最小二乘，往默认值拉
+        let ip = data.compactMap { d -> (Double, Double, Double)? in
+            guard let w = d.0.wakes else { return nil }
+            return (max(0, w - 1), max(0, d.0.awakeMin - 5), 20 - Double(d.1[2]))
+        }
+        if !ip.isEmpty {
+            let lam = 2.0
+            var a11 = lam, a12 = 0.0, a22 = lam * 16, b1 = lam * m.perWake, b2 = lam * 16 * m.perAwakeMin
+            for (x1, x2, y) in ip { a11 += x1 * x1; a12 += x1 * x2; a22 += x2 * x2; b1 += x1 * y; b2 += x2 * y }
+            let det = a11 * a22 - a12 * a12
+            if abs(det) > 1e-9 {
+                m.perWake = max(0, (b1 * a22 - b2 * a12) / det)
+                m.perAwakeMin = max(0, (a11 * b2 - a12 * b1) / det)
+            }
+        }
+        return m
     }
 
     static func score(_ s: HealthService.SleepData, usualBed: Double? = nil) -> Double? {
@@ -131,7 +217,10 @@ enum SleepScore {
         m[dayFmt.string(from: day)] = v
         UserDefaults.standard.set(m, forKey: appleKey)
     }
-    static func apple(on day: Date) -> Int? { appleScores[dayFmt.string(from: day)] }
+    static func apple(on day: Date) -> Int? {
+        let k = dayFmt.string(from: day)
+        return appleScores[k] ?? appleParts[k].map { $0.reduce(0, +) }
+    }
 
     /// 最小二乘拟合：苹果分 ≈ a + b·时长分 + c·入睡分 + d·中断分（加一点点约束防止乱跳）
     static func fit(_ xs: [[Double]], _ ys: [Double]) -> [Double]? {
@@ -165,29 +254,41 @@ enum SleepScore {
     /// 校准情况（给页面显示）：用了几天、平均差几分
     @MainActor static var calibrationNote = ""
 
-    /// 一串按日期排好的夜晚，每晚用前 14 晚的中位入睡时刻来评分；
-    /// 有 5 天以上你填的苹果分时，按它们校准三项的权重
+    /// 一串按日期排好的夜晚：每晚用前 13 晚的中位入睡时刻算「就寝」；
+    /// 有你填的苹果分项就逐项校准规则；只有总分的，再按总分整体校准
     static func scores(_ nights: [(Date, HealthService.SleepData)]) -> ([DayValue], String) {
-        var raw: [(Date, [Double])] = []
+        let d = detailed(nights)
+        return (d.0, d.1)
+    }
+
+    static func detailed(_ nights: [(Date, HealthService.SleepData)]) -> ([DayValue], String, [Date: [Double]]) {
+        var feats: [(Date, Features)] = []
         for (i, n) in nights.enumerated() {
-            // 苹果：看最近 13 晚的入睡时间是否规律
             let prev = nights[max(0, i - 13)..<i].compactMap { bedMinutes($0.1.bedtime) }.sorted()
             let usual: Double? = prev.count >= 3 ? prev[prev.count / 2] : nil
-            if let p = parts(n.1, usualBed: usual) { raw.append((n.0, p)) }
+            if let f = features(n.1, usualBed: usual) { feats.append((n.0, f)) }
         }
+        let partData = feats.compactMap { f in appleParts(on: f.0).map { (f.1, $0) } }
+        let model = fitModel(partData)
+        let raw: [(Date, [Double])] = feats.map { ($0.0, parts($0.1, model)) }
+        var byDay: [Date: [Double]] = [:]
+        for r in raw { byDay[r.0] = r.1 }
+        // 有分项数据时按分项规则直接相加（和苹果一样）；没有时用总分整体校准
+        let useParts = !partData.isEmpty
         let pairs = raw.compactMap { r in apple(on: r.0).map { (r.1, Double($0)) } }
-        let w = fit(pairs.map(\.0), pairs.map(\.1))
+        let w = useParts ? nil : fit(pairs.map(\.0), pairs.map(\.1))
         func val(_ p: [Double]) -> Double {
             guard let w else { return p.reduce(0, +) }
             return w[0] + w[1] * p[0] + w[2] * p[1] + w[3] * p[2]
         }
         let out = raw.map { DayValue(date: $0.0, value: min(100, max(0, val($0.1))).rounded()) }
-        var note = "还没用苹果分校准（至少要 5 天）"
-        if w != nil {
+        var note = "还没用苹果分校准（填几天苹果的分项最准）"
+        if !pairs.isEmpty && (useParts || w != nil) {
             let err = pairs.map { abs(min(100, max(0, val($0.0))).rounded() - $0.1) }
-            note = String(format: "已按 %d 天苹果分校准，平均差 %.1f 分", pairs.count, err.reduce(0, +) / Double(err.count))
+            note = String(format: "已按 %d 天苹果分%@校准，平均差 %.1f 分", pairs.count, useParts ? "（含 \(partData.count) 天分项）" : "",
+                          err.reduce(0, +) / Double(err.count))
         }
-        return (out, note)
+        return (out, note, byDay)
     }
 }
 
@@ -687,7 +788,7 @@ struct HealthCompareView: View {
 struct SleepCalibrationSheet: View {
     let mine: [DayValue]
     @Environment(\.dismiss) private var dismiss
-    @State private var texts: [Date: String] = [:]
+    @State private var texts: [Date: [String]] = [:]   // [总分, 时长, 就寝, 中断]
 
     private var days: [Date] {
         let cal = Calendar.current
@@ -697,19 +798,24 @@ struct SleepCalibrationSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                Section(footer: Text("打开手表或「健康」App 的睡眠，看每天的「睡眠评分」填进来。填了 5 天以上就会按它们自动调整算法。" + (SleepScore.calibrationNote.isEmpty ? "" : "\n现在：" + SleepScore.calibrationNote))) {
+                Section(footer: Text("打开「健康」App →「睡眠评分」，把苹果的总分填进来；最好连「时长 / 就寝 / 中断」三项一起填，填了分项会逐项校准，比只填总分准得多。" + (SleepScore.calibrationNote.isEmpty ? "" : "\n现在：" + SleepScore.calibrationNote))) {
                     ForEach(days, id: \.self) { d in
-                        HStack {
-                            Text(label(d))
-                            Spacer()
-                            if let m = mine.first(where: { Calendar.current.isDate($0.date, inSameDayAs: d) }) {
-                                Text("阿波 \(Int(m.value))").font(.caption).foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text(label(d)).font(.subheadline.weight(.semibold))
+                                Spacer()
+                                if let m = mine.first(where: { Calendar.current.isDate($0.date, inSameDayAs: d) }) {
+                                    Text("阿波算 \(Int(m.value))").font(.caption).foregroundStyle(.secondary)
+                                }
                             }
-                            TextField("苹果分", text: Binding(get: { texts[d] ?? "" }, set: { texts[d] = $0 }))
-                                .keyboardType(.numberPad)
-                                .multilineTextAlignment(.trailing)
-                                .frame(width: 70)
+                            HStack(spacing: 8) {
+                                field(d, 0, "总分")
+                                field(d, 1, "时长/50")
+                                field(d, 2, "就寝/30")
+                                field(d, 3, "中断/20")
+                            }
                         }
+                        .padding(.vertical, 2)
                     }
                 }
             }
@@ -717,18 +823,49 @@ struct SleepCalibrationSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("保存") {
-                        for d in days {
-                            let t = (texts[d] ?? "").trimmingCharacters(in: .whitespaces)
-                            SleepScore.setApple(Int(t).flatMap { (0...100).contains($0) ? $0 : nil }, on: d)
-                        }
-                        dismiss()
-                    }
+                    Button("保存") { save(); dismiss() }
                 }
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
             }
             .onAppear {
-                for d in days { if let v = SleepScore.apple(on: d) { texts[d] = String(v) } }
+                for d in days {
+                    var t = ["", "", "", ""]
+                    if let p = SleepScore.appleParts(on: d), p.count == 3 {
+                        t = [String(p.reduce(0, +)), String(p[0]), String(p[1]), String(p[2])]
+                    } else if let v = SleepScore.apple(on: d) {
+                        t[0] = String(v)
+                    }
+                    texts[d] = t
+                }
+            }
+        }
+    }
+
+    private func field(_ d: Date, _ i: Int, _ hint: String) -> some View {
+        TextField(hint, text: Binding(get: { (texts[d] ?? ["", "", "", ""])[i] }, set: { v in
+            var t = texts[d] ?? ["", "", "", ""]
+            t[i] = v
+            texts[d] = t
+        }))
+        .keyboardType(.numberPad)
+        .multilineTextAlignment(.center)
+        .font(.subheadline.monospacedDigit())
+        .padding(.vertical, 6)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.06)))
+    }
+
+    private func save() {
+        for d in days {
+            let t = (texts[d] ?? ["", "", "", ""]).map { Int($0.trimmingCharacters(in: .whitespaces)) }
+            let maxes = [50, 30, 20]
+            let partsOK = (1...3).allSatisfy { i in t[i].map { (0...maxes[i - 1]).contains($0) } ?? false }
+            if partsOK {
+                let p = [t[1]!, t[2]!, t[3]!]
+                SleepScore.setAppleParts(p, on: d)
+                SleepScore.setApple(p.reduce(0, +), on: d)
+            } else {
+                SleepScore.setAppleParts(nil, on: d)
+                SleepScore.setApple(t[0].flatMap { (0...100).contains($0) ? $0 : nil }, on: d)
             }
         }
     }

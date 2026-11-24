@@ -46,6 +46,7 @@ struct HealthDetailView: View {
     @State private var selected: Date?
     @State private var scores: [DayValue] = []      // 睡眠评分（和「趋势对比」同一套算法）
     @State private var scoreNote = ""
+    @State private var scoreParts: [Date: [Double]] = [:]   // 每晚的 时长 / 就寝 / 中断
     @State private var scoreSel: Date?
     @State private var weighTimes: [Date: Date] = [:]  // 体重：每天实际称重的时刻
 
@@ -318,7 +319,8 @@ struct HealthDetailView: View {
             let from = Calendar.current.date(byAdding: .day, value: -days, to: Calendar.current.startOfDay(for: Date()))!
             nights = all.filter { $0.0 >= from }
             values = nights.map { DayValue(date: $0.0, value: $0.1.asleep / 3600) }
-            let (sc, note) = SleepScore.scores(all)
+            let (sc, note, pp) = SleepScore.detailed(all)
+            scoreParts = pp
             scores = sc.filter { $0.date >= from }
             scoreNote = note
             scoreSel = nil
@@ -379,6 +381,13 @@ struct HealthDetailView: View {
                 Text(scorePicked == nil ? "最近" : dayText(p?.date ?? Date(), weekday: true))
                     .font(.caption).foregroundStyle(.secondary)
             }
+            if let p = p, let pp = scoreParts[p.date], pp.count == 3 {
+                HStack(spacing: 14) {
+                    partChip("时长", pp[0], 50, Color(red: 0.35, green: 0.45, blue: 1.0))
+                    partChip("就寝", pp[1], 30, Color(red: 0.35, green: 0.8, blue: 0.7))
+                    partChip("中断", pp[2], 20, Color(red: 0.95, green: 0.5, blue: 0.4))
+                }
+            }
             scoreChart(lo: lo)
                 .chartZoom(dates: zoomRange(scores.map(\.date)))
                 .frame(height: 160)
@@ -389,6 +398,13 @@ struct HealthDetailView: View {
         .contentShape(Rectangle())
         .onTapGesture { withAnimation(.easeOut(duration: 0.15)) { scoreSel = nil } }
         .glassCard(26)
+    }
+
+    private func partChip(_ name: String, _ v: Double, _ max: Int, _ c: Color) -> some View {
+        HStack(spacing: 4) {
+            Circle().fill(c).frame(width: 8, height: 8)
+            Text(name + " \(Int(v.rounded()))/\(max)").font(.caption.monospacedDigit())
+        }
     }
 
     private func scoreChart(lo: Double) -> some View {
