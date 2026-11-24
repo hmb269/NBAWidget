@@ -49,6 +49,8 @@ enum HealthService {
         var wake: Date?
         var wakeCount: Int? = nil       // 睡着后醒来几次（睡眠评分「中断」用）
         var awakeInside: TimeInterval? = nil  // 入睡后到最后醒来之间清醒了多久
+        var wakeCountAll: Int? = nil    // 含不到 5 分钟的短暂醒来
+        var awakeAllInside: TimeInterval? = nil
     }
 
     struct WeightData: Codable {
@@ -137,6 +139,11 @@ enum HealthService {
             let inside = merge(awakeIntervals).filter { $0.0 >= first.0 && $0.1 <= last.1 }
             d.wakeCount = inside.count
             d.awakeInside = inside.reduce(0) { $0 + $1.1.timeIntervalSince($1.0) }
+            // 苹果的「中断」连很短的醒来也算
+            let all = merge(best.filter { HKCategoryValueSleepAnalysis(rawValue: $0.value) == .awake }.map { ($0.startDate, $0.endDate) })
+                .filter { $0.0 >= first.0 && $0.1 <= last.1 }
+            d.wakeCountAll = all.count
+            d.awakeAllInside = all.reduce(0) { $0 + $1.1.timeIntervalSince($1.0) }
         }
         return d.asleep > 0 ? d : nil
     }

@@ -97,28 +97,30 @@ enum SleepScore {
             let ref = usualBed ?? (23 * 60 + 30)
             dev = usualBed == nil ? max(0, m - ref) : abs(m - ref)
         }
-        let awake = (s.awakeInside ?? s.awake) / 60
-        return Features(hours: h, bedDev: dev, wakes: s.wakeCount.map(Double.init), awakeMin: awake)
+        let awake = (s.awakeAllInside ?? s.awakeInside ?? s.awake) / 60
+        return Features(hours: h, bedDev: dev, wakes: (s.wakeCountAll ?? s.wakeCount).map(Double.init), awakeMin: awake)
     }
 
     /// 每项的扣分规则（可以用你填的苹果分项校准）
+    /// 默认值是按你填的 8 天苹果分项拟合出来的：
+    /// 时长 6:40→40、7:23→47、7:35→48、8:00→49；就寝偏 36 分→28、46 分→25
     struct Model {
-        var fullHours = 8.0      // 睡够几小时时长满分
-        var perHour = 12.5       // 每少睡 1 小时扣几分
+        var fullHours = 8.6      // 睡够几小时时长满分
+        var perHour = 2.6        // 少睡 x 小时扣 perHour·x² 分（越少扣得越快）
         var bedTol = 30.0        // 入睡偏差几分钟内满分
-        var bedSlope = 0.2       // 超出后每分钟扣几分
-        var perWake = 2.0        // 每多醒 1 次（第 1 次不算）扣几分
-        var perAwakeMin = 0.25   // 清醒超过 5 分钟后每分钟扣几分
+        var bedSlope = 0.3       // 超出后每分钟扣几分
+        var perWake = 1.0        // 每醒 1 次扣几分（含短暂醒来）
+        var perAwakeMin = 0.15   // 清醒每分钟扣几分
     }
 
     static func parts(_ f: Features, _ m: Model) -> [Double] {
         let h = f.hours
-        var dur = h >= m.fullHours ? 50 : max(0, 50 - (m.fullHours - h) * m.perHour)
+        var dur = h >= m.fullHours ? 50 : max(0, 50 - (m.fullHours - h) * (m.fullHours - h) * m.perHour)
         if h > 9.5 { dur = max(45, dur - (h - 9.5) * 3) }
         let bed: Double = f.bedDev.map { $0 <= m.bedTol ? 30 : max(0, 30 - ($0 - m.bedTol) * m.bedSlope) } ?? 24
         let inter: Double
         if let w = f.wakes {
-            inter = max(0, 20 - max(0, w - 1) * m.perWake - max(0, f.awakeMin - 5) * m.perAwakeMin)
+            inter = max(0, 20 - w * m.perWake - f.awakeMin * m.perAwakeMin)
         } else {
             inter = f.awakeMin <= 10 ? 20 : max(0, 20 - (f.awakeMin - 10) / 80 * 20)
         }
@@ -154,15 +156,17 @@ enum SleepScore {
         let durPts = data.map { ($0.0.hours, Double($0.1[0])) }
         if durPts.contains(where: { $0.1 < 50 }) {
             var best = (err: Double.infinity, full: m.fullHours, k: m.perHour)
-            var full = 7.0
-            while full <= 9.0001 {
+            var full = 7.5
+            while full <= 9.5001 {
                 var num = 0.0, den = 0.0
-                for (h, y) in durPts where h < full { num += (full - h) * (50 - y); den += (full - h) * (full - h) }
-                // 往默认的每小时扣分拉一点
-                let k = den > 0 ? (num + 0.05 * m.perHour) / (den + 0.05) : m.perHour
+                for (h, y) in durPts where h < full {
+                    let x = (full - h) * (full - h)
+                    num += x * (50 - y); den += x * x
+                }
+                let k = den > 0 ? (num + 0.2 * m.perHour) / (den + 0.2) : m.perHour
                 var err = 0.0
-                for (h, y) in durPts { let p = h >= full ? 50 : 50 - (full - h) * k; err += (p - y) * (p - y) }
-                err += abs(full - 8) * 0.5      // 没证据时偏向 8 小时
+                for (h, y) in durPts { let p = h >= full ? 50 : 50 - (full - h) * (full - h) * k; err += (p - y) * (p - y) }
+                err += abs(full - 8.6) * 0.3
                 if err < best.err { best = (err, full, k) }
                 full += 0.05
             }
@@ -179,11 +183,11 @@ enum SleepScore {
         // 中断：20 - a·(醒来次数-1) - b·(清醒分钟-5)，最小二乘，往默认值拉
         let ip = data.compactMap { d -> (Double, Double, Double)? in
             guard let w = d.0.wakes else { return nil }
-            return (max(0, w - 1), max(0, d.0.awakeMin - 5), 20 - Double(d.1[2]))
+            return (w, d.0.awakeMin, 20 - Double(d.1[2]))
         }
         if !ip.isEmpty {
             let lam = 2.0
-            var a11 = lam, a12 = 0.0, a22 = lam * 16, b1 = lam * m.perWake, b2 = lam * 16 * m.perAwakeMin
+            var a11 = lam, a12 = 0.0, a22 = lam * 25, b1 = lam * m.perWake, b2 = lam * 25 * m.perAwakeMin
             for (x1, x2, y) in ip { a11 += x1 * x1; a12 += x1 * x2; a22 += x2 * x2; b1 += x1 * y; b2 += x2 * y }
             let det = a11 * a22 - a12 * a12
             if abs(det) > 1e-9 {
@@ -281,7 +285,7 @@ enum SleepScore {
             var t = String(format: "阿波：时长 %.0f · 就寝 %.0f · 中断 %.0f", p[0], p[1], p[2])
             t += String(format: "\n睡 %d:%02d", Int(f.hours), Int((f.hours - Double(Int(f.hours))) * 60))
             if let dv = f.bedDev { t += String(format: " · 入睡偏 %.0f 分", dv) }
-            if let w = f.wakes { t += String(format: " · 醒 %.0f 次", w) }
+            if let w = f.wakes { t += String(format: " · 醒 %.0f 次（含短暂）", w) }
             t += String(format: " · 清醒 %.0f 分", f.awakeMin)
             info[d] = t
         }
