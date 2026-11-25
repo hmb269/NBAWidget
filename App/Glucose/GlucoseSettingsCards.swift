@@ -74,6 +74,10 @@ struct GlucoseSyncCard: View {
                     GlucoseLocal.save(list)
                     changed()
                     message = "读到 \(readings.count) 条，新增 \(added) 条。到「血糖」页标好测量人和餐点后，点「写入健康」"
+                    // 同步完自动跳到「血糖」页去标记
+                    if !readings.isEmpty {
+                        NotificationCenter.default.post(name: .openGlucoseTab, object: nil)
+                    }
                 }
             }
         }

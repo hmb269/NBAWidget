@@ -16,6 +16,7 @@ import UniformTypeIdentifiers
 extension Notification.Name {
     /// 导入备份后通知血糖页重新读数据
     static let glucoseDataChanged = Notification.Name("glucoseDataChanged")
+    static let openGlucoseTab = Notification.Name("openGlucoseTab")
 }
 
 /// 一张照片：小图文件名 + 相册编号

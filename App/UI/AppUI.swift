@@ -191,6 +191,11 @@ struct RootView: View {
         .scrollDismissesKeyboard(.interactively)
         // 切到别的页面时收起键盘，不然会一直挡着
         .onChange(of: tab) { _, _ in hideKeyboard() }
+#if !LITE
+        .onReceive(NotificationCenter.default.publisher(for: .openGlucoseTab)) { _ in
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { tab = 1 }
+        }
+#endif
         .onChange(of: scenePhase) { _, phase in
             if phase == .background { AutoBackup.run() }
         }
