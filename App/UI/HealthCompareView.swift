@@ -102,25 +102,26 @@ enum SleepScore {
     }
 
     /// 每项的扣分规则（可以用你填的苹果分项校准）
-    /// 默认值是按你填的 8 天苹果分项拟合出来的：
-    /// 时长 6:40→40、7:23→47、7:35→48、8:00→49；就寝偏 36 分→28、46 分→25
+    /// 默认值按你填的 21 天苹果分项拟合（每项平均差：时长 0.4、就寝 0.5、中断 0.9 分）
     struct Model {
-        var fullHours = 8.6      // 睡够几小时时长满分
-        var perHour = 2.6        // 少睡 x 小时扣 perHour·x² 分（越少扣得越快）
-        var bedTol = 30.0        // 入睡偏差几分钟内满分
-        var bedSlope = 0.3       // 超出后每分钟扣几分
-        var perWake = 1.0        // 每醒 1 次扣几分（含短暂醒来）
-        var perAwakeMin = 0.15   // 清醒每分钟扣几分
+        var fullHours = 9.15     // 时长：差 x 小时到 fullHours，扣 perHour·x^2.5 分
+        var perHour = 0.975
+        var durPow = 2.5
+        var bedTol = 25.0        // 入睡偏差几分钟内满分
+        var bedSlope = 0.156     // 超出后每分钟扣几分
+        var interBase = 23.6     // 中断 = interBase − perWake·醒来次数 − perAwakeMin·清醒分钟（0～20）
+        var perWake = 0.88
+        var perAwakeMin = 0.133
     }
 
     static func parts(_ f: Features, _ m: Model) -> [Double] {
         let h = f.hours
-        var dur = h >= m.fullHours ? 50 : max(0, 50 - (m.fullHours - h) * (m.fullHours - h) * m.perHour)
+        var dur = h >= m.fullHours ? 50 : max(0, 50 - pow(m.fullHours - h, m.durPow) * m.perHour)
         if h > 9.5 { dur = max(45, dur - (h - 9.5) * 3) }
         let bed: Double = f.bedDev.map { $0 <= m.bedTol ? 30 : max(0, 30 - ($0 - m.bedTol) * m.bedSlope) } ?? 24
         let inter: Double
         if let w = f.wakes {
-            inter = max(0, 20 - w * m.perWake - f.awakeMin * m.perAwakeMin)
+            inter = min(20, max(0, m.interBase - w * m.perWake - f.awakeMin * m.perAwakeMin))
         } else {
             inter = f.awakeMin <= 10 ? 20 : max(0, 20 - (f.awakeMin - 10) / 80 * 20)
         }
@@ -148,25 +149,39 @@ enum SleepScore {
     }
     static func appleParts(on day: Date) -> [Int]? { appleParts[dayFmt.string(from: day)] }
 
+    private static func solve3(_ A0: [[Double]], _ b0: [Double]) -> [Double]? {
+        var A = A0, b = b0
+        for c in 0..<3 {
+            guard let p = (c..<3).max(by: { abs(A[$0][c]) < abs(A[$1][c]) }), abs(A[p][c]) > 1e-9 else { return nil }
+            A.swapAt(c, p); b.swapAt(c, p)
+            for r in 0..<3 where r != c {
+                let f = A[r][c] / A[c][c]
+                for j in c..<3 { A[r][j] -= f * A[c][j] }
+                b[r] -= f * b[c]
+            }
+        }
+        return (0..<3).map { b[$0] / A[$0][$0] }
+    }
+
     /// 按分项数据拟合每项的扣分规则（数据少时尽量贴近默认值）
     static func fitModel(_ data: [(Features, [Int])]) -> Model {
         var m = Model()
         guard !data.isEmpty else { return m }
-        // 时长：在 7～9 小时里找满分线，再算每小时扣几分
+        // 时长：50 − c·(H−小时)^2.5，在 8～9.6 小时里找 H，再算 c（往默认值拉一点）
         let durPts = data.map { ($0.0.hours, Double($0.1[0])) }
-        if durPts.contains(where: { $0.1 < 50 }) {
+        if durPts.count >= 3 && durPts.contains(where: { $0.1 < 50 }) {
             var best = (err: Double.infinity, full: m.fullHours, k: m.perHour)
-            var full = 7.5
-            while full <= 9.5001 {
+            var full = 8.0
+            while full <= 9.6001 {
                 var num = 0.0, den = 0.0
                 for (h, y) in durPts where h < full {
-                    let x = (full - h) * (full - h)
+                    let x = pow(full - h, m.durPow)
                     num += x * (50 - y); den += x * x
                 }
-                let k = den > 0 ? (num + 0.2 * m.perHour) / (den + 0.2) : m.perHour
+                let k = den > 0 ? (num + 0.5 * m.perHour) / (den + 0.5) : m.perHour
                 var err = 0.0
-                for (h, y) in durPts { let p = h >= full ? 50 : 50 - (full - h) * (full - h) * k; err += (p - y) * (p - y) }
-                err += abs(full - 8.6) * 0.3
+                for (h, y) in durPts { let p = h >= full ? 50 : 50 - pow(full - h, m.durPow) * k; err += (p - y) * (p - y) }
+                err += abs(full - 9.15) * 0.5
                 if err < best.err { best = (err, full, k) }
                 full += 0.05
             }
@@ -174,25 +189,29 @@ enum SleepScore {
             m.perHour = max(0, best.k)
         }
         // 就寝：有不满分的才调斜率
-        let bedPts = data.compactMap { d -> (Double, Double)? in d.0.bedDev.map { ($0, Double(d.1[1])) } }.filter { $0.1 < 30 && $0.0 > m.bedTol }
-        if !bedPts.isEmpty {
-            let num = bedPts.map { ($0.0 - m.bedTol) * (30 - $0.1) }.reduce(0, +)
-            let den = bedPts.map { ($0.0 - m.bedTol) * ($0.0 - m.bedTol) }.reduce(0, +)
-            if den > 0 { m.bedSlope = max(0.02, num / den) }
+        let bedPts = data.compactMap { d -> (Double, Double)? in d.0.bedDev.map { ($0, Double(d.1[1])) } }.filter { $0.0 > m.bedTol }
+        if bedPts.count >= 2 {
+            let num = bedPts.map { ($0.0 - m.bedTol) * (30 - $0.1) }.reduce(0, +) + 100 * m.bedSlope
+            let den = bedPts.map { ($0.0 - m.bedTol) * ($0.0 - m.bedTol) }.reduce(0, +) + 100
+            m.bedSlope = max(0.02, num / den)
         }
-        // 中断：20 - a·(醒来次数-1) - b·(清醒分钟-5)，最小二乘，往默认值拉
+        // 中断：y = c0 − a·醒来次数 − b·清醒分钟，最小二乘（3 个参数），往默认值拉
         let ip = data.compactMap { d -> (Double, Double, Double)? in
             guard let w = d.0.wakes else { return nil }
-            return (w, d.0.awakeMin, 20 - Double(d.1[2]))
+            return (w, d.0.awakeMin, Double(d.1[2]))
         }
-        if !ip.isEmpty {
-            let lam = 2.0
-            var a11 = lam, a12 = 0.0, a22 = lam * 25, b1 = lam * m.perWake, b2 = lam * 25 * m.perAwakeMin
-            for (x1, x2, y) in ip { a11 += x1 * x1; a12 += x1 * x2; a22 += x2 * x2; b1 += x1 * y; b2 += x2 * y }
-            let det = a11 * a22 - a12 * a12
-            if abs(det) > 1e-9 {
-                m.perWake = max(0, (b1 * a22 - b2 * a12) / det)
-                m.perAwakeMin = max(0, (a11 * b2 - a12 * b1) / det)
+        if ip.count >= 5 {
+            let prior = [m.interBase, -m.perWake, -m.perAwakeMin]
+            let lam = [1.0, 20.0, 400.0]
+            var A = [[Double]](repeating: [0, 0, 0], count: 3)
+            var bb = [0.0, 0, 0]
+            for i in 0..<3 { A[i][i] = lam[i]; bb[i] = lam[i] * prior[i] }
+            for (w, mins, y) in ip {
+                let r = [1, w, mins]
+                for i in 0..<3 { bb[i] += r[i] * y; for j in 0..<3 { A[i][j] += r[i] * r[j] } }
+            }
+            if let c = solve3(A, bb) {
+                m.interBase = c[0]; m.perWake = max(0, -c[1]); m.perAwakeMin = max(0, -c[2])
             }
         }
         return m
