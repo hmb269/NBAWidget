@@ -94,8 +94,8 @@ enum SleepScore {
         guard h > 0.5 else { return nil }
         var dev: Double?
         if let m = bedMinutes(s.bedtime) {
-            let ref = usualBed ?? (23 * 60 + 30)
-            dev = usualBed == nil ? max(0, m - ref) : abs(m - ref)
+            // 带正负：正 = 比平时晚睡，负 = 比平时早睡（苹果早睡基本不扣分）
+            dev = m - (usualBed ?? (23 * 60 + 30))
         }
         let awake = (s.awakeAllInside ?? s.awakeInside ?? s.awake) / 60
         return Features(hours: h, bedDev: dev, wakes: (s.wakeCountAll ?? s.wakeCount).map(Double.init), awakeMin: awake)
@@ -114,11 +114,21 @@ enum SleepScore {
         var perAwakeMin = 0.133
     }
 
+    /// 就寝分：晚睡超过容忍分钟后按斜率扣；早睡 60 分钟内不扣，再早每 30 分钟扣 1 分，最多扣 6 分
+    /// （早睡规则参考 the5krunner 和 GitHub 上 MulletBoy 的反推公式）
+    static func bedPoints(_ dev: Double, _ m: Model) -> Double {
+        if dev < 0 {
+            let early = -dev
+            return early <= 60 ? 30 : 30 - min(6, (early - 60) / 30)
+        }
+        return dev <= m.bedTol ? 30 : max(0, 30 - (dev - m.bedTol) * m.bedSlope)
+    }
+
     static func parts(_ f: Features, _ m: Model) -> [Double] {
         let h = f.hours
         var dur = h >= m.fullHours ? 50 : max(0, 50 - pow(m.fullHours - h, m.durPow) * m.perHour)
         if h > 9.5 { dur = max(45, dur - (h - 9.5) * 3) }
-        let bed: Double = f.bedDev.map { $0 <= m.bedTol ? 30 : max(0, 30 - ($0 - m.bedTol) * m.bedSlope) } ?? 24
+        let bed: Double = f.bedDev.map { bedPoints($0, m) } ?? 24
         let inter: Double
         if let w = f.wakes {
             inter = min(20, max(0, m.interBase - w * m.perWake - f.awakeMin * m.perAwakeMin))
@@ -189,11 +199,24 @@ enum SleepScore {
             m.perHour = max(0, best.k)
         }
         // 就寝：有不满分的才调斜率
-        let bedPts = data.compactMap { d -> (Double, Double)? in d.0.bedDev.map { ($0, Double(d.1[1])) } }.filter { $0.0 > m.bedTol }
-        if bedPts.count >= 2 {
-            let num = bedPts.map { ($0.0 - m.bedTol) * (30 - $0.1) }.reduce(0, +) + 100 * m.bedSlope
-            let den = bedPts.map { ($0.0 - m.bedTol) * ($0.0 - m.bedTol) }.reduce(0, +) + 100
-            m.bedSlope = max(0.02, num / den)
+        // 就寝：只看晚睡的晚上，在 10～35 分钟里找容忍度，再算每分钟扣几分
+        let late = data.compactMap { d -> (Double, Double)? in d.0.bedDev.map { ($0, Double(d.1[1])) } }.filter { $0.0 >= 0 }
+        if late.contains(where: { $0.1 < 30 }) {
+            var best = (err: Double.infinity, tol: m.bedTol, k: m.bedSlope)
+            var tol = 10.0
+            while tol <= 35.001 {
+                let over = late.filter { $0.0 > tol }
+                let num = over.map { ($0.0 - tol) * (30 - $0.1) }.reduce(0, +) + 100 * m.bedSlope
+                let den = over.map { ($0.0 - tol) * ($0.0 - tol) }.reduce(0, +) + 100
+                let k = max(0.02, num / den)
+                var err = late.map { p -> Double in
+                    let v = p.0 <= tol ? 30 : max(0, 30 - (p.0 - tol) * k); return (v - p.1) * (v - p.1)
+                }.reduce(0, +)
+                err += abs(tol - 25) * 0.05
+                if err < best.err { best = (err, tol, k) }
+                tol += 1
+            }
+            m.bedTol = best.tol; m.bedSlope = best.k
         }
         // 中断：y = c0 − a·醒来次数 − b·清醒分钟，最小二乘（3 个参数），往默认值拉
         let ip = data.compactMap { d -> (Double, Double, Double)? in
@@ -289,8 +312,9 @@ enum SleepScore {
     static func detailed(_ nights: [(Date, HealthService.SleepData)]) -> ([DayValue], String, [Date: [Double]]) {
         var feats: [(Date, Features)] = []
         for (i, n) in nights.enumerated() {
-            let prev = nights[max(0, i - 13)..<i].compactMap { bedMinutes($0.1.bedtime) }.sorted()
-            let usual: Double? = prev.count >= 3 ? prev[prev.count / 2] : nil
+            // 平时入睡时刻 = 前 13 晚的平均（反推公式用的就是平均）
+            let prev = nights[max(0, i - 13)..<i].compactMap { bedMinutes($0.1.bedtime) }
+            let usual: Double? = prev.count >= 3 ? prev.reduce(0, +) / Double(prev.count) : nil
             if let f = features(n.1, usualBed: usual) { feats.append((n.0, f)) }
         }
         let partData = feats.compactMap { f in appleParts(on: f.0).map { (f.1, $0) } }
@@ -303,7 +327,7 @@ enum SleepScore {
             let p = parts(f, model)
             var t = String(format: "阿波：时长 %.0f · 就寝 %.0f · 中断 %.0f", p[0], p[1], p[2])
             t += String(format: "\n睡 %d:%02d", Int(f.hours), Int((f.hours - Double(Int(f.hours))) * 60))
-            if let dv = f.bedDev { t += String(format: " · 入睡偏 %.0f 分", dv) }
+            if let dv = f.bedDev { t += String(format: dv >= 0 ? " · 比平时晚睡 %.0f 分" : " · 比平时早睡 %.0f 分", abs(dv)) }
             if let w = f.wakes { t += String(format: " · 醒 %.0f 次（含短暂）", w) }
             t += String(format: " · 清醒 %.0f 分", f.awakeMin)
             info[d] = t
