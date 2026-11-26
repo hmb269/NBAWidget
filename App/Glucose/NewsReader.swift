@@ -4,143 +4,206 @@ import WebKit
 import Translation
 #endif
 
-// 资讯阅读页：把网页正文抓下来，用 App 自己的样式排版；国外文章自动翻译成中文
+// 资讯阅读页：在后台用看不见的网页把文章打开（能处理跳转和要运行脚本的网站），
+// 用 Mozilla Readability 提取正文（段落、小标题、图片），再用 App 自己的样式排版；国外文章逐段翻译
+
+struct NewsBlock: Codable, Hashable {
+    var k: String      // p 段落 / h 小标题 / li 列表 / q 引用 / img 图片
+    var v: String
+}
 
 struct NewsArticle: Codable {
     var title: String?
+    var site: String?
     var image: String?
-    var paragraphs: [String]
-    var zh: [String]?
+    var blocks: [NewsBlock]
+    var zh: [String]?          // 和 blocks 一一对应（图片位置放原地址）
     var finalURL: String
+
+    var textCount: Int { blocks.filter { $0.k != "img" }.map(\.v.count).reduce(0, +) }
 }
 
-enum NewsExtractor {
-    private static let cacheDir: URL = {
-        let d = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("news-articles")
+enum NewsCache {
+    private static let dir: URL = {
+        let d = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("news-articles-v2")
         try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
         return d
     }()
-
     private static func file(_ link: String) -> URL {
         let name = String(link.unicodeScalars.reduce(UInt64(5381)) { ($0 &* 33) &+ UInt64($1.value) })
-        return cacheDir.appendingPathComponent(name + ".json")
+        return dir.appendingPathComponent(name + ".json")
     }
-
-    static func cached(_ link: String) -> NewsArticle? {
+    static func get(_ link: String) -> NewsArticle? {
         guard let d = try? Data(contentsOf: file(link)) else { return nil }
         return try? JSONDecoder().decode(NewsArticle.self, from: d)
     }
-
-    static func save(_ a: NewsArticle, for link: String) {
+    static func put(_ a: NewsArticle, for link: String) {
         if let d = try? JSONEncoder().encode(a) { try? d.write(to: file(link)) }
     }
+}
 
+// MARK: - 后台网页提取
+
+@MainActor
+final class WebArticleExtractor: NSObject, WKNavigationDelegate {
+    private var web: WKWebView?
+    private var cont: CheckedContinuation<NewsArticle?, Never>?
+    private var best: NewsArticle?
+    private var attempts = 0
+    private var pending: DispatchWorkItem?
+
+    private static let script = ReadabilityJS.source + "\n" + #"""
+    (function(){
+      try {
+        function txt(e){ return (e.textContent || '').replace(/\s+/g, ' ').trim(); }
+        function abs(u){ try { return new URL(u, location.href).href; } catch(e) { return null; } }
+        function imgSrc(i){
+          var s = i.getAttribute('data-src') || i.getAttribute('data-original') || i.getAttribute('data-lazy-src') || i.getAttribute('src');
+          if (!s || /^data:/.test(s)) return null;
+          return abs(s);
+        }
+        var og = document.querySelector('meta[property="og:image"]');
+        var doc = document.cloneNode(true);
+        var art = new Readability(doc, { charThreshold: 150 }).parse();
+        if (!art) return JSON.stringify({ ok: false });
+        var box = document.createElement('div');
+        box.innerHTML = art.content;
+        var out = [];
+        function pushImgs(el){ el.querySelectorAll('img').forEach(function(i){ var s = imgSrc(i); if (s) out.push({k:'img', v:s}); }); }
+        function directText(el){
+          for (var n = el.firstChild; n; n = n.nextSibling) if (n.nodeType === 3 && n.textContent.trim().length > 0) return true;
+          return false;
+        }
+        function walk(n){
+          for (var c = n.firstElementChild; c; c = c.nextElementSibling) {
+            var t = c.tagName;
+            if (/^H[1-6]$/.test(t)) { var s = txt(c); if (s) out.push({k:'h', v:s}); continue; }
+            if (t === 'IMG') { var s2 = imgSrc(c); if (s2) out.push({k:'img', v:s2}); continue; }
+            if (t === 'FIGURE' || t === 'PICTURE') { pushImgs(c); continue; }
+            if (t === 'P' || t === 'BLOCKQUOTE' || t === 'LI' || t === 'PRE' || t === 'TABLE' || directText(c) || c.children.length === 0) {
+              pushImgs(c);
+              var s3 = txt(c);
+              if (s3.length > 1) out.push({k: t === 'LI' ? 'li' : (t === 'BLOCKQUOTE' ? 'q' : 'p'), v: s3});
+              continue;
+            }
+            walk(c);
+          }
+        }
+        walk(box);
+        return JSON.stringify({ ok: true, title: art.title, site: art.siteName, image: og ? abs(og.getAttribute('content')) : null, blocks: out, url: location.href });
+      } catch (e) { return JSON.stringify({ ok: false, err: String(e) }); }
+    })();
+    """#
+
+    func extract(_ url: URL) async -> NewsArticle? {
+        await withCheckedContinuation { c in
+            cont = c
+            let cfg = WKWebViewConfiguration()
+            cfg.websiteDataStore = .nonPersistent()
+            let w = WKWebView(frame: CGRect(x: -3000, y: 0, width: 390, height: 844), configuration: cfg)
+            w.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
+            w.navigationDelegate = self
+            w.alpha = 0.01
+            w.isUserInteractionEnabled = false
+            // 挂到窗口上，脚本才会正常跑
+            if let win = UIApplication.shared.connectedScenes.compactMap({ ($0 as? UIWindowScene)?.keyWindow }).first {
+                win.insertSubview(w, at: 0)
+            }
+            web = w
+            w.load(URLRequest(url: url, timeoutInterval: 20))
+            DispatchQueue.main.asyncAfter(deadline: .now() + 22) { [weak self] in self?.finish() }
+        }
+    }
+
+    private func schedule(_ delay: Double) {
+        pending?.cancel()
+        let job = DispatchWorkItem { [weak self] in Task { @MainActor in await self?.attempt() } }
+        pending = job
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: job)
+    }
+
+    private func attempt() async {
+        guard let w = web, cont != nil else { return }
+        attempts += 1
+        let host = w.url?.host ?? ""
+        let redirecting = host.contains("news.google.") || host.contains("bing.com")
+        if !redirecting, let s = try? await w.evaluateJavaScript(Self.script) as? String,
+           let d = s.data(using: .utf8),
+           let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any], j["ok"] as? Bool == true {
+            let raw = (j["blocks"] as? [[String: String]]) ?? []
+            let blocks = Self.clean(raw.compactMap { b in b["k"].flatMap { k in b["v"].map { NewsBlock(k: k, v: $0) } } })
+            let a = NewsArticle(title: j["title"] as? String, site: j["site"] as? String, image: j["image"] as? String,
+                                blocks: blocks, zh: nil, finalURL: (j["url"] as? String) ?? w.url?.absoluteString ?? "")
+            if a.textCount > (best?.textCount ?? 0) { best = a }
+            // 正文够长就不用再等了
+            if a.textCount >= 300 && attempts >= 2 { finish(); return }
+        }
+        if attempts < 8 { schedule(1.5) } else { finish() }
+    }
+
+    private func finish() {
+        pending?.cancel()
+        guard let c = cont else { return }
+        cont = nil
+        web?.stopLoading()
+        web?.navigationDelegate = nil
+        web?.removeFromSuperview()
+        web = nil
+        c.resume(returning: (best?.textCount ?? 0) >= 80 ? best : nil)
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        schedule(1.0)
+    }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        schedule(0.5)
+    }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        schedule(0.5)
+    }
+    /// 不让它跳到别的 App（比如「打开搜狐 App」）
+    func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        let scheme = action.request.url?.scheme?.lowercased() ?? ""
+        decisionHandler(["http", "https", "about", "data", "blob"].contains(scheme) ? .allow : .cancel)
+    }
+
+    // 去掉广告、下载 App、版权声明之类的段落和小图标
+    private static let junk = ["打开APP", "打开App", "下载APP", "下载App", "返回搜狐", "查看更多", "责任编辑", "免责声明", "版权归", "版权所有",
+                               "未经授权", "转载请", "扫码", "扫描二维码", "关注我们", "关注公众号", "点击关注", "点击查看", "阅读原文", "广告",
+                               "Copyright", "All rights reserved", "Cookie", "Subscribe", "newsletter", "Sign up", "Click here",
+                               "Story Source", "Materials provided by", "Cite This Page", "Journal Reference", "Provided by", "More information:",
+                               "This document is subject to copyright", "Explore further"]
+    private static let badImg = ["logo", "icon", "avatar", "qrcode", "qr_code", "erweima", "share", "banner", "/ad/", "ads.", "pixel", "1x1", ".gif", ".svg"]
+
+    private static func clean(_ blocks: [NewsBlock]) -> [NewsBlock] {
+        var out: [NewsBlock] = []
+        var seen = Set<String>()
+        for b in blocks {
+            if b.k == "img" {
+                let l = b.v.lowercased()
+                guard !badImg.contains(where: { l.contains($0) }), !seen.contains(b.v) else { continue }
+            } else {
+                let t = b.v
+                guard t.count >= 2, !(t.count < 60 && junk.contains(where: { t.localizedCaseInsensitiveContains($0) })) else { continue }
+                guard !seen.contains(t) else { continue }
+            }
+            seen.insert(b.v)
+            out.append(b)
+        }
+        // 末尾的短小杂项（编辑、来源之类）
+        while let last = out.last, last.k != "img", last.v.count < 25 { out.removeLast() }
+        return out
+    }
+}
+
+enum NewsExtractor {
+    @MainActor
     static func load(_ link: String) async -> NewsArticle? {
-        if let c = cached(link) { return c }
+        if let c = NewsCache.get(link) { return c }
         guard let u = URL(string: link) else { return nil }
-        var req = URLRequest(url: u, timeoutInterval: 15)
-        req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
-        req.setValue("zh-CN,zh;q=0.9,en;q=0.8", forHTTPHeaderField: "Accept-Language")
-        guard let (data, resp) = try? await URLSession.shared.data(for: req) else { return nil }
-        var html = decode(data, resp)
-        var final = resp.url?.absoluteString ?? link
-        // 必应的跳转页：找真正的地址再抓一次
-        if final.contains("bing.com"), let real = firstMatch(html, #"(?:url|href)\s*[=:]\s*["']?(https?://(?!www\.bing|cn\.bing)[^"'\s>]+)"#) {
-            let r = real.replacingOccurrences(of: "&amp;", with: "&")
-            if let u2 = URL(string: r) {
-                var req2 = req; req2.url = u2
-                if let (d2, resp2) = try? await URLSession.shared.data(for: req2) {
-                    html = decode(d2, resp2); final = resp2.url?.absoluteString ?? r
-                }
-            }
-        }
-        let a = extract(html, url: final)
-        if a.paragraphs.count >= 2 { save(a, for: link) }
+        let a = await WebArticleExtractor().extract(u)
+        if let a { NewsCache.put(a, for: link) }
         return a
-    }
-
-    private static func decode(_ data: Data, _ resp: URLResponse) -> String {
-        var enc: String.Encoding = .utf8
-        var name = resp.textEncodingName
-        if name == nil, let head = String(data: data.prefix(3000), encoding: .ascii) {
-            name = firstMatch(head, #"charset=["']?([A-Za-z0-9_\-]+)"#)
-        }
-        if let n = name?.lowercased() {
-            let cf = CFStringConvertIANACharSetNameToEncoding(n as CFString)
-            if cf != kCFStringEncodingInvalidId { enc = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(cf)) }
-        }
-        return String(data: data, encoding: enc) ?? String(decoding: data, as: UTF8.self)
-    }
-
-    static func firstMatch(_ s: String, _ pattern: String) -> String? {
-        guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
-              let m = re.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)), m.numberOfRanges > 1,
-              let r = Range(m.range(at: 1), in: s) else { return nil }
-        return String(s[r])
-    }
-
-    private static func all(_ s: String, _ pattern: String) -> [String] {
-        guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive, .dotMatchesLineSeparators]) else { return [] }
-        return re.matches(in: s, range: NSRange(s.startIndex..., in: s)).compactMap { m in
-            Range(m.range(at: 1), in: s).map { String(s[$0]) }
-        }
-    }
-
-    private static func clean(_ s: String) -> String {
-        var t = s.replacingOccurrences(of: "<br\\s*/?>", with: "\n", options: [.regularExpression, .caseInsensitive])
-        t = t.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
-        for (a, b) in [("&nbsp;", " "), ("&amp;", "&"), ("&quot;", "\""), ("&#39;", "'"), ("&rsquo;", "'"), ("&lsquo;", "'"),
-                       ("&ldquo;", "“"), ("&rdquo;", "”"), ("&mdash;", "—"), ("&ndash;", "–"), ("&lt;", "<"), ("&gt;", ">"), ("&hellip;", "…")] {
-            t = t.replacingOccurrences(of: a, with: b)
-        }
-        t = t.replacingOccurrences(of: "&#(\\d+);", with: "", options: .regularExpression)
-        return t.replacingOccurrences(of: "[ \\t\\u3000]+", with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private static let junk = ["copyright", "all rights reserved", "cookie", "subscribe", "newsletter", "sign up", "click here",
-                               "版权", "责任编辑", "免责声明", "转载", "扫码", "关注我们", "点击", "下载app", "广告", "原标题",
-                               "来源：", "编辑：", "记者：", "联系我们", "举报", "Story Source", "Materials provided by", "Journal Reference",
-                               "Cite This Page", "This document is subject to copyright", "More information:", "Provided by"]
-
-    static func extract(_ raw: String, url: String) -> NewsArticle {
-        // 去掉脚本、样式、导航、页脚
-        var html = raw
-        for tag in ["script", "style", "noscript", "nav", "footer", "header", "aside", "form", "figcaption"] {
-            html = html.replacingOccurrences(of: "(?s)<\(tag)\\b[^>]*>.*?</\(tag)>", with: "", options: [.regularExpression, .caseInsensitive])
-        }
-        let title = firstMatch(raw, #"<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)"#)
-            ?? firstMatch(raw, #"<title[^>]*>([^<]+)</title>"#)
-        var image = firstMatch(raw, #"<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)"#)
-            ?? firstMatch(raw, #"<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']"#)
-        if let i = image, i.hasPrefix("//") { image = "https:" + i }
-
-        // 已知网站的正文区域
-        var scope = html
-        let known: [(String, String)] = [
-            ("sciencedaily.com", #"<div[^>]+id=["']text["'][^>]*>(.*?)</div>"#),
-            ("medicalxpress.com", #"<div[^>]+class=["'][^"']*article-main[^"']*["'][^>]*>(.*?)<div[^>]+class=["'][^"']*article-main__more"#),
-        ]
-        for (host, pat) in known where url.contains(host) {
-            if let body = all(html, pat).first { scope = body }
-        }
-
-        var paras: [String] = []
-        for p in all(scope, #"<p\b[^>]*>(.*?)</p>"#) {
-            let t = clean(p)
-            let cjk = t.unicodeScalars.contains { (0x4E00...0x9FFF).contains($0.value) }
-            guard t.count >= (cjk ? 18 : 50) else { continue }
-            guard !junk.contains(where: { t.localizedCaseInsensitiveContains($0) }) else { continue }
-            if !paras.contains(t) { paras.append(t) }
-        }
-        // 没有 <p> 的网站：按 <div> 里的大段文字兜底
-        if paras.count < 2 {
-            for d in all(scope, #"<div\b[^>]*>([^<]{60,})</div>"#) {
-                let t = clean(d)
-                if t.count >= 40, !junk.contains(where: { t.localizedCaseInsensitiveContains($0) }) { paras.append(t) }
-            }
-        }
-        return NewsArticle(title: title.map(clean), image: image, paragraphs: Array(paras.prefix(60)), zh: nil, finalURL: url)
     }
 }
 
@@ -151,7 +214,7 @@ struct NewsReaderView: View {
     @State private var article: NewsArticle?
     @State private var loading = true
     @State private var showOriginal = false
-    @State private var fontSize: CGFloat = 17
+    @AppStorage("newsFontSize") private var fontSize: Double = 17
 
     private let accent = Color(red: 0.35, green: 0.7, blue: 1.0)
 
@@ -160,14 +223,14 @@ struct NewsReaderView: View {
             VStack(alignment: .leading, spacing: 16) {
                 header
                 if loading {
-                    HStack { Spacer(); ProgressView("正在加载正文…"); Spacer() }.padding(.vertical, 40)
-                } else if let a = article, a.paragraphs.count >= 2 {
-                    if let img = a.image, let u = URL(string: img) {
-                        AsyncImage(url: u) { ph in
-                            if let i = ph.image { i.resizable().scaledToFill() } else { Color.white.opacity(0.05) }
-                        }
-                        .frame(maxWidth: .infinity).frame(height: 200)
-                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    VStack(spacing: 10) {
+                        ProgressView()
+                        Text("正在提取正文…").font(.footnote).foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity).padding(.vertical, 50)
+                } else if let a = article {
+                    if a.blocks.first?.k != "img", let img = a.image, let u = URL(string: img) {
+                        imageView(u)
                     }
                     if item.foreign {
                         Picker("", selection: $showOriginal) {
@@ -188,7 +251,7 @@ struct NewsReaderView: View {
                         if !item.shownSummary.isEmpty {
                             Text(item.shownSummary).font(.system(size: fontSize)).lineSpacing(6)
                         }
-                        Text("这个网站的正文没法直接排版，点下面「打开原网页」看全文。")
+                        Text("这篇没提取到正文，可以点下面「打开原网页」看。")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                 }
@@ -246,7 +309,7 @@ struct NewsReaderView: View {
                         .padding(.horizontal, 5).padding(.vertical, 1)
                         .background(Capsule().fill(accent.opacity(0.15)))
                 }
-                Text(item.source)
+                Text(article?.site?.isEmpty == false ? article!.site! : item.source).lineLimit(1)
                 Text("·")
                 Text(dateText(item.date))
             }
@@ -255,18 +318,63 @@ struct NewsReaderView: View {
         }
     }
 
-    @ViewBuilder
+    private func imageView(_ u: URL) -> some View {
+        AsyncImage(url: u) { ph in
+            if let i = ph.image {
+                i.resizable().scaledToFit()
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            } else if ph.error != nil {
+                EmptyView()
+            } else {
+                RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.white.opacity(0.05)).frame(height: 180)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
     private func articleBody(_ a: NewsArticle) -> some View {
-        let ps = (item.foreign && !showOriginal) ? (a.zh ?? a.paragraphs) : a.paragraphs
-        VStack(alignment: .leading, spacing: 14) {
-            ForEach(Array(ps.enumerated()), id: \.offset) { i, p in
-                Text(p)
-                    .font(.system(size: fontSize, weight: i == 0 && item.foreign ? .semibold : .regular))
-                    .lineSpacing(fontSize * 0.45)
-                    .foregroundStyle(.primary.opacity(0.92))
-                    .textSelection(.enabled)
+        let useZh = item.foreign && !showOriginal
+        let titleKey = (a.title ?? item.title).filter { !$0.isWhitespace }
+        return VStack(alignment: .leading, spacing: 14) {
+            ForEach(Array(a.blocks.enumerated()), id: \.offset) { i, b in
+                let text = useZh ? (a.zh?[safe: i] ?? b.v) : b.v
+                // 正文开头重复的标题不再显示
+                if i < 3 && b.k != "img" && b.v.filter({ !$0.isWhitespace }) == titleKey {
+                    EmptyView()
+                } else {
+                    block(b, text: text)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func block(_ b: NewsBlock, text: String) -> some View {
+        switch b.k {
+        case "img":
+            if let u = URL(string: b.v) { imageView(u) }
+        case "h":
+            Text(text).font(.system(size: fontSize + 2, weight: .bold))
+                .fixedSize(horizontal: false, vertical: true).padding(.top, 6)
+        case "li":
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Circle().fill(accent).frame(width: 5, height: 5).offset(y: -3)
+                Text(text).font(.system(size: fontSize)).lineSpacing(fontSize * 0.4)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        case "q":
+            HStack(spacing: 10) {
+                RoundedRectangle(cornerRadius: 2).fill(accent.opacity(0.7)).frame(width: 3)
+                Text(text).font(.system(size: fontSize - 1)).italic().foregroundStyle(.secondary)
+                    .lineSpacing(fontSize * 0.4).fixedSize(horizontal: false, vertical: true)
+            }
+        default:
+            Text(text)
+                .font(.system(size: fontSize))
+                .lineSpacing(fontSize * 0.45)
+                .foregroundStyle(.primary.opacity(0.92))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -274,6 +382,10 @@ struct NewsReaderView: View {
         let f = DateFormatter(); f.dateFormat = "yyyy年M月d日 HH:mm"
         return f.string(from: d)
     }
+}
+
+private extension Array {
+    subscript(safe i: Int) -> Element? { indices.contains(i) ? self[i] : nil }
 }
 
 /// 国外文章正文逐段翻译（iOS 18 起）
@@ -299,27 +411,28 @@ private struct ArticleTranslator18: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .onChange(of: article?.paragraphs.count ?? 0) { _, n in
-                if n >= 2 && article?.zh == nil && config == nil {
+            .onChange(of: article?.blocks.count ?? 0) { _, n in
+                if n >= 1 && article?.zh == nil && config == nil {
                     config = .init(source: Locale.Language(identifier: "en"), target: Locale.Language(identifier: "zh-Hans"))
                 }
             }
             .translationTask(config) { session in
-                let ps = await MainActor.run { article?.paragraphs ?? [] }
-                guard !ps.isEmpty else { return }
-                let reqs = ps.enumerated().map { TranslationSession.Request(sourceText: $0.element, clientIdentifier: String($0.offset)) }
+                let bs = await MainActor.run { article?.blocks ?? [] }
+                guard !bs.isEmpty else { return }
+                let reqs = bs.enumerated().filter { $0.element.k != "img" }
+                    .map { TranslationSession.Request(sourceText: $0.element.v, clientIdentifier: String($0.offset)) }
                 guard let res = try? await session.translations(from: reqs) else { return }
-                var out = ps
+                var out = bs.map(\.v)
                 for r in res { if let i = r.clientIdentifier.flatMap(Int.init), i < out.count { out[i] = r.targetText } }
                 await MainActor.run {
                     article?.zh = out
-                    if let a = article { NewsExtractor.save(a, for: link) }
+                    if let a = article { NewsCache.put(a, for: link) }
                 }
             }
     }
 }
 
-/// 正文抓不到时，在 App 里直接显示网页
+/// 打开原网页（在 App 里）
 struct NewsWebView: UIViewRepresentable {
     let url: URL
     func makeUIView(context: Context) -> WKWebView {
