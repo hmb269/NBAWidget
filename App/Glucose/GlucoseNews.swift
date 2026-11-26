@@ -271,7 +271,6 @@ struct GlucoseNewsCard: View {
 struct GlucoseNewsView: View {
     @ObservedObject private var store = NewsStore.shared
     @State private var scope = 0          // 0 全部 1 国内 2 国外
-    @State private var opening: NewsItem?
 
     private var shown: [NewsItem] {
         switch scope {
@@ -305,8 +304,11 @@ struct GlucoseNewsView: View {
                     Text(g.0).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading).padding(.top, 4)
                     ForEach(g.1) { it in
-                        Button { store.markRead(it); opening = it } label: { row(it) }
+                        NavigationLink {
+                            NewsReaderView(item: it)
+                        } label: { row(it) }
                             .buttonStyle(.plain)
+                            .simultaneousGesture(TapGesture().onEnded { store.markRead(it) })
                     }
                 }
 
@@ -329,9 +331,6 @@ struct GlucoseNewsView: View {
         .refreshable { await store.refresh() }
         .task { await store.refreshIfNeeded() }
         .modifier(NewsTranslator())
-        .sheet(item: $opening) { it in
-            if let u = URL(string: it.link) { SafariView(url: u).ignoresSafeArea() }
-        }
     }
 
     private var statusText: String {
