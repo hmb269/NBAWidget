@@ -236,8 +236,16 @@ struct GlucoseTrendCard: View {
                 stat("平均", values.isEmpty ? nil : String(format: "%.1f", values.reduce(0, +) / Double(values.count)))
                 stat("最高", values.max().map { String(format: "%.1f", $0) }, jump: data.max { $0.1 < $1.1 }?.0)
                 stat("最低", values.min().map { String(format: "%.1f", $0) }, jump: data.min { $0.1 < $1.1 }?.0)
-                stat("超线", values.isEmpty ? nil : "\(values.filter { $0 > kind.safeLine }.count)/\(values.count)")
+                stat("超标", values.isEmpty ? nil : "\(values.filter { $0 > kind.safeLine }.count)", jump: data.last { $0.1 > kind.safeLine }?.0)
                 stat("偏低", values.isEmpty ? nil : "\(values.filter { $0 < GlucoseLow.line }.count)", jump: data.first { $0.1 < GlucoseLow.line }?.0)
+            }
+            if !values.isEmpty {
+                let over = values.filter { $0 > kind.safeLine }.count
+                let low = values.filter { $0 < GlucoseLow.line }.count
+                Text("共测 \(values.count) 次 · 超标 \(over) 次（\(Int((Double(over) / Double(values.count) * 100).rounded()))%）· 偏低 \(low) 次")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
             }
         }
         .padding(18)
